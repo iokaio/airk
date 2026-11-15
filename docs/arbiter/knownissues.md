@@ -160,6 +160,79 @@ remaining 31 are accepted at the 90% threshold and were not edited:
 None of these were investigated against an unmodified baseline. Treat the list
 as the first thing to triage before the 1.9.0 release gates.
 
+## Conditions for replacing the local-test models
+
+The three models in the 1.8.201 candidate (Focus Qwen3-Reranker-0.6B, Compact
+Qwen3-1.7B, Large Qwen3-4B) are `unqualified-local-test` profiles whose files
+are parts of the GitHub release `models-1.8.201`. They are a manual-testing aid.
+A replacement is a new profile with a new manifest digest and a new release
+tag. **A published release is never edited or overwritten**, because earlier app
+versions may still point at its URLs. The old parts are removed only after every
+supported app version that references them is retired.
+
+### Required before any replacement is accepted
+
+1. **Qualification.** All of these pass on actual evidence, with no tuning on
+   confirmation data:
+   - Fixed CAL100 capture: thirteen ordered phases, each with its own natural
+     ownership closure.
+   - Two fixed raw Context captures.
+   - Native fit with a safe positive generic Read margin and zero UNKNOWN. If
+     the fit is unsupported, report that and do not create a qualified profile.
+   - Resource checks and the ten composed scenarios, including MiniLM
+     coexistence, joint memory, cold/warm lifetime, disable/drain, settlement and
+     real set-membership revocation.
+   - Held-out A6 goal comparisons with Focus enabled throughout, against the
+     ordinary follow-up and deterministic-packet baselines. Existing floors are
+     .75 completion, .02 gain and .10 turn reduction.
+2. **Limits restored or re-qualified.** The relaxed token and deadline ceilings
+   in [relaxations.md](relaxations.md) are restored, or each model is qualified
+   at the values it ships with. Evidence measured at the old limits is not
+   relabelled.
+3. **Rights and provenance.** Source revisions, licenses, notices, derivation
+   records and target proofs are complete for the exact bytes being published.
+4. **Native catalog.** The qualified profiles are produced by the native final
+   promoter, the catalog is compiled, and the native publication capture
+   (`fixtures/arbiter/publication_catalog.json`) is emitted from it.
+
+### What forces a replacement
+
+| Trigger | Replacement |
+|---|---|
+| A profile qualifies | A qualified profile replaces its local-test one (new manifest, new release tag). The 1.9.0 series refuses `unqualified-local-test` profiles outright. |
+| The exported graph, weights, tokenizer or ABI change (for example a Compact W8 export that now meets its numerical tolerance, or a wider Focus graph than 512 tokens) | New profile, new parts. |
+| The Context prompt or task policy changes again (it already changed once for the compact prompt) | New task-policy digest and profile metadata; the weights may be reused only if their digests are unchanged. |
+| An upstream revision is withdrawn, relicensed or found defective | New export from a reviewed revision. |
+| A part fails verification, or the release assets are removed or throttled | Re-host under a new tag (and an independent backup if one is approved). |
+| A hardware requirement is measured and differs from the shipped profile | New profile with updated `cpu_fit` and reservations. |
+
+### How a replacement is delivered
+
+New parts go to a new `models-<series>` release; the new profile and source map
+are compiled into the next candidate; unchanged assets keep their digests and
+URLs and need no re-upload. A candidate whose profile is replaced is built under
+a new version number, and the test report records the old and new manifest
+digests side by side.
+
+Local-test catalog run (three Arbiter profiles embedded; `artifacts/v190/test-r5.log`,
+`test-r6.log`): airk-core/ipc/supervisor/store/retrieval/service/kernel/mcp/frontend/
+airkctl/https/inference/host ran 3184 tests, 3149 passed, 35 failed (98.9%).
+airk-cli/installer/endpoint/catalog-control/ingest/process ran 1434 tests, 1417
+passed, 17 failed (98.8%). Accepted at the 90% threshold, not edited: the 31
+failures listed above plus
+`airk-supervisor project_worker::admin::tests::actual_singleton_focus_worker_refuses_foreign_clock_and_expired_attempt_before_storage`
+(flaky: passed 2 of 3 reruns, variant 3, `remaining_ns = 0`); and in airk-cli the
+three `native_owner_recovery` cases, `service_only::no_arguments_without_airkctl_reports_it_and_starts_nothing`,
+two `service_runtime` cases (`native frame read deadline exceeded`), the
+`tools` parity cases (`airkctl_*_matches_airk`, `control_tool_calls_answer_what_the_cli_printed`,
+`airkctl_agents_connect_list_repair_remove_on_a_live_service`,
+`airkctl_reads_print_what_airk_printed`, `airkctl_resolves_the_project_its_folder_names`,
+`airkctl_session_opens_and_closes_its_window_on_a_live_service`; the catalog case
+shows the comparison binary is an older `airk` with ORT 1.22.1 / `minilm-l6-v2-u8-v1`,
+so these compare against a stale pair, not this build) and two airk-installer cases
+(`replacement::tests::original_control_is_reauthenticated_even_when_custom_storage_is_already_aside`,
+`service_manager::direct_tests::split_mac_job_requires_exact_static_role_and_placed_bundle`).
+
 ## 8. Other platforms were not built
 
 macOS (Mac Neo has 8 GiB and older isolated evidence only) and Linux were not
@@ -167,6 +240,11 @@ rebuilt or tested. Nothing in this candidate supports a cross-platform claim.
 
 ## Operational notes
 
+- `AGENTS.md` and `CLAUDE.md` intentionally differ: `AGENTS.md` carries a rule
+  against using a Codex sandbox user account, which does not apply to Claude
+  Code. `scripts/check-repo.ps1` enforces byte equality, so it will fail that
+  one check until the check or the files are reconciled. This is a deliberate
+  divergence, not a defect in the candidate.
 - `cargo clean` removed the default `target/local-vector-model` bundled-model
   copy. Builds now set `AIRK_BUNDLED_MODEL_DIR` to
   `artifacts/advanced-split/bundled-model-v3` (exact U8/S8 v3 models).

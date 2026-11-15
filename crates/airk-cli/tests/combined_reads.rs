@@ -892,7 +892,7 @@ fn current_combined_remaining_clocks_preserve_all_fixed_caps_and_unknown_fields(
     }
     for (a, b) in [
         (json!(0), json!(0)),
-        (json!(15001), json!(15000)),
+        (json!(60001), json!(60000)),
         (json!(14943), json!(14941)),
         (json!(u64::MAX), json!(1)),
         (json!(true), json!(14942)),

@@ -1,1 +1,731 @@
-{"schema":"airk.arbiter.catalog/2","profiles":[]}
+{
+  "profiles": [
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch",
+            "labels"
+          ],
+          "element": "float32",
+          "name": "logits"
+        },
+        "readout": "focus_yes_no"
+      },
+      "assets": [
+        {
+          "bytes": 11343,
+          "name": "LICENSE",
+          "role": "notice",
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
+        },
+        {
+          "bytes": 14742,
+          "name": "README.md",
+          "role": "notice",
+          "sha256": "5bba8c734f6dd3ae48317b4139317e45a7fce48fc55e15670b23a0dd15492ab6"
+        },
+        {
+          "bytes": 528,
+          "name": "compiler.json",
+          "role": "compiler",
+          "sha256": "2cba18a75ae105352ed9fdc94cb88812364710fcbaa6e2191a3addc524b86133"
+        },
+        {
+          "bytes": 1643,
+          "name": "focus-relevance-metadata.json",
+          "role": "calibration",
+          "sha256": "c458ab401ee6f42aa8d6ad387a4fc74cccc06563c2643669a19c6f77bec16798"
+        },
+        {
+          "bytes": 1892855,
+          "name": "model.onnx",
+          "role": "model",
+          "sha256": "5072c663bb8fbc587208dea2564c8ad27880177875e62633f12ea64250ec2738"
+        },
+        {
+          "bytes": 1117980672,
+          "name": "model.onnx.data",
+          "role": "external_weights",
+          "sha256": "1c819b7781fbf9b811f6ec1453e91d7f32a1bd6e5489168e0612d4fcf015b143"
+        },
+        {
+          "bytes": 323912,
+          "name": "native-runtime512-fixture.json",
+          "role": "fixture",
+          "sha256": "b07dbc3bf8167d54d2cb43a07b1cfa361173e7bf1c5207870dfafdcf5d71b080"
+        },
+        {
+          "bytes": 1320,
+          "name": "rights-source-provenance.json",
+          "role": "notice",
+          "sha256": "12921269e5cb7bfdfb49266ba3a503ad657bd3f8b2c49db2b1daecba02f4e0c3"
+        },
+        {
+          "bytes": 11422654,
+          "name": "tokenizer.json",
+          "role": "tokenizer",
+          "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        }
+      ],
+      "calibration": "c458ab401ee6f42aa8d6ad387a4fc74cccc06563c2643669a19c6f77bec16798",
+      "compiler": "2cba18a75ae105352ed9fdc94cb88812364710fcbaa6e2191a3addc524b86133",
+      "cpu_fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "downloads": [
+        {
+          "asset_name": "LICENSE",
+          "parts": [
+            {
+              "bytes": 11343,
+              "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.LICENSE"
+            }
+          ]
+        },
+        {
+          "asset_name": "README.md",
+          "parts": [
+            {
+              "bytes": 14742,
+              "sha256": "5bba8c734f6dd3ae48317b4139317e45a7fce48fc55e15670b23a0dd15492ab6",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.README.md"
+            }
+          ]
+        },
+        {
+          "asset_name": "compiler.json",
+          "parts": [
+            {
+              "bytes": 528,
+              "sha256": "2cba18a75ae105352ed9fdc94cb88812364710fcbaa6e2191a3addc524b86133",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.compiler.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "focus-relevance-metadata.json",
+          "parts": [
+            {
+              "bytes": 1643,
+              "sha256": "c458ab401ee6f42aa8d6ad387a4fc74cccc06563c2643669a19c6f77bec16798",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.focus-relevance-metadata.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx",
+          "parts": [
+            {
+              "bytes": 1892855,
+              "sha256": "5072c663bb8fbc587208dea2564c8ad27880177875e62633f12ea64250ec2738",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.model.onnx"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx.data",
+          "parts": [
+            {
+              "bytes": 1073741824,
+              "sha256": "309537ecc6b9273059d01b72631af3bdc6ca2ff403d2b023464b9d145bfda277",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.model.onnx.data.part01"
+            },
+            {
+              "bytes": 44238848,
+              "sha256": "6c8b92ab4c24fa1be74afee57b0c8fd5d080094ee25cff93927017da3af7929b",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.model.onnx.data.part02"
+            }
+          ]
+        },
+        {
+          "asset_name": "native-runtime512-fixture.json",
+          "parts": [
+            {
+              "bytes": 323912,
+              "sha256": "b07dbc3bf8167d54d2cb43a07b1cfa361173e7bf1c5207870dfafdcf5d71b080",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.native-runtime512-fixture.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "rights-source-provenance.json",
+          "parts": [
+            {
+              "bytes": 1320,
+              "sha256": "12921269e5cb7bfdfb49266ba3a503ad657bd3f8b2c49db2b1daecba02f4e0c3",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.rights-source-provenance.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "tokenizer.json",
+          "parts": [
+            {
+              "bytes": 11422654,
+              "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-focus-qwen3-reranker-06b.tokenizer.json"
+            }
+          ]
+        }
+      ],
+      "manifest": "04821edaed45ac10aa5b0b7b2c0b7b28bf5d04a06c8b623cfe6d762f77d5e23b",
+      "max_candidates": 4,
+      "max_tokens": 512,
+      "memory_reservation_bytes": 4294967296,
+      "model": "arbiter-focus-qwen3-reranker-06b",
+      "peak_disk_bytes": 4294967296,
+      "policy": "cfbcbe4cce111b9f802918488dae82feefb075666a0a7e7a9f93dd082b71c331",
+      "profile_id": "unqualified-local-test-focus-qwen3-reranker-06b-w8-r1",
+      "qualification": null,
+      "runtime": "onnxruntime-cpu/1.30.0",
+      "stage": "focus",
+      "task_policies": {
+        "airk.focus_rank.v1": "cfbcbe4cce111b9f802918488dae82feefb075666a0a7e7a9f93dd082b71c331"
+      },
+      "tasks": [
+        "airk.focus_rank.v1"
+      ]
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "assets": [
+        {
+          "bytes": 11343,
+          "name": "LICENSE",
+          "role": "notice",
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
+        },
+        {
+          "bytes": 1173,
+          "name": "compiler.json",
+          "role": "compiler",
+          "sha256": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1"
+        },
+        {
+          "bytes": 1384870,
+          "name": "model.onnx",
+          "role": "model",
+          "sha256": "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
+        },
+        {
+          "bytes": 6882271232,
+          "name": "model.onnx.data",
+          "role": "external_weights",
+          "sha256": "7300a9202a4696f023799985131f6c4599ef9caaaa9b0d5b336f1c229574fbb4"
+        },
+        {
+          "bytes": 107242,
+          "name": "numeric-fixture.json",
+          "role": "fixture",
+          "sha256": "7548830dca2be76c00bebe25248a4974da9ffd080476eb59bfcfee5f34eac491"
+        },
+        {
+          "bytes": 2118,
+          "name": "numeric-raw-only-calibration.json",
+          "role": "calibration",
+          "sha256": "51037afa4e6cc3a99b049a48e7b56259d69af80c759a42f9d1b038fc0cb843ed"
+        },
+        {
+          "bytes": 11422654,
+          "name": "tokenizer.json",
+          "role": "tokenizer",
+          "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        }
+      ],
+      "calibration": "51037afa4e6cc3a99b049a48e7b56259d69af80c759a42f9d1b038fc0cb843ed",
+      "compiler": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1",
+      "cpu_fit": {
+        "inter_threads": 1,
+        "intra_threads": 4,
+        "minimum_physical_cores": 4,
+        "sequential": true,
+        "spinning": false
+      },
+      "downloads": [
+        {
+          "asset_name": "LICENSE",
+          "parts": [
+            {
+              "bytes": 11343,
+              "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.LICENSE"
+            }
+          ]
+        },
+        {
+          "asset_name": "compiler.json",
+          "parts": [
+            {
+              "bytes": 1173,
+              "sha256": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.compiler.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx",
+          "parts": [
+            {
+              "bytes": 1384870,
+              "sha256": "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx.data",
+          "parts": [
+            {
+              "bytes": 1073741824,
+              "sha256": "90654e93a87309248a82caa119cd972a94a9f6d5ded93fd2fa90bcc6da3ed122",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part01"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "9a5c89dcbc387eaf3dfb507e6d71173399764270a5f2524a5fde4541af08fc5e",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part02"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "c4b63ffb2e0125a03cf94fac1c7289e2848957a0d87f242a4f83fbf4738a752d",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part03"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "49a950a299eca4d2d1ff7ee03af597924146820038c642e15a3a7852e61330dc",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part04"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "1d8d1ac9f76d34ed622ea470df5f59aa561734ab5d743c9de42ad32b6863bcf1",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part05"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "ab2d513ce5fdb81ff03507a0d78e8662db6db3da328df038db988bab4672fc17",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part06"
+            },
+            {
+              "bytes": 439820288,
+              "sha256": "9d0815b6a223c61c3f7867a1190269741e62372c4f6087b40c0efa9b97a4efb2",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.model.onnx.data.part07"
+            }
+          ]
+        },
+        {
+          "asset_name": "numeric-fixture.json",
+          "parts": [
+            {
+              "bytes": 107242,
+              "sha256": "7548830dca2be76c00bebe25248a4974da9ffd080476eb59bfcfee5f34eac491",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.numeric-fixture.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "numeric-raw-only-calibration.json",
+          "parts": [
+            {
+              "bytes": 2118,
+              "sha256": "51037afa4e6cc3a99b049a48e7b56259d69af80c759a42f9d1b038fc0cb843ed",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.numeric-raw-only-calibration.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "tokenizer.json",
+          "parts": [
+            {
+              "bytes": 11422654,
+              "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-17b.tokenizer.json"
+            }
+          ]
+        }
+      ],
+      "manifest": "04b142e12147bb87e57a8bef98f1094aaafe38422b84cd0571be2fd842dd298d",
+      "max_candidates": 8,
+      "max_tokens": 2048,
+      "memory_reservation_bytes": 17179869184,
+      "model": "arbiter-context-qwen3-17b",
+      "peak_disk_bytes": 6912629917,
+      "policy": "5f7429d9398a9fa5b095c6099aacfe2f24b85f39663288d2a9b85c1ec4e07edc",
+      "profile_id": "unqualified-local-test-context-qwen3-17b-fp32-r1",
+      "qualification": null,
+      "runtime": "onnxruntime-cpu/1.30.0",
+      "stage": "context",
+      "task_policies": {
+        "airk.context_action.v1": "1271a6e0660f08e2ad1929e496e0ed6de22009a9f7c05e4b142435b28f3e83dc"
+      },
+      "tasks": [
+        "airk.context_action.v1"
+      ]
+    },
+    {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "attention_mask"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "position_ids"
+          },
+          {
+            "axes": [
+              "batch_1"
+            ],
+            "element": "int64",
+            "name": "decision_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "int64",
+            "name": "candidate_positions"
+          },
+          {
+            "axes": [
+              "batch_1",
+              "options"
+            ],
+            "element": "bool",
+            "name": "option_mask"
+          }
+        ],
+        "output": {
+          "axes": [
+            "batch_1",
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "assets": [
+        {
+          "bytes": 11343,
+          "name": "LICENSE",
+          "role": "notice",
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
+        },
+        {
+          "bytes": 1173,
+          "name": "compiler.json",
+          "role": "compiler",
+          "sha256": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1"
+        },
+        {
+          "bytes": 1779980,
+          "name": "model.onnx",
+          "role": "model",
+          "sha256": "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
+        },
+        {
+          "bytes": 16089835520,
+          "name": "model.onnx.data",
+          "role": "external_weights",
+          "sha256": "9da676d87747052f709c48d71f072508685c853e012330aa47de5a73e792f81c"
+        },
+        {
+          "bytes": 107225,
+          "name": "numeric-fixture.json",
+          "role": "fixture",
+          "sha256": "58430797813f1f8df09a0c3de4e6ce46341b7f2e953eee9888e448258bf2a544"
+        },
+        {
+          "bytes": 2117,
+          "name": "numeric-raw-only-calibration.json",
+          "role": "calibration",
+          "sha256": "6782574f8d680638c12bb311e731ec437e64e949c88e128193ce95e38cdc4519"
+        },
+        {
+          "bytes": 11422654,
+          "name": "tokenizer.json",
+          "role": "tokenizer",
+          "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        }
+      ],
+      "calibration": "6782574f8d680638c12bb311e731ec437e64e949c88e128193ce95e38cdc4519",
+      "compiler": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1",
+      "cpu_fit": {
+        "inter_threads": 1,
+        "intra_threads": 16,
+        "minimum_physical_cores": 16,
+        "sequential": true,
+        "spinning": false
+      },
+      "downloads": [
+        {
+          "asset_name": "LICENSE",
+          "parts": [
+            {
+              "bytes": 11343,
+              "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.LICENSE"
+            }
+          ]
+        },
+        {
+          "asset_name": "compiler.json",
+          "parts": [
+            {
+              "bytes": 1173,
+              "sha256": "5b779587566ddb01020be092bffb098deca638492397dae3c1c6609dc8927db1",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.compiler.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx",
+          "parts": [
+            {
+              "bytes": 1779980,
+              "sha256": "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx"
+            }
+          ]
+        },
+        {
+          "asset_name": "model.onnx.data",
+          "parts": [
+            {
+              "bytes": 1073741824,
+              "sha256": "f6e0524ce5d718724b0377b7fb3f3023c828aa8c2f83732de3b3de01994c367f",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part01"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "4882ad2840fbdc9a6a0e75602ae8377f54bfca5918ae077464eddf1fdf0ca032",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part02"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "ead21f4ec251c7cd829e7c87027e5fb3aede333e6df26a932d87b0e4c12df05c",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part03"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "f4acdb0eb324ae0548f5fb6881652ae1a7882b1b879a68dd74b0ad8362a406b2",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part04"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "236bd1b756b3a9fe24546028e29ba77d0c00b5af71f1e52cd5078dcd2047eb38",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part05"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "cc5f375ce0594483920a38230a37919b4428dab0b1c57eb70a8bf48e655c226a",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part06"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "950e0f0022887a23941be23e50742fbc81d2f602ec5c2f1220e40bb6ab9a98bb",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part07"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "14885bee887ad702e15947d5affdbb445e8e9f9be08c6a90fe8639000060398e",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part08"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "ad4e9d763318a4b2c3e056243b3c480e65f5a5f2ce9746627767ed0e02b4b5ac",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part09"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "843a53b63cfa27c4777781d13b713e90b672d6584a9daf88e21e2afc32745f74",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part10"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "853d859d34aa62ff5d0f6c2754ca170c4c3bb28c9624cd3c6742a2b115d7af71",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part11"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "a55f6ed90b9ac4be5e358c1d145371c32defe920982380749c4def140a714386",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part12"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "481e0ef6f4731976ad4c23451b7039d48657348b123066bd6ca8ca28a075cc05",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part13"
+            },
+            {
+              "bytes": 1073741824,
+              "sha256": "4018f3b1d3799310f88b6692b43f3982dd18f5c5846170966fa8aeac21b0188a",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part14"
+            },
+            {
+              "bytes": 1057449984,
+              "sha256": "016304088f88166bad73f5e8f53b3612b83d76663f1e5efa1d0f083127c9ad37",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.model.onnx.data.part15"
+            }
+          ]
+        },
+        {
+          "asset_name": "numeric-fixture.json",
+          "parts": [
+            {
+              "bytes": 107225,
+              "sha256": "58430797813f1f8df09a0c3de4e6ce46341b7f2e953eee9888e448258bf2a544",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.numeric-fixture.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "numeric-raw-only-calibration.json",
+          "parts": [
+            {
+              "bytes": 2117,
+              "sha256": "6782574f8d680638c12bb311e731ec437e64e949c88e128193ce95e38cdc4519",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.numeric-raw-only-calibration.json"
+            }
+          ]
+        },
+        {
+          "asset_name": "tokenizer.json",
+          "parts": [
+            {
+              "bytes": 11422654,
+              "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+              "url": "https://github.com/iokaio/airk/releases/download/models-1.8.201/arbiter-context-qwen3-4b.tokenizer.json"
+            }
+          ]
+        }
+      ],
+      "manifest": "79b94fad980e3c0c794cd5970a199283aa31ba6344cc598dfb3715aef968a8b7",
+      "max_candidates": 8,
+      "max_tokens": 2048,
+      "memory_reservation_bytes": 42949672960,
+      "model": "arbiter-context-qwen3-4b",
+      "peak_disk_bytes": 16120589298,
+      "policy": "5f7429d9398a9fa5b095c6099aacfe2f24b85f39663288d2a9b85c1ec4e07edc",
+      "profile_id": "unqualified-local-test-context-qwen3-4b-fp32-r1",
+      "qualification": null,
+      "runtime": "onnxruntime-cpu/1.30.0",
+      "stage": "context",
+      "task_policies": {
+        "airk.context_action.v1": "1271a6e0660f08e2ad1929e496e0ed6de22009a9f7c05e4b142435b28f3e83dc"
+      },
+      "tasks": [
+        "airk.context_action.v1"
+      ]
+    }
+  ],
+  "schema": "airk.arbiter.catalog/2"
+}

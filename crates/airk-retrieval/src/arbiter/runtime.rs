@@ -23,7 +23,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(test)]
+mod embedded_catalog_tests;
 mod input;
+#[cfg(all(test, feature = "test-support"))]
+mod local_test_catalog_emitter;
 #[cfg(test)]
 mod local_test_tests;
 #[cfg(feature = "test-support")]
