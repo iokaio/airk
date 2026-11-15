@@ -219,10 +219,11 @@ impl Fixture {
             helper,
             removed_last_parent,
             false,
+            false,
         )
     }
     fn with_shared_runtime() -> Result<Self> {
-        Self::with_runtime_topology(true, 3, false, None, true)
+        Self::with_runtime_topology(true, 3, false, None, true, false)
     }
     fn with_runtime_topology(
         dedicated_is_indexed: bool,
@@ -230,6 +231,7 @@ impl Fixture {
         helper: bool,
         removed_last_parent: Option<bool>,
         shared: bool,
+        same_source_aliases: bool,
     ) -> Result<Self> {
         ensure!(
             (3..=32).contains(&count),
@@ -350,6 +352,11 @@ impl Fixture {
         let mut memberships = vec![(0, 0, "api"), (1, 0, "impl"), (0, 1, "api"), (2, 2, "")];
         memberships.extend((3..count).map(|index| (0, index, "api")));
         for (project, index, prefix) in memberships {
+            let prefix = if same_source_aliases && project == 1 && index == 0 {
+                "api"
+            } else {
+                prefix
+            };
             tx.execute(
                 "INSERT INTO project_index_memberships VALUES(?1,?2,1)",
                 params![projects[project].to_string(), indexes[index].to_string()],
@@ -727,6 +734,7 @@ fn logical_comparison_copy(raw: &Value) -> Result<Value> {
     let mut logical = airk_core::combined_reads::materialize_combined_read(raw)
         .context("strictly reconstruct complete combined logical view")?;
     normalize_member_verification_timing(&mut logical)?;
+    normalize_member_allocation_timing(&mut logical)?;
     if let Some(dictionary) = logical.get("shared_values") {
         ensure!(
             dictionary["schema"]
@@ -796,6 +804,115 @@ fn normalize_member_verification_timing(logical: &mut Value) -> Result<()> {
         limits["deadline_ms"] = json!(0);
         limits["effective_deadline_ms"] = json!(0);
     }
+    Ok(())
+}
+
+/// Ordinary combined reads split the request clock remaining after metadata I/O.
+/// Context allocations instead declare the exact original context budget.
+fn normalize_member_allocation_timing(logical: &mut Value) -> Result<()> {
+    if logical["schema"] != "airk.combined-read/1" || logical.get("context").is_some() {
+        return Ok(());
+    }
+    let members = logical["members"]
+        .as_array_mut()
+        .context("missing allocation members")?;
+    ensure!(
+        !members.is_empty() && members.len() <= airk_core::index_catalog::MAX_SELECTION,
+        "invalid allocation member count"
+    );
+    let mut total = 0u64;
+    let mut deadlines = Vec::with_capacity(members.len());
+    for member in members.iter() {
+        let allocation: airk_core::combined_reads::MemberAllocation =
+            serde_json::from_value(member["allocation"].clone())?;
+        let index: IndexId = serde_json::from_value(member["index_id"].clone())?;
+        ensure!(
+            allocation.index_id == index,
+            "crossed member allocation identity"
+        );
+        total = total
+            .checked_add(allocation.deadline_ms)
+            .context("allocation clock overflow")?;
+        deadlines.push(allocation.deadline_ms);
+    }
+    ensure!(
+        (1..=30_000).contains(&total),
+        "remaining member clocks exceed original request deadline or have no admitted clock"
+    );
+    let count = members.len() as u64;
+    for (offset, deadline) in deadlines.into_iter().enumerate() {
+        ensure!(
+            deadline == total / count + u64::from((offset as u64) < total % count),
+            "member clocks do not preserve the canonical shared remainder split"
+        );
+    }
+    for member in members {
+        member["allocation"]["deadline_ms"] = json!("<remaining-request-clock>");
+    }
+    Ok(())
+}
+
+#[test]
+fn current_combined_remaining_clocks_preserve_all_fixed_caps_and_unknown_fields() -> Result<()> {
+    let first = IndexId::from_identity(Incarnation::from_bytes([81; 16]));
+    let second = IndexId::from_identity(Incarnation::from_bytes([82; 16]));
+    let member = |index| {
+        json!({"index_id":index,"allocation":{
+        "index_id":index,"limit":4,"max_bytes":4096,"deadline_ms":14942,
+        "verification_max_sources":8,"verification_max_bytes":8192,"verification_deadline_ms":2000},
+        "result":{"future":{"deadline_ms":17},"allocation":{"deadline_ms":19}}})
+    };
+    let raw = json!({"schema":"airk.combined-read/1","members":[member(first),member(second)]});
+    let unchanged = raw.clone();
+    let mut expected = raw.clone();
+    normalize_member_allocation_timing(&mut expected)?;
+    let mut slower = raw.clone();
+    for member in slower["members"].as_array_mut().unwrap() {
+        member["allocation"]["deadline_ms"] = json!(14938);
+    }
+    normalize_member_allocation_timing(&mut slower)?;
+    assert_eq!(slower, expected);
+    assert_eq!(raw, unchanged);
+    for (pointer, value) in [
+        ("/members/0/allocation/limit", json!(3)),
+        ("/members/0/allocation/max_bytes", json!(4095)),
+        ("/members/0/allocation/verification_max_sources", json!(7)),
+        ("/members/0/allocation/verification_max_bytes", json!(8191)),
+        (
+            "/members/0/allocation/verification_deadline_ms",
+            json!(1999),
+        ),
+        ("/members/0/result/future/deadline_ms", json!(18)),
+        ("/members/0/result/allocation/deadline_ms", json!(20)),
+    ] {
+        let mut changed = raw.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        normalize_member_allocation_timing(&mut changed)?;
+        assert_ne!(changed, expected, "masked semantic field {pointer}");
+    }
+    for (a, b) in [
+        (json!(0), json!(0)),
+        (json!(15001), json!(15000)),
+        (json!(14943), json!(14941)),
+        (json!(u64::MAX), json!(1)),
+        (json!(true), json!(14942)),
+    ] {
+        let mut invalid = raw.clone();
+        invalid["members"][0]["allocation"]["deadline_ms"] = a;
+        invalid["members"][1]["allocation"]["deadline_ms"] = b;
+        assert!(normalize_member_allocation_timing(&mut invalid).is_err());
+    }
+    let mut crossed = raw.clone();
+    crossed["members"][0]["allocation"]["index_id"] = json!(second);
+    assert!(normalize_member_allocation_timing(&mut crossed).is_err());
+    let mut context = raw.clone();
+    context["context"] = json!({"budget":{"deadline_ms":30000}});
+    let exact_context = context.clone();
+    normalize_member_allocation_timing(&mut context)?;
+    assert_eq!(
+        context, exact_context,
+        "original context budget was treated as an elapsed clock"
+    );
     Ok(())
 }
 
@@ -913,15 +1030,6 @@ fn stable(mut value: Value) -> Result<Value> {
                         text.replace(&format!("at {stamp} Unix ms"), "at <observation> Unix ms")
                     );
                 }
-            }
-            if let Some(deadline) = fields
-                .get_mut("allocation")
-                .and_then(Value::as_object_mut)
-                .and_then(|allocation| allocation.get_mut("deadline_ms"))
-            {
-                // body() proved the sum stays within the configured request
-                // deadline. This is the allowance remaining after metadata I/O.
-                *deadline = json!(0);
             }
             // Every complete digest was checked by body() before comparison.
             // Its input includes request IDs and dated observation intervals;
@@ -3498,11 +3606,12 @@ fn current_body_copy(raw: &Value, status: bool) -> Result<Value> {
             allocation.deadline_ms <= 30000,
             "invalid original member allowance"
         );
-        // The semantic allocation stays exact. The raw aggregate ceiling
-        // checked by body() is only a bound, never authority to erase it.
+        // Fixed count/byte/verification caps stay literal. The shared elapsed
+        // request clock is validated and normalized at its exact owner below.
         *member = current_observations(member, &["/elapsed_ms"], false)?;
         member["result"] = current_member_copy(&member["result"], status)?;
     }
+    normalize_member_allocation_timing(&mut logical)?;
     Ok(logical)
 }
 
@@ -5781,6 +5890,194 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
         json!({"schema":1,"input_sha256":format!("{:x}",Sha256::digest(&bytes)),
         "validator_sha256":airk_cli::runtime_pair::digest_file(&std::env::current_exe()?)?,"compiled_sources":compiled_sources,
         "scope":"validated-unassessed-fallback-only","full_envelopes_equal":true})
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_index_window_catalog_and_open_explicit_source_selectors_use_original_authorized_combined_owner()
+-> Result<()> {
+    let f = Fixture::with_runtime_topology(true, 3, false, None, false, true)?;
+    let _service = f.start().await?;
+    let ControlResponse::Health { observation } =
+        airk_cli::service_runtime::request(&f.control, ControlMethod::Health).await?
+    else {
+        anyhow::bail!("health missing");
+    };
+    let clock = observation.catalog_clock.context("catalog clock")?;
+    let ControlResponse::WindowOpened {
+        window_id, lease, ..
+    } = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::WindowOpen {
+            label: "one-index alias source navigation".into(),
+            owner_pid: std::process::id(),
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("window missing");
+    };
+    let granted = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::WindowScopeGrant {
+            window_id,
+            lease: lease.clone(),
+            selection: airk_core::service::WindowScopeSelection {
+                namespace: clock.namespace,
+                expected_catalog_revision: clock.revision,
+                index_ids: vec![f.indexes[0]],
+                project_ids: f.projects[..2].to_vec(),
+            },
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(granted, ControlResponse::WindowScopeGranted { .. }),
+        "grant refused: {}",
+        serde_json::to_string(&granted)?
+    );
+    async fn once(
+        f: &Fixture,
+        selection: airk_core::service::ToolSelection,
+        tool: &str,
+        args: Value,
+    ) -> Result<Value> {
+        let response = airk_cli::service_runtime::request(
+            &f.control,
+            ControlMethod::ToolsCall {
+                tool: tool.into(),
+                arguments: args.as_object().context("arguments")?.clone(),
+                selection,
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Unknown,
+                read_attempt: None,
+            },
+        )
+        .await?;
+        let ControlResponse::ToolResult { result } = response else {
+            anyhow::bail!("read refused: {}", serde_json::to_string(&response)?);
+        };
+        Ok(result)
+    }
+    let window = airk_core::service::ToolSelection::Window { window_id, lease };
+    let ordinary=once(&f,window.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;
+    ensure!(
+        ordinary["isError"] != true,
+        "ordinary search refused: {ordinary}"
+    );
+    let original = body(&ordinary)?;
+    assert_ne!(
+        original["schema"], "airk.combined-read/1",
+        "no-selector one-index route must remain the native singleton"
+    );
+    let hit = original["hits"][0].clone();
+    let proof = &original["source_verification"];
+    let source = proof["sources"]
+        .as_array()
+        .context("source proof")?
+        .iter()
+        .find(|source| source["path"] == hit["citation"]["path"])
+        .context("exact source")?;
+    let origin = proof["origins"]
+        .as_array()
+        .context("origins")?
+        .iter()
+        .find(|origin| origin["id"] == source["origin_id"])
+        .context("exact origin")?;
+    assert_eq!(
+        origin["project_ids"]
+            .as_array()
+            .context("project aliases")?
+            .len(),
+        2
+    );
+    let arguments = json!({"path":hit["citation"]["path"],"project_ids":origin["project_ids"],"index_ids":[f.indexes[0]],"revision":origin["publication"],"known_hash":hit["citation"]["content_hash"],"response_mode":"full"});
+    let index = f.indexes[0].to_string();
+    let catalog = airk_core::service::ToolSelection::Catalog {
+        request: ScopedConnectRequest {
+            schema: f.session.schema,
+            context_key: f.session.context_key,
+            namespace: f.session.namespace,
+            expected_catalog_revision: f.session.expected_catalog_revision,
+            grant_id: f.session.grant_id,
+            expected_grant_revision: f.session.expected_grant_revision,
+            index_id: f.indexes[0],
+            project_ids: f.projects[..2].to_vec(),
+        },
+    };
+    for selection in [window, catalog, open_selection(&[&index], &[], None)] {
+        let mut arguments = arguments.clone();
+        if matches!(selection, airk_core::service::ToolSelection::Catalog { .. }) {
+            let direct=once(&f,selection.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;
+            assert_ne!(
+                body(&direct)?["schema"],
+                "airk.combined-read/1",
+                "no-selector Catalog remains singleton"
+            );
+        }
+        if matches!(selection, airk_core::service::ToolSelection::Open { .. }) {
+            let ordinary_open=once(&f,selection.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;
+            let open_body = body(&ordinary_open)?;
+            let open_origins = open_body["source_verification"]["origins"]
+                .as_array()
+                .context("Open origins")?;
+            assert_eq!(open_origins.len(), 1);
+            assert_eq!(
+                open_origins[0]["project_ids"],
+                json!([]),
+                "explicit Open must not invent Project attribution"
+            );
+            arguments["project_ids"] = open_origins[0]["project_ids"].clone();
+        }
+        let reply = once(&f, selection.clone(), "airk_file_info", arguments.clone()).await?;
+        ensure!(
+            reply["isError"] != true,
+            "source narrowing refused: {reply}"
+        );
+        let combined = body(&reply)?;
+        assert_eq!(combined["schema"], "airk.combined-read/1");
+        let members = combined["members"].as_array().context("members")?;
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0]["index_id"], json!(f.indexes[0]));
+        assert_eq!(members[0]["outcome"], "complete");
+        let member = body(&members[0]["result"])?;
+        let info = member
+            .get("content")
+            .filter(|value| value.is_object())
+            .unwrap_or(&member);
+        assert_eq!(info["content_hash"], hit["citation"]["content_hash"]);
+        for foreign in [
+            json!({"index_ids":[f.indexes[2]]}),
+            json!({"project_ids":[f.projects[2]]}),
+        ] {
+            let mut changed = arguments.clone();
+            for (key, value) in foreign.as_object().unwrap() {
+                changed[key] = value.clone();
+            }
+            let rejected = once(&f, selection.clone(), "airk_file_info", changed).await?;
+            assert_eq!(
+                rejected["isError"], true,
+                "foreign narrowing must refuse: {rejected}"
+            );
+        }
+    }
+    let legacy = once(
+        &f,
+        airk_core::service::ToolSelection::Project {
+            binding: f.registrations[0].binding,
+        },
+        "airk_file_info",
+        arguments,
+    )
+    .await?;
+    assert_eq!(
+        legacy["isError"], true,
+        "legacy Project must not gain combined scope authority"
+    );
+    assert_eq!(
+        body(&legacy)?["error"]["code"],
+        "QUERY_SCOPE_CONFIGURATION_REQUIRED"
     );
     Ok(())
 }

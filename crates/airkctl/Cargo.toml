@@ -9,6 +9,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+test-support = []
+
 # Split plan U27: airkctl depends only on airk-core, airk-process and airk-ipc.
 # The edge gate (scripts/dev/boundary-exceptions.json) enforces the list.
 [dependencies]

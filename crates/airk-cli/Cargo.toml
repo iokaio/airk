@@ -74,7 +74,7 @@ hyper = { workspace = true, features = ["client"] }
 airk-ingest.workspace = true
 # Test-only: the parity test runs the airkctl command line in process against
 # a live fixture service (split step 3a.2c). Not a normal dependency edge.
-airkctl = { path = "../airkctl" }
+airkctl = { path = "../airkctl", features = ["test-support"] }
 rusqlite.workspace = true
 tokio = { workspace = true, features = ["process", "test-util"] }
 

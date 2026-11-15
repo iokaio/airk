@@ -258,7 +258,7 @@ pub(super) async fn selection_read(
             .map_err(SelectionRead::Failed)?;
     }
     let (backend, arguments) = match grant.selection.index_ids.as_slice() {
-        [index_id] => {
+        [index_id] if !uses_combined_arguments(&arguments) => {
             let arguments = match single_index_arguments(arguments) {
                 Ok(arguments) => arguments,
                 Err(refusal) => return Ok(refusal),
@@ -274,6 +274,15 @@ pub(super) async fn selection_read(
         ),
     };
     read_through(backend, tool, arguments, mode, context).await
+}
+
+/// Explicit subset controls keep the original selection authority but need
+/// the canonical combined owner even when it currently resolves one index.
+/// Presence (including malformed/empty values) routes to its native validator.
+pub(super) fn uses_combined_arguments(arguments: &Map<String, Value>) -> bool {
+    ["project_ids", "index_ids", "member_availability"]
+        .iter()
+        .any(|key| arguments.contains_key(*key))
 }
 
 /// U107: a one-index selection or open read applies `limit_per_index` as
@@ -739,6 +748,23 @@ async fn run(
                 &registration.collection,
             )?;
             (backend, arguments)
+        }
+        ToolSelection::Catalog { request } if uses_combined_arguments(&arguments) => {
+            request.validate()?;
+            let bounded = CombinedConnectRequest {
+                schema: request.schema,
+                context_key: request.context_key,
+                namespace: request.namespace,
+                expected_catalog_revision: request.expected_catalog_revision,
+                grant_id: request.grant_id,
+                expected_grant_revision: request.expected_grant_revision,
+                project_ids: request.project_ids,
+                index_ids: Some(vec![request.index_id]),
+            };
+            (
+                combined_backend(control, &bounded, client).await?,
+                arguments,
+            )
         }
         ToolSelection::Catalog { request } => {
             let selected =

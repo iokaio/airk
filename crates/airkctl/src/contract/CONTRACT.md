@@ -84,6 +84,13 @@ Restart keeps its existing intentional lifecycle owner. Root selected-index
 by nonstarting observations; online helpers never replace its ownership or
 explicit runtime-directory rules.
 
+The `test-support` feature exposes only a Rust-scoped installation-discovery
+fixture. Its factory is thread-local and restored by RAII, including nested
+panic unwinds; normal discovery remains unchanged and there is no environment,
+command-line or wire override. In-process CLI fixtures explicitly capture a
+NoInstallation witness into their worker when testing missing-service refusal,
+so a user's real installed pair cannot change those fixture preconditions.
+
 The `online_admission` unit regressions cover running/exited/stopped/mismatch
 outcomes, an independent parser-accepted command-family/override roster and
 window authority preservation. These injected controls do not establish a real

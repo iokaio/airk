@@ -26,6 +26,7 @@ pub struct Ctl {
     args: Vec<OsString>,
     envs: Vec<(OsString, Option<OsString>)>,
     input: Vec<u8>,
+    no_installation: bool,
 }
 
 fn exit_status(code: u8) -> ExitStatus {
@@ -44,6 +45,11 @@ fn exit_status(code: u8) -> ExitStatus {
 impl Ctl {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// An explicit fixture observation, never a change to the user's install.
+    pub fn without_installation(&mut self) -> &mut Self {
+        self.no_installation = true;
+        self
     }
     pub fn arg(&mut self, argument: impl AsRef<OsStr>) -> &mut Self {
         self.args.push(argument.as_ref().to_owned());
@@ -99,9 +105,10 @@ impl Ctl {
     }
     pub fn output(&mut self) -> io::Result<Output> {
         let (line, full, input) = (self.command_line(), self.full_responses(), &self.input);
+        let no_installation = self.no_installation;
         std::thread::scope(|scope| {
             scope
-                .spawn(move || run(line, full, input))
+                .spawn(move || run(line, full, input, no_installation))
                 .join()
                 .map_err(|_| io::Error::other("airkctl run panicked"))
         })
@@ -124,8 +131,9 @@ impl Ctl {
             self.input.clone(),
         );
         let (sender, receiver) = std::sync::mpsc::channel();
+        let no_installation = self.no_installation;
         std::thread::spawn(move || {
-            let _ = sender.send(run(line, full, &input));
+            let _ = sender.send(run(line, full, &input, no_installation));
         });
         let wait = deadline.saturating_duration_since(Instant::now());
         receiver
@@ -143,7 +151,7 @@ impl super::read_retry::Invocation for Ctl {
     }
 }
 
-fn run(line: Vec<OsString>, full_responses: bool, input: &[u8]) -> Output {
+fn run(line: Vec<OsString>, full_responses: bool, input: &[u8], no_installation: bool) -> Output {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
     let code = {
         let mut stdin = input;
@@ -155,7 +163,14 @@ fn run(line: Vec<OsString>, full_responses: bool, input: &[u8]) -> Output {
             full_responses,
             window: None,
         };
-        airkctl::cli::run(line, &mut io)
+        if no_installation {
+            airkctl::install::with_fixture_discovery(
+                || airkctl::install::Discovery::NotFound,
+                || airkctl::cli::run(line, &mut io),
+            )
+        } else {
+            airkctl::cli::run(line, &mut io)
+        }
     };
     Output {
         status: exit_status(code),

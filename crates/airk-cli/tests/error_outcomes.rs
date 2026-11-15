@@ -32,6 +32,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
         vec!["outline", "fixture.txt"],
     ] {
         let output = common::ctl::Ctl::new()
+            .without_installation()
             .arg("--service-runtime-dir")
             .arg(data.path().join("missing-runtime"))
             .arg("--root")
@@ -43,7 +44,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
             .output()?;
         // airkctl's I2 error line (contracts §3.4): a missing service is class
         // `service_missing`, exit 3, retryable; it starts and opens nothing.
-        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(output.status.code(), Some(3), "{arguments:?}: {output:?}");
         assert!(output.stdout.is_empty());
         let outcome: Value = serde_json::from_slice(&output.stderr)?;
         assert_eq!(outcome["airkctl_error"], 1);
@@ -77,6 +78,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
         "invalid owner",
     )?;
     let output = common::ctl::Ctl::new()
+        .without_installation()
         .arg("--service-runtime-dir")
         .arg(data.path().join("missing-runtime"))
         .arg("--root")
@@ -88,11 +90,12 @@ fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
         .output()?;
     // airkctl never opens project storage, so an invalid owner file cannot
     // become a busy or storage result: the answer is the missing service.
-    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(output.status.code(), Some(3), "invalid owner: {output:?}");
     let outcome: Value = serde_json::from_slice(&output.stderr)?;
     assert_eq!(outcome["class"], "service_missing");
     assert_eq!(outcome["code"], "service_unavailable");
     let output = common::ctl::Ctl::new()
+        .without_installation()
         .arg("--service-runtime-dir")
         .arg(data.path().join("missing-runtime"))
         .arg("--root")
@@ -102,7 +105,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage() -> Result<()> {
         .args(["status"])
         .env_remove("AIRK_ERROR_FORMAT")
         .output()?;
-    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(output.status.code(), Some(3), "text refusal: {output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).starts_with("airkctl: "));
     Ok(())
 }

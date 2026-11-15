@@ -210,3 +210,22 @@ fn supplied_short_and_long_parents_are_validated_before_selection() {
         .is_err()
     );
 }
+
+#[test]
+fn explicit_subset_controls_use_native_combined_owner_even_for_one_index() {
+    for arguments in [
+        json!({"project_ids":[]}),
+        json!({"index_ids":null}),
+        json!({"member_availability":"invalid"}),
+        json!({"path":"a","project_ids":["untrusted"],"index_ids":["foreign"]}),
+    ] {
+        assert!(uses_combined_arguments(arguments.as_object().unwrap()));
+    }
+    for arguments in [
+        json!({}),
+        json!({"query":"q","limit_per_index":2}),
+        json!({"path":"a","revision":"original","known_hash":"original"}),
+    ] {
+        assert!(!uses_combined_arguments(arguments.as_object().unwrap()));
+    }
+}

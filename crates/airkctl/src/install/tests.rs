@@ -5,6 +5,47 @@ use serde_json::{Value, json};
 
 const CASES: &str = include_str!("../../../../fixtures/split/i4/i4_cases.json");
 
+#[test]
+fn fixture_discovery_is_thread_local_and_restores_nested_panic() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let witness = calls.clone();
+    assert!(FIXTURE_DISCOVERY.with_borrow(Option::is_none));
+    with_fixture_discovery(
+        move || {
+            witness.fetch_add(1, Ordering::SeqCst);
+            Discovery::NotFound
+        },
+        || {
+            assert!(matches!(discover(), Discovery::NotFound));
+            let panic = std::panic::catch_unwind(|| {
+                with_fixture_discovery(
+                    || Discovery::Unverified {
+                        code: "fixture_inner".into(),
+                        message: "known nested witness".into(),
+                    },
+                    || {
+                        assert!(
+                            matches!(discover(), Discovery::Unverified {code, ..} if code == "fixture_inner")
+                        );
+                        panic!("fixture unwind");
+                    },
+                )
+            });
+            assert!(panic.is_err());
+            assert!(matches!(discover(), Discovery::NotFound));
+            std::thread::spawn(|| assert!(FIXTURE_DISCOVERY.with_borrow(Option::is_none)))
+                .join()
+                .unwrap();
+        },
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(FIXTURE_DISCOVERY.with_borrow(Option::is_none));
+}
+
 fn case(group: &str, name: &str) -> Value {
     let cases: Value = serde_json::from_str(CASES).unwrap();
     let text = cases[group]

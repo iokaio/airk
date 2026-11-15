@@ -55,6 +55,12 @@ fn claim(signing: &Signing) -> airk_process::signature::Claim<'_> {
 
 /// Discover this user's installation.
 pub fn discover() -> Discovery {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(observation) =
+        FIXTURE_DISCOVERY.with_borrow_mut(|factory| factory.as_mut().map(|factory| factory()))
+    {
+        return observation;
+    }
     match pointer_path() {
         Ok(path) => read(&path, platform_signature),
         Err(error) => Discovery::Unverified {
@@ -62,6 +68,30 @@ pub fn discover() -> Discovery {
             message: format!("{error:#}"),
         },
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+type FixtureDiscovery = Box<dyn FnMut() -> Discovery>;
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static FIXTURE_DISCOVERY: std::cell::RefCell<Option<FixtureDiscovery>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Scoped in-process fixture only. No CLI flag/environment/runtime bypass exists.
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_fixture_discovery<R>(
+    factory: impl FnMut() -> Discovery + 'static,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<FixtureDiscovery>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FIXTURE_DISCOVERY.with_borrow_mut(|current| *current = self.0.take());
+        }
+    }
+    let previous = FIXTURE_DISCOVERY.with_borrow_mut(|current| current.replace(Box::new(factory)));
+    let _restore = Restore(previous);
+    run()
 }
 
 #[cfg(test)]

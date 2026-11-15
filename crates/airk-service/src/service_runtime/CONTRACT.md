@@ -50,3 +50,34 @@ with an injected failing writer and notification observation. They establish
 the delivery boundary without starting or stopping an installed service.
 Installed process/transport qualification remains a separate required boundary.
 Each filtered run must select nonzero tests and report its selected count.
+
+
+## Explicit narrowing on one-index read routes
+
+W4/A2 selection and Open reads retain their ordinary singleton native handler
+when no Project/index subset controls are supplied. Presence of existing
+`project_ids`, `index_ids` or `member_availability` instead chooses the existing
+combined frontend even if the original admitted selection currently resolves
+one index. Malformed/empty values reach that owner's validator rather than
+being dropped or silently treated as absent. `limit_per_index` alone retains
+the existing singleton conversion.
+
+The original W4/A2 grant, Open lease, exact catalog revision, source subset,
+read-attempt deadline/cancellation and delivery fences remain the authority.
+The combined owner may only narrow its original member roster and validates
+all selectors before evidence work. A frozen one-index Catalog request uses
+an exact existing CombinedConnectRequest projection with its same context key,
+namespace/revision, grant/revision, Project IDs and exactly its original index.
+No-selector Catalog reads stay singleton. A legacy Project binding does not
+acquire reviewed combined authority and continues to refuse subset selectors.
+No request, receipt, digest or persisted shape changes.
+
+Regression selectors:
+- service_runtime::tools_call::tests::explicit_subset_controls_use_native_combined_owner_even_for_one_index
+- one_index_window_catalog_and_open_explicit_source_selectors_use_original_authorized_combined_owner
+
+The latter owns two real Project aliases for the same source/index, performs
+current canonical publication/hash source checks, and covers exact file-info
+narrowing and foreign Project/index refusal under W4, Catalog and Open. Open
+retains its actual empty Project attribution. Native qualification still needs
+the matched-pair real Workbench rerun after this source is built.
