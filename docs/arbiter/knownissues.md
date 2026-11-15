@@ -261,4 +261,24 @@ rebuilt or tested. Nothing in this candidate supports a cross-platform claim.
   Context prompt was rewritten from source rather than from the private
   proposals.
 
-<!-- Verification summary and artifact inventory are appended after the build. -->
+## Verification summary and candidate inventory (1.8.202)
+
+Built from commit `a650b156` (the tree was dirty only because of the user's
+uncommitted `AGENTS.md` line).
+
+| File | SHA-256 | Bytes | Signing |
+|---|---|---|---|
+| `artifacts/local-service-installer/20261115-150454/airk-service-1.8.202-x86_64-pc-windows-msvc-installer.exe` | `84c2aae5a26a2ced5cd2be2f42610d110dd22596184dc7d427d525a331b43fd2` | 75,672,608 | Authenticode valid, Ioka LLC |
+| `artifacts/local-vsix/20261115-151937/vsix/publish/airk-1.8.202.vsix` | `e697ac85c274df345c3e003260b431e271e8eeedafcc4fec2c055227ff9b7354` | 1,700,297 | none (Marketplace signing happens only at publication) |
+| Model parts: prerelease `models-1.8.201`, 44 files | per file in the release notes | 24,130,010,313 | none |
+
+Ran: whole-workspace Clippy (clean, `-D warnings`), the test batches described
+above, a signed release-local build, and `check-service-clients.py --files 16
+--model` against the 1.8.202 runtime pair (exit 0, 120 s, source bytes preserved,
+managed stop complete; report `artifacts/v190/check-service-clients-1.8.202.json`).
+
+Not run: installing the installer or VSIX, upgrade/repair/uninstall journeys,
+silent mode, an end-to-end Provision of the three models, loading them in the
+service, doctests, the full Nextest remainder, real-transport parity suites,
+macOS and Linux.
+
