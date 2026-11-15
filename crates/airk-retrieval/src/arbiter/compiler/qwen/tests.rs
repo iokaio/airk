@@ -288,3 +288,84 @@ fn qwen_native_emits_profile_and_compares_all_independent_input_tensors() -> Res
     )?;
     Ok(())
 }
+
+/// Measurement, not qualification. Counts the exact native tokenizer's tokens
+/// for the retired verbose and the compact Context views of retained real
+/// requests, against the profile cap and the request's actual remaining shared
+/// input budget. No limit is raised to obtain a fit.
+#[test]
+#[ignore = "exact private publisher tokenizer and retained native Context requests required"]
+fn context_prompt_census_old_versus_new_against_profile_cap_and_remaining_budget() -> Result<()> {
+    use crate::arbiter::context_action::prompt_tests::{compact_for_census, legacy_prompt};
+    use airk_core::native_context_action::NativeContextActionRequest;
+    let tokenizer =
+        tokenizers::Tokenizer::from_bytes(std::fs::read(std::env::var("AIRK_QWEN_TOKENIZER")?)?)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(std::env::var(
+        "AIRK_CONTEXT_CENSUS_REQUESTS",
+    )?)?)?;
+    ensure!(!rows.is_empty(), "retained Context request census is empty");
+    let profile = profile();
+    let tokens = |state: &str, question: &str, options: &[Candidate]| -> Result<usize> {
+        let controls = &profile.controls;
+        let options = options
+            .iter()
+            .map(|option| {
+                Ok(Candidate {
+                    id: super::super::escape(&option.id, controls)?,
+                    text: super::super::escape(&option.text, controls)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let text = prompt(
+            &super::super::escape(state, controls)?,
+            &super::super::escape(question, controls)?,
+            &options,
+            &profile.symbols,
+        )?;
+        Ok(tokenizer
+            .encode(text.as_str(), false)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .get_ids()
+            .len())
+    };
+    let mut report = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let request: NativeContextActionRequest =
+            serde_json::from_value(row.get("request").unwrap_or(row).clone())?;
+        let old = legacy_prompt(
+            &request.question,
+            &request.records,
+            &request.choices,
+            &request.roster,
+        )?;
+        let new = compact_for_census(&request)?;
+        let old_tokens = tokens(&old.state, &old.question, &old.candidates)?;
+        let new_tokens = tokens(&new.state, &new.question, &new.candidates)?;
+        let remaining = request.remaining_input_tokens;
+        println!(
+            "request {index}: old {old_tokens} new {new_tokens} remaining shared budget {remaining}; fits 2048 old/new {}/{}; fits 8192 old/new {}/{}; fits remaining old/new {}/{}",
+            old_tokens <= 2048,
+            new_tokens <= 2048,
+            old_tokens <= 8192,
+            new_tokens <= 8192,
+            old_tokens <= remaining,
+            new_tokens <= remaining
+        );
+        ensure!(
+            new_tokens <= old_tokens,
+            "compact prompt exceeded the retired prompt for request {index}"
+        );
+        report.push(serde_json::json!({"request":index,"old_tokens":old_tokens,
+            "new_tokens":new_tokens,"remaining_input_tokens":remaining,
+            "fits_profile_2048":{"old":old_tokens<=2048,"new":new_tokens<=2048},
+            "fits_profile_8192":{"old":old_tokens<=8192,"new":new_tokens<=8192},
+            "fits_remaining_budget":{"old":old_tokens<=remaining,"new":new_tokens<=remaining}}));
+    }
+    if let Ok(output) = std::env::var("AIRK_CONTEXT_CENSUS_OUTPUT") {
+        let output = std::path::PathBuf::from(output);
+        ensure!(!output.exists(), "fresh private census output required");
+        std::fs::write(&output, serde_json::to_vec_pretty(&report)?)?;
+    }
+    Ok(())
+}

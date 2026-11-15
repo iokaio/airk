@@ -157,7 +157,7 @@ def validate_runtime(runtime, version, target, source):
         raise ValueError("Runtime standalone launcher image is missing")
     allowed = {*executables, launcher, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     required = allowed | {"notices/inventory.json", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"}
-    if tuple(int(part) for part in version.split(".")) >= (1, 9, 0):
+    if tuple(int(part) for part in version.split(".")) >= (1, 8, 201):
         # The legal producer owns the exact companion names and authenticated pins.
         # Historical candidates retain their original two-file notice contract.
         legal = builder.load_script("license-notices")

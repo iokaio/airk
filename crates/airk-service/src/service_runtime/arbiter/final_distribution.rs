@@ -97,12 +97,15 @@ pub struct RecordedDecision {
     pub approved_calibration_component_equivalences: BTreeSet<Sha256Digest>,
     #[serde(default)]
     pub approved_component_target_provenances: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_download_source_maps: BTreeSet<Sha256Digest>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub profile: PinnedFile,
     pub final_proof: PinnedFile,
+    pub download_sources: PinnedFile,
     pub files: BTreeMap<String, PathBuf>,
 }
 #[derive(Serialize)]
@@ -1524,60 +1527,111 @@ fn verify_proof(
     // reports remain unmodified; a raw numeric/resource/CAL/A6 bool is insufficient.
     Ok((proof, candidate.final_proof.sha256))
 }
-fn logical_asset(
-    profile: &Profile,
-    asset: &Asset,
-    path: &Path,
-    tag: &str,
-) -> Result<AssetDownload> {
+fn logical_asset(asset: &Asset, path: &Path, download: &AssetDownload) -> Result<()> {
+    ensure!(
+        download.asset_name == asset.name,
+        "source map asset identity differs"
+    );
+    download.source_count()?; // Core owns origin, part bounds and complete backups.
     let meta = fs::symlink_metadata(path)?;
     ensure!(
         meta.is_file() && !meta.file_type().is_symlink() && meta.len() == asset.bytes,
         "logical source object differs"
     );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            meta.file_attributes() & 0x400 == 0,
+            "logical source reparse refused"
+        );
+    }
     let mut file = fs::File::open(path)?;
     let mut full = Sha256::new();
-    let mut consumed = 0u64;
-    let mut parts = Vec::new();
-    let model = serde_json::to_value(profile.model)?
-        .as_str()
-        .context("model identity")?
-        .to_owned();
-    let mut buffer = vec![0u8; 4 << 20];
-    while consumed < asset.bytes {
-        let length = (asset.bytes - consumed).min(1 << 30);
-        let mut remaining = length;
-        let mut part = Sha256::new();
+    let mut consumed = 0_u64;
+    let mut buffer = vec![0_u8; 4 << 20];
+    for part in &download.parts {
+        let mut remaining = part.bytes;
+        let mut digest = Sha256::new();
         while remaining > 0 {
             let wanted = usize::try_from(remaining.min(buffer.len() as u64))?;
             let count = file.read(&mut buffer[..wanted])?;
             ensure!(count > 0, "logical source shortened");
-            part.update(&buffer[..count]);
+            digest.update(&buffer[..count]);
             full.update(&buffer[..count]);
-            consumed += count as u64;
+            consumed = consumed
+                .checked_add(count as u64)
+                .context("source byte overflow")?;
             remaining -= count as u64;
         }
-        parts.push(AssetPart {
-            url: format!(
-                "https://github.com/iokaio/airk/releases/download/{tag}/{model}-{}.part{:02}",
-                asset.sha256,
-                parts.len() + 1
-            ),
-            bytes: length,
-            sha256: Sha256Digest::from_bytes(part.finalize().into()),
-        });
+        ensure!(
+            Sha256Digest::from_bytes(digest.finalize().into()) == part.sha256,
+            "approved ordered local part digest differs"
+        );
     }
-    let mut extra = [0u8; 1];
+    let mut extra = [0_u8; 1];
     ensure!(
-        file.read(&mut extra)? == 0
+        consumed == asset.bytes
+            && file.read(&mut extra)? == 0
             && file.metadata()?.len() == asset.bytes
             && Sha256Digest::from_bytes(full.finalize().into()) == asset.sha256,
         "complete logical asset source changed"
     );
-    Ok(AssetDownload {
-        asset_name: asset.name.clone(),
-        parts,
-    })
+    Ok(())
+}
+fn verified_download_sources(
+    profile: &Profile,
+    candidate: &Candidate,
+    decision: &RecordedDecision,
+) -> Result<Vec<AssetDownload>> {
+    ensure!(
+        decision
+            .approved_download_source_maps
+            .contains(&candidate.download_sources.sha256),
+        "download source map absent from recorded approval"
+    );
+    ensure!(
+        candidate.files.keys().collect::<BTreeSet<_>>()
+            == profile
+                .assets
+                .iter()
+                .map(|a| &a.name)
+                .collect::<BTreeSet<_>>(),
+        "local source map census differs"
+    );
+    let downloads: Vec<AssetDownload> =
+        serde_json::from_slice(&pinned(&candidate.download_sources)?)?;
+    ensure!(
+        downloads.len() == profile.assets.len()
+            && downloads
+                .iter()
+                .map(|d| &d.asset_name)
+                .collect::<BTreeSet<_>>()
+                == profile
+                    .assets
+                    .iter()
+                    .map(|a| &a.name)
+                    .collect::<BTreeSet<_>>(),
+        "approved source map has missing/duplicate/foreign logical assets"
+    );
+    let mut proposed = profile.clone();
+    proposed.downloads = downloads.clone();
+    proposed.validate_release_downloads()?;
+    for asset in &profile.assets {
+        let download = downloads
+            .iter()
+            .find(|d| d.asset_name == asset.name)
+            .context("approved asset source missing")?;
+        logical_asset(
+            asset,
+            candidate
+                .files
+                .get(&asset.name)
+                .context("local logical asset source missing")?,
+            download,
+        )?;
+    }
+    Ok(downloads)
 }
 fn validate_task_scope(profile: &Profile, files: &BTreeMap<String, PathBuf>) -> Result<()> {
     if profile.declared_stage() == Some(Stage::Context) {
@@ -1645,6 +1699,12 @@ pub fn promote(tag: &str, decision_pin: &PinnedFile, candidates: &[Candidate]) -
                 && models.insert(profile.model),
             "already-promoted/duplicate candidate"
         );
+        ensure!(
+            decision
+                .approved_download_source_maps
+                .contains(&candidate.download_sources.sha256),
+            "download source map absent from recorded approval"
+        );
         let (proof, proof_sha) = verify_proof(&profile, candidate, &decision)?;
         ensure!(
             candidate.files.keys().cloned().collect::<BTreeSet<_>>()
@@ -1656,16 +1716,7 @@ pub fn promote(tag: &str, decision_pin: &PinnedFile, candidates: &[Candidate]) -
             "incomplete/extraneous source map"
         );
         validate_task_scope(&profile, &candidate.files)?;
-        let mut downloads = Vec::new();
-        for asset in &profile.assets {
-            downloads.push(logical_asset(
-                &profile,
-                asset,
-                &candidate.files[&asset.name],
-                tag,
-            )?);
-        }
-        profile.downloads = downloads;
+        profile.downloads = verified_download_sources(&profile, candidate, &decision)?;
         profile.qualification = Some(proof_sha);
         profile.qualified_targets = vec![QualifiedTarget {
             target: proof.binding.target,
@@ -1693,28 +1744,26 @@ pub fn promote(tag: &str, decision_pin: &PinnedFile, candidates: &[Candidate]) -
         for download in &profile.downloads {
             let mut offset = 0u64;
             for part in &download.parts {
-                let filename = part
-                    .url
-                    .rsplit('/')
-                    .next()
-                    .context("native release part filename")?
-                    .to_owned();
-                if let Some(old) = parts.get(&filename) {
-                    ensure!(
-                        old.bytes == part.bytes && old.sha256 == part.sha256,
-                        "conflicting native part slice"
-                    );
-                } else {
-                    parts.insert(
-                        filename,
-                        PartSource {
-                            profile: profile.manifest,
-                            asset_name: download.asset_name.clone(),
-                            offset,
-                            bytes: part.bytes,
-                            sha256: part.sha256,
-                        },
-                    );
+                for filename in
+                    airk_retrieval::arbiter::publication::github_part_filenames(part, tag)?
+                {
+                    if let Some(old) = parts.get(&filename) {
+                        ensure!(
+                            old.bytes == part.bytes && old.sha256 == part.sha256,
+                            "conflicting native part slice"
+                        );
+                    } else {
+                        parts.insert(
+                            filename,
+                            PartSource {
+                                profile: profile.manifest,
+                                asset_name: download.asset_name.clone(),
+                                offset,
+                                bytes: part.bytes,
+                                sha256: part.sha256,
+                            },
+                        );
+                    }
                 }
                 offset = offset
                     .checked_add(part.bytes)
@@ -2228,3 +2277,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod source_map_tests;

@@ -80,9 +80,15 @@ function compileRelease(){
     verifyJavaScript(new TextDecoder('utf-8',{fatal:true}).decode(result.outputFiles[0].contents),new Set());
     return Buffer.from(result.outputFiles[0].contents);
 }
+function finalSeries(){
+    const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version.split('.').map(Number);
+    return version[0]>1||(version[0]===1&&version[1]>=9);
+}
 function verifyReleaseBundle(bytes,required=true){
     if(bytes.length>4*1024*1024){throw new Error('Release bootstrap bundle exceeds bound');}
-    if(required){nativeProjection(true);}
+    // Local 1.8.x candidates may omit the qualified native publication capture (docs/arbiter/relaxations.md);
+    // the reserved final series (>= 1.9.0) still requires it.
+    if(required&&finalSeries()){nativeProjection(true);}
     if(!Buffer.from(bytes).equals(compileRelease())){throw new Error('Release bootstrap differs from exact source and native projection');}
 }
 function compileProvenance(){

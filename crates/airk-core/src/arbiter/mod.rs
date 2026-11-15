@@ -139,6 +139,9 @@ pub struct Asset {
 #[serde(deny_unknown_fields)]
 pub struct AssetPart {
     pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 2))]
+    pub backup_urls: Vec<String>,
     pub bytes: u64,
     pub sha256: Sha256Digest,
 }
@@ -261,7 +264,7 @@ impl CompilerProfile {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == COMPILER_SCHEMA
-                && (1..=2048).contains(&self.max_tokens)
+                && (1..=8192).contains(&self.max_tokens)
                 && (1..=8).contains(&self.max_options),
             "invalid Arbiter compiler profile"
         );
@@ -373,7 +376,7 @@ pub enum ManagementRequest {
 }
 impl Profile {
     /// A compiled qualified release must bind every logical asset and each
-    /// bounded GitHub release part. Downloaded metadata cannot supply this list.
+    /// bounded part with complete reviewed source ordinals. Downloaded metadata cannot supply this list.
     pub fn validate_release_downloads(&self) -> Result<()> {
         self.validate()?;
         ensure!(
@@ -391,35 +394,9 @@ impl Profile {
                 .iter()
                 .find(|asset| asset.name == download.asset_name)
                 .ok_or_else(|| anyhow::anyhow!("unknown Arbiter asset download"))?;
-            ensure!(
-                !download.parts.is_empty() && download.parts.len() <= 16,
-                "Arbiter asset part limit"
-            );
+            download.source_count()?;
             let mut bytes = 0_u64;
-            let mut urls = BTreeSet::new();
             for part in &download.parts {
-                ensure!(
-                    part.bytes > 0 && part.bytes <= 1_u64 << 30 && urls.insert(&part.url),
-                    "invalid Arbiter asset part"
-                );
-                let path = part
-                    .url
-                    .strip_prefix("https://github.com/iokaio/airk/releases/download/")
-                    .ok_or_else(|| anyhow::anyhow!("unapproved Arbiter asset source"))?;
-                let pieces = path.split('/').collect::<Vec<_>>();
-                ensure!(
-                    pieces.len() == 2
-                        && pieces.iter().all(|piece| {
-                            !piece.is_empty()
-                                && piece.len() <= 192
-                                && *piece != "."
-                                && *piece != ".."
-                                && piece.bytes().all(|byte| {
-                                    byte.is_ascii_alphanumeric() || b"._-".contains(&byte)
-                                })
-                        }),
-                    "invalid Arbiter release asset URL"
-                );
                 bytes = bytes
                     .checked_add(part.bytes)
                     .ok_or_else(|| anyhow::anyhow!("Arbiter part byte overflow"))?;
@@ -480,7 +457,7 @@ impl Profile {
         }
 
         ensure!(
-            (1..=2048).contains(&self.max_tokens) && (1..=64).contains(&self.max_candidates),
+            (1..=8192).contains(&self.max_tokens) && (1..=64).contains(&self.max_candidates),
             "unqualified Arbiter context profile"
         );
         ensure!(
@@ -626,10 +603,10 @@ impl Budget {
             (1..=12).contains(&self.calls)
                 && (1..=4).contains(&self.rounds)
                 && (1..=12).contains(&self.fanout)
-                && (1..=2048).contains(&self.input_tokens)
+                && (1..=8192).contains(&self.input_tokens)
                 && (1..=64).contains(&self.candidates)
                 && (1024..=524_288).contains(&self.max_bytes)
-                && (1..=30_000).contains(&self.deadline_ms),
+                && (1..=120_000).contains(&self.deadline_ms),
             "invalid Arbiter context budget"
         );
         Ok(())
@@ -922,6 +899,9 @@ impl ContextResponse {
         Ok(())
     }
 }
+
+mod downloads;
+pub use downloads::{DownloadOrigin, download_origin};
 
 pub mod context_action;
 pub mod literal;

@@ -298,7 +298,7 @@ impl crate::Kernel {
         native_budget.deadline_ms = deadline
             .saturating_duration_since(started)
             .as_millis()
-            .min(30_000) as u64;
+            .min(120_000) as u64;
         ensure!(
             native_budget.deadline_ms > 0,
             "joint original deadline exhausted"
@@ -396,7 +396,7 @@ impl crate::Kernel {
                                 remaining_ms: deadline
                                     .saturating_duration_since(Instant::now())
                                     .as_millis()
-                                    .min(30_000)
+                                    .min(120_000)
                                     as u64,
                                 remaining_input_tokens: joint
                                     .token_limit

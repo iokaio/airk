@@ -22,7 +22,7 @@ pub(super) fn validate_profile(profile: &CompilerProfile) -> Result<()> {
     ensure!(
         profile.recipe == CompilerRecipe::QwenRerankYesNoV1
             && profile.max_options == 2
-            && (1..=2048).contains(&profile.max_tokens)
+            && (1..=8192).contains(&profile.max_tokens)
             && profile
                 .controls
                 .iter()

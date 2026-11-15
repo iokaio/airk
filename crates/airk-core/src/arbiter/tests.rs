@@ -424,3 +424,24 @@ fn explicit_cpu4_tier_preserves_closed_execution_rules_and_emits_native_cases() 
     }
     Ok(())
 }
+
+#[test]
+fn request_budget_ceilings_are_literal_8192_tokens_and_120000_ms() {
+    let ok = Budget {
+        input_tokens: 8192,
+        deadline_ms: 120_000,
+        ..Budget::default()
+    };
+    assert!(ok.validate().is_ok());
+    for (tokens, deadline) in [(8193, 120_000), (8192, 120_001), (0, 120_000), (8192, 0)] {
+        let budget = Budget {
+            input_tokens: tokens,
+            deadline_ms: deadline,
+            ..Budget::default()
+        };
+        assert!(budget.validate().is_err(), "{tokens}/{deadline}");
+    }
+    // Compiler and Context profile token ceilings use the same literal bound.
+    assert_eq!(Budget::default().input_tokens, 2048);
+    assert_eq!(Budget::default().deadline_ms, 30_000);
+}

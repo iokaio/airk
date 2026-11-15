@@ -41,6 +41,33 @@ pub fn validate_candidate_for_distribution(profile: &Profile) -> Result<()> {
 pub fn project_distribution_candidate(bytes: &[u8], tag: &str) -> Result<Publication> {
     project(bytes, tag)
 }
+/// Actual GitHub files named by a validated part, including real backup locations.
+/// HF locations remain authenticated in the complete compiled catalog, not this
+/// GitHub release-file projection. This validates metadata, not availability.
+pub fn github_part_filenames(part: &AssetPart, tag: &str) -> Result<BTreeSet<String>> {
+    part.validate()?;
+    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
+    let mut names = BTreeSet::new();
+    for ordinal in 0..=part.backup_urls.len() {
+        let source = part
+            .source_url(ordinal)
+            .context("complete part source roster")?;
+        match download_origin(source)? {
+            DownloadOrigin::HuggingFace => continue,
+            DownloadOrigin::GitHubRelease => {
+                let filename = source
+                    .strip_prefix(&prefix)
+                    .context("asset tag differs from final release")?;
+                ensure!(
+                    !filename.is_empty() && !filename.contains('/'),
+                    "invalid release filename"
+                );
+                names.insert(filename.to_owned());
+            }
+        }
+    }
+    Ok(names)
+}
 fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -64,7 +91,6 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     let mut models = BTreeSet::new();
     let mut manifests = BTreeSet::new();
     let mut assets = BTreeMap::new();
-    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
     for profile in catalog.profiles {
         profile.validate_release_downloads()?;
         super::runtime::validate_selected_policies(&profile)?;
@@ -103,20 +129,14 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
         );
         for download in profile.downloads {
             for part in download.parts {
-                let filename = part
-                    .url
-                    .strip_prefix(&prefix)
-                    .ok_or_else(|| anyhow::anyhow!("asset tag differs from final release"))?;
-                ensure!(
-                    !filename.is_empty() && !filename.contains('/'),
-                    "invalid release filename"
-                );
-                let pin = PublishedAsset {
-                    bytes: part.bytes,
-                    sha256: part.sha256,
-                };
-                if let Some(previous) = assets.insert(filename.to_owned(), pin.clone()) {
-                    ensure!(previous == pin, "conflicting release asset pins");
+                for filename in github_part_filenames(&part, tag)? {
+                    let pin = PublishedAsset {
+                        bytes: part.bytes,
+                        sha256: part.sha256,
+                    };
+                    if let Some(previous) = assets.insert(filename, pin.clone()) {
+                        ensure!(previous == pin, "conflicting release asset pins");
+                    }
                 }
             }
         }
@@ -177,8 +197,7 @@ mod tests {
         );
         Ok(())
     }
-    #[test]
-    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
+    pub(super) fn selected_profiles() -> Result<Vec<Profile>> {
         let base: Profile = serde_json::from_slice(include_bytes!(
             "../../../../fixtures/arbiter/profile-downloads.json"
         ))?;
@@ -289,6 +308,11 @@ mod tests {
             }
             profiles.push(profile);
         }
+        Ok(profiles)
+    }
+    #[test]
+    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
+        let profiles = selected_profiles()?;
         let input = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
         let positive = project(&serde_json::to_vec(&input)?, "v1.9.0")?;
         assert_eq!(positive.profiles.len(), 3);
@@ -368,3 +392,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod source_tests;

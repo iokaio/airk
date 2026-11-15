@@ -151,8 +151,8 @@
       },
       "verification_deadline_ms": {
         "default": 2000,
-        "description": "Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
-        "maximum": 30000,
+        "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+        "maximum": 120000,
         "minimum": 1,
         "type": "integer"
       },

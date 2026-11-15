@@ -746,7 +746,7 @@ impl AirkServer {
         let handle = tokio::runtime::Handle::current();
         let deadline = std::time::Instant::now()
             .checked_add(std::time::Duration::from_millis(
-                args.request.budget.deadline_ms.min(30_000),
+                args.request.budget.deadline_ms.min(120_000),
             ))
             .unwrap_or_else(std::time::Instant::now);
         let deadline = self

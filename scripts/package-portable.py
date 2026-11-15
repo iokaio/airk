@@ -31,7 +31,7 @@ def instructions(version, target):
     prefix = "& " if windows else ""
     recovery = (f'\nTo resume a retained setup operation, use the matching verified CLI:\n'
                 f'{prefix}"{cli}" service setup --resume "<absolute retained operation-request.json>" --portable\n'
-                'Keep the original request unchanged. Do not add location overrides or use a PID as authority.\n') if tuple(map(int, version.split('.'))) >= (1, 9, 0) else ""
+                'Keep the original request unchanged. Do not add location overrides or use a PID as authority.\n') if tuple(map(int, version.split('.'))) >= (1, 8, 201) else ""
     return f"""AIRK {version} portable ({target})
 
 Extract the complete ZIP into a private folder owned by your account. Keep every

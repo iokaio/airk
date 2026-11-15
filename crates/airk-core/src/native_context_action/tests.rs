@@ -247,7 +247,7 @@ fn native_hook_partition_ordinal_tokens_and_source_universe_are_closed() -> Resu
     );
     for field in ["ordinal", "remaining_input_tokens"] {
         let mut raw = serde_json::to_value(&original)?;
-        raw[field] = serde_json::json!(if field == "ordinal" { 2 } else { 2049 });
+        raw[field] = serde_json::json!(if field == "ordinal" { 2 } else { 8193 });
         let changed: NativeContextActionRequest = serde_json::from_value(raw)?;
         assert!(
             changed

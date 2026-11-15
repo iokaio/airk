@@ -11,7 +11,7 @@ use anyhow::{Context, Result, ensure};
 use std::collections::BTreeMap;
 
 const MAX_ACTIVE_ATTEMPTS: usize = 1024;
-const MAX_INPUT_TOKENS: usize = 2048;
+const MAX_INPUT_TOKENS: usize = 8192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Slot {
@@ -112,7 +112,7 @@ impl Ledger {
         let parent_bytes = serde_json::to_vec(parent_budget)?;
         let budget_window_ns = parent_budget
             .deadline_ms
-            .min(30_000)
+            .min(120_000)
             .saturating_mul(1_000_000);
         let valid_slot = match slot {
             Slot::Context(ordinal) => {

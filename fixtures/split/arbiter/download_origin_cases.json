@@ -1,0 +1,2970 @@
+{
+  "empty_parts": {
+    "download": {
+      "asset_name": "structural-two-part",
+      "parts": []
+    },
+    "valid": false
+  },
+  "hf_primary_actual_same_byte_hf_backup": {
+    "part": {
+      "backup_urls": [
+        "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE"
+      ],
+      "bytes": 11343,
+      "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+      "url": "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE"
+    },
+    "public_metadata_identity_only": true,
+    "source_count": 2
+  },
+  "hf_primary_configured_gh_backup_structural_only": {
+    "part": {
+      "backup_urls": [
+        "https://github.com/iokaio/airk/releases/download/v1.9.0/model.bin"
+      ],
+      "bytes": 11343,
+      "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+      "url": "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE"
+    },
+    "source_count": 2,
+    "working_gh_backup_asserted": false
+  },
+  "hf_primary_no_backup": {
+    "origin": "hugging_face",
+    "part": {
+      "bytes": 11343,
+      "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+      "url": "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE"
+    },
+    "public_metadata_identity_only": true,
+    "source_count": 1
+  },
+  "incomplete_backup_roster": {
+    "download": {
+      "asset_name": "structural-two-part",
+      "parts": [
+        {
+          "backup_urls": [
+            "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE"
+          ],
+          "bytes": 11343,
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+          "url": "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE"
+        },
+        {
+          "bytes": 11343,
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+          "url": "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE"
+        }
+      ]
+    },
+    "valid": false
+  },
+  "network_executed": false,
+  "qualification": false,
+  "retained_profile": {
+    "empty_backups_omit": true,
+    "old_profile_fixture_sha256": "d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593",
+    "profile": {
+      "abi": {
+        "inputs": [
+          {
+            "axes": [
+              "tokens"
+            ],
+            "element": "int64",
+            "name": "input_ids"
+          }
+        ],
+        "output": {
+          "axes": [
+            "options"
+          ],
+          "element": "float32",
+          "name": "scores"
+        },
+        "readout": "decision_symbol"
+      },
+      "assets": [
+        {
+          "bytes": 1,
+          "name": "model.bin",
+          "role": "model",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1,
+          "name": "tokenizer.bin",
+          "role": "tokenizer",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1,
+          "name": "compiler.bin",
+          "role": "compiler",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1,
+          "name": "calibration.bin",
+          "role": "calibration",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1,
+          "name": "notice.bin",
+          "role": "notice",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1,
+          "name": "fixture.bin",
+          "role": "fixture",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "bytes": 1073741825,
+          "name": "weights.data",
+          "role": "external_weights",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "calibration": "1111111111111111111111111111111111111111111111111111111111111111",
+      "compiler": "1111111111111111111111111111111111111111111111111111111111111111",
+      "downloads": [
+        {
+          "asset_name": "model.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/model.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "tokenizer.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/tokenizer.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "compiler.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/compiler.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "calibration.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/calibration.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "notice.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/notice.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "fixture.bin",
+          "parts": [
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/fixture.bin"
+            }
+          ]
+        },
+        {
+          "asset_name": "weights.data",
+          "parts": [
+            {
+              "bytes": 1073741824,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/weights.data.part01"
+            },
+            {
+              "bytes": 1,
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "url": "https://github.com/iokaio/airk/releases/download/v1.9.0/weights.data.part02"
+            }
+          ]
+        }
+      ],
+      "manifest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "max_candidates": 8,
+      "max_tokens": 128,
+      "memory_reservation_bytes": 1048576,
+      "model": "arbiter-small-intern-08b",
+      "peak_disk_bytes": 1073741825,
+      "policy": "1111111111111111111111111111111111111111111111111111111111111111",
+      "profile_id": "download-fixture",
+      "qualification": "1111111111111111111111111111111111111111111111111111111111111111",
+      "runtime": "onnxruntime-cpu/1.30.0",
+      "tasks": [
+        "airk.context_next_read.v1"
+      ]
+    }
+  },
+  "schema": "airk.arbiter.download-origin-cases/1",
+  "schema_document": {
+    "$defs": {
+      "Advice": {
+        "additionalProperties": false,
+        "properties": {
+          "calibration": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "compiler": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "input_digest": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "outcome": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "profile": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          },
+          "task": {
+            "$ref": "#/$defs/Task"
+          },
+          "work": {
+            "$ref": "#/$defs/Work"
+          }
+        },
+        "required": [
+          "schema",
+          "task",
+          "profile",
+          "runtime",
+          "compiler",
+          "calibration",
+          "policy",
+          "scope",
+          "input_digest",
+          "evidence",
+          "work",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "AssessmentApplicability": {
+        "enum": [
+          "current",
+          "historical_after_read",
+          "historical_after_configuration_change",
+          "basis_omitted"
+        ],
+        "type": "string"
+      },
+      "AssessmentBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "read_choices_available": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "read_choices_omitted": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "read_choices_scored": {
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "source_units_available": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_units_omitted": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_units_partial": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_units_presented": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_units_available",
+          "source_units_presented",
+          "source_units_omitted",
+          "source_units_partial",
+          "read_choices_available",
+          "read_choices_scored",
+          "read_choices_omitted"
+        ],
+        "type": "object"
+      },
+      "AssessmentEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "applicability": {
+            "$ref": "#/$defs/AssessmentApplicability"
+          },
+          "basis": {
+            "$ref": "#/$defs/AssessmentBasis"
+          },
+          "ordinal": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "partition": {
+            "$ref": "#/$defs/ScopeBinding"
+          },
+          "result": {
+            "$ref": "#/$defs/AssessmentResult"
+          }
+        },
+        "required": [
+          "ordinal",
+          "partition",
+          "basis",
+          "result",
+          "applicability"
+        ],
+        "type": "object"
+      },
+      "AssessmentResult": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "advice": {
+                "$ref": "#/$defs/ContextActionAdvice"
+              },
+              "card": {
+                "$ref": "#/$defs/ContextActionCard"
+              },
+              "status": {
+                "const": "selected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "card",
+              "advice"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "advice": {
+                "$ref": "#/$defs/ContextActionAdvice"
+              },
+              "status": {
+                "const": "abstained",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "advice"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "advice": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContextActionAdvice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "$ref": "#/$defs/AssessmentUnavailable"
+              },
+              "status": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "work": {
+                "$ref": "#/$defs/Work"
+              },
+              "work_unknown": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "status",
+              "reason",
+              "work",
+              "work_unknown",
+              "advice"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AssessmentUnavailable": {
+        "enum": [
+          "disabled",
+          "not_enrolled",
+          "task_unsupported",
+          "no_evidence",
+          "abstained",
+          "unavailable",
+          "token_budget",
+          "deadline",
+          "new_evidence",
+          "basis_omitted"
+        ],
+        "type": "string"
+      },
+      "Asset": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/$defs/AssetRole"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Digest"
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "bytes",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "AssetDownload": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_name": {
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/$defs/AssetPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "asset_name",
+          "parts"
+        ],
+        "type": "object"
+      },
+      "AssetPart": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "type": "array"
+          },
+          "bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "bytes",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "AssetRole": {
+        "enum": [
+          "model",
+          "external_weights",
+          "tokenizer",
+          "compiler",
+          "calibration",
+          "notice",
+          "fixture"
+        ],
+        "type": "string"
+      },
+      "Availability": {
+        "enum": [
+          "disabled",
+          "index_disabled",
+          "unqualified",
+          "unsupported_system",
+          "unsupported_task",
+          "missing_assets",
+          "requested",
+          "downloading",
+          "verifying",
+          "warming",
+          "ready",
+          "constrained",
+          "draining",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "BoundToken": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "id"
+        ],
+        "type": "object"
+      },
+      "Budget": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "candidates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "deadline_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fanout": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rounds": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "rounds",
+          "fanout",
+          "input_tokens",
+          "candidates",
+          "max_bytes",
+          "deadline_ms"
+        ],
+        "type": "object"
+      },
+      "CompilerProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "controls": {
+            "items": {
+              "$ref": "#/$defs/BoundToken"
+            },
+            "type": "array"
+          },
+          "max_options": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "recipe": {
+            "$ref": "#/$defs/CompilerRecipe"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/$defs/BoundToken"
+            },
+            "type": "array"
+          },
+          "tokenizer": {
+            "$ref": "#/$defs/Sha256Digest"
+          }
+        },
+        "required": [
+          "schema",
+          "recipe",
+          "tokenizer",
+          "max_tokens",
+          "max_options",
+          "controls",
+          "symbols"
+        ],
+        "type": "object"
+      },
+      "CompilerRecipe": {
+        "enum": [
+          "intern_single_choice_v1",
+          "strands_single_choice_v1",
+          "kev_single_choice_v1",
+          "qwen_single_choice_v1",
+          "qwen_rerank_yes_no_v1"
+        ],
+        "type": "string"
+      },
+      "Configuration": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog": {
+            "$ref": "#/$defs/Incarnation"
+          },
+          "context": {
+            "$ref": "#/$defs/StageConfiguration"
+          },
+          "focus": {
+            "$ref": "#/$defs/StageConfiguration"
+          },
+          "installation": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "installation",
+          "catalog",
+          "revision",
+          "focus",
+          "context"
+        ],
+        "type": "object"
+      },
+      "ContextAction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "choice": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "kind": {
+                "const": "read",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "choice"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "sufficient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "clarify",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "no_justified_read",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextActionAdvice": {
+        "additionalProperties": false,
+        "description": "Same immutable native bindings as Advice, with a distinct joint-task schema.",
+        "properties": {
+          "calibration": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "compiler": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "input_digest": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "observed_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "profile": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "reserved_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          },
+          "task": {
+            "$ref": "#/$defs/Task"
+          },
+          "task_policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "work": {
+            "$ref": "#/$defs/Work"
+          }
+        },
+        "required": [
+          "schema",
+          "task",
+          "profile",
+          "runtime",
+          "compiler",
+          "calibration",
+          "policy",
+          "task_policy",
+          "scope",
+          "input_digest",
+          "evidence",
+          "reserved_input_tokens",
+          "observed_input_tokens",
+          "work",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ContextActionCard": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/ContextAction"
+          },
+          "assessments": {
+            "items": {
+              "$ref": "#/$defs/EvidenceAssessment"
+            },
+            "type": "array"
+          },
+          "gap": {
+            "$ref": "#/$defs/Gap"
+          },
+          "id": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "reason": {
+            "$ref": "#/$defs/ContextReason"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "gap",
+          "reason",
+          "assessments"
+        ],
+        "type": "object"
+      },
+      "ContextActionClass": {
+        "enum": [
+          "read",
+          "sufficient",
+          "clarify",
+          "no_justified_read"
+        ],
+        "type": "string"
+      },
+      "ContextActionRoster": {
+        "additionalProperties": false,
+        "description": "Frozen native alternatives, not an arbitrary model-supplied operation list.",
+        "properties": {
+          "basis": {
+            "$ref": "#/$defs/AssessmentBasis"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/$defs/ContextActionCard"
+            },
+            "type": "array"
+          },
+          "input_digest": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          }
+        },
+        "required": [
+          "schema",
+          "scope",
+          "input_digest",
+          "policy",
+          "basis",
+          "cards"
+        ],
+        "type": "object"
+      },
+      "ContextReason": {
+        "enum": [
+          "additional_evidence_may_help",
+          "retained_evidence_covers_question",
+          "missing_definition",
+          "missing_constraint",
+          "missing_example",
+          "missing_test",
+          "missing_counterevidence",
+          "conflicting_evidence",
+          "ambiguous_question",
+          "no_verified_useful_read"
+        ],
+        "type": "string"
+      },
+      "ContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "$ref": "#/$defs/Budget"
+          },
+          "question": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "question",
+          "budget"
+        ],
+        "type": "object"
+      },
+      "ContextRequestV2": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "$ref": "#/$defs/Budget"
+          },
+          "question": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "question",
+          "budget"
+        ],
+        "type": "object"
+      },
+      "ContextResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "advice": {
+            "items": {
+              "$ref": "#/$defs/Advice"
+            },
+            "type": "array"
+          },
+          "applications": {
+            "items": {
+              "$ref": "#/$defs/IndexApplication"
+            },
+            "type": "array"
+          },
+          "candidate_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/$defs/Gap"
+            },
+            "type": "array"
+          },
+          "omitted_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "packet_schema": {
+            "type": "string"
+          },
+          "paragraphs": {
+            "items": {
+              "$ref": "#/$defs/GroundedParagraph"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRecord"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "stop": {
+            "$ref": "#/$defs/StopReason"
+          },
+          "work": {
+            "$ref": "#/$defs/Work"
+          }
+        },
+        "required": [
+          "schema",
+          "packet_schema",
+          "question",
+          "records",
+          "paragraphs",
+          "gaps",
+          "stop",
+          "work",
+          "candidate_count",
+          "omitted_count",
+          "advice",
+          "applications"
+        ],
+        "type": "object"
+      },
+      "ContextResponseV2": {
+        "additionalProperties": false,
+        "properties": {
+          "applications": {
+            "items": {
+              "$ref": "#/$defs/IndexApplication"
+            },
+            "type": "array"
+          },
+          "assessment": {
+            "$ref": "#/$defs/PartitionAssessment"
+          },
+          "assessment_history": {
+            "items": {
+              "$ref": "#/$defs/AssessmentEvent"
+            },
+            "type": "array"
+          },
+          "candidate_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/$defs/Gap"
+            },
+            "type": "array"
+          },
+          "omitted_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "packet_schema": {
+            "type": "string"
+          },
+          "paragraphs": {
+            "items": {
+              "$ref": "#/$defs/GroundedParagraph"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRecord"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "stop": {
+            "$ref": "#/$defs/PartitionTermination"
+          },
+          "work": {
+            "$ref": "#/$defs/Work"
+          }
+        },
+        "required": [
+          "schema",
+          "packet_schema",
+          "question",
+          "records",
+          "paragraphs",
+          "gaps",
+          "stop",
+          "work",
+          "candidate_count",
+          "omitted_count",
+          "assessment_history",
+          "assessment",
+          "applications"
+        ],
+        "type": "object"
+      },
+      "CpuFit": {
+        "additionalProperties": false,
+        "properties": {
+          "inter_threads": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "intra_threads": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minimum_physical_cores": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sequential": {
+            "type": "boolean"
+          },
+          "spinning": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "minimum_physical_cores",
+          "intra_threads",
+          "inter_threads",
+          "sequential",
+          "spinning"
+        ],
+        "type": "object"
+      },
+      "Decision": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "boolean",
+                "type": "string"
+              },
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "choice",
+                "type": "string"
+              },
+              "value": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "relevance",
+                "type": "string"
+              },
+              "value": {
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "role",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/EvidenceRole"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "next_read",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Sha256Digest"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "gap",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Gap"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "context_action",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Sha256Digest"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Enrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "index_id": {
+            "$ref": "#/$defs/IndexId"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/Task"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "index_id",
+          "tasks"
+        ],
+        "type": "object"
+      },
+      "EvidenceAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "relevance": {
+            "$ref": "#/$defs/RelevanceHypothesis"
+          },
+          "role": {
+            "$ref": "#/$defs/EvidenceRole"
+          }
+        },
+        "required": [
+          "evidence",
+          "role",
+          "relevance"
+        ],
+        "type": "object"
+      },
+      "EvidenceRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "canonical_result": true,
+          "id": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "operation": {
+            "$ref": "#/$defs/NativeRead"
+          },
+          "role": {
+            "$ref": "#/$defs/EvidenceRole"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "operation",
+          "arguments",
+          "role",
+          "canonical_result"
+        ],
+        "type": "object"
+      },
+      "EvidenceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/SourceUnitKind"
+          },
+          "record": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "result_pointer": {
+            "type": "string"
+          },
+          "utf8_end": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "utf8_start": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record",
+          "kind",
+          "result_pointer",
+          "utf8_start",
+          "utf8_end"
+        ],
+        "type": "object"
+      },
+      "EvidenceRole": {
+        "enum": [
+          "definition",
+          "constraint",
+          "example",
+          "test",
+          "counterevidence",
+          "document",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "FocusApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "application": {
+            "$ref": "#/$defs/IndexApplication"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FocusIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FocusProfileLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "application"
+        ],
+        "type": "object"
+      },
+      "FocusApplicationReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "availability": {
+            "$ref": "#/$defs/Availability"
+          },
+          "candidate_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FocusIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_digest": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "observed_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "omitted_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "original_order": {
+            "description": "Complete canonical returned candidate order, including the unscored tail.",
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "presentations": {
+            "description": "Exact source windows prepared for scoring, not proof of successful FFI.",
+            "items": {
+              "$ref": "#/$defs/FocusPresentation"
+            },
+            "type": "array"
+          },
+          "presented_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ranked_order": {
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reserved_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          },
+          "scored_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scores": {
+            "description": "Scored candidates MUST be the exact original prefix, in original order.",
+            "items": {
+              "$ref": "#/$defs/FocusScore"
+            },
+            "type": "array"
+          },
+          "work": {
+            "$ref": "#/$defs/Work"
+          }
+        },
+        "required": [
+          "schema",
+          "scope",
+          "availability",
+          "reason",
+          "applied",
+          "input_digest",
+          "original_order",
+          "ranked_order",
+          "scores",
+          "presentations",
+          "presented_count",
+          "candidate_count",
+          "scored_count",
+          "omitted_count",
+          "reserved_input_tokens",
+          "work"
+        ],
+        "type": "object"
+      },
+      "FocusIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "calibration": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "compiler": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "profile": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "task_policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          }
+        },
+        "required": [
+          "profile",
+          "runtime",
+          "compiler",
+          "calibration",
+          "task_policy"
+        ],
+        "type": "object"
+      },
+      "FocusObservation": {
+        "description": "Only the canonical Search field carries this observation. A compact notice\nis known pre-dispatch absence, never a substitute for unknown native work.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "receipt",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/$defs/FocusApplicationReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "availability": {
+                "$ref": "#/$defs/Availability"
+              },
+              "candidate_count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "not_applied",
+                "type": "string"
+              },
+              "order_digest": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Sha256Digest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "work_unknown": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "availability",
+              "reason",
+              "candidate_count",
+              "work_unknown"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FocusPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "source_bytes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "utf8_end": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "utf8_start": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate",
+          "utf8_start",
+          "utf8_end",
+          "source_bytes"
+        ],
+        "type": "object"
+      },
+      "FocusProfileLimits": {
+        "additionalProperties": false,
+        "description": "Facts from an actual authenticated qualified profile, never caller authority.",
+        "properties": {
+          "max_candidates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pair_input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_candidates",
+          "pair_input_tokens",
+          "max_input_tokens"
+        ],
+        "type": "object"
+      },
+      "FocusScore": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "no_logit": {
+            "format": "float",
+            "type": "number"
+          },
+          "relevance": {
+            "description": "Publisher two-logit normalization; not calibrated sufficiency/confidence.",
+            "format": "float",
+            "type": "number"
+          },
+          "yes_logit": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "candidate",
+          "no_logit",
+          "yes_logit",
+          "relevance"
+        ],
+        "type": "object"
+      },
+      "Gap": {
+        "enum": [
+          "sufficient",
+          "definition",
+          "constraint",
+          "example",
+          "test",
+          "counterevidence",
+          "ambiguous",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "GroundedParagraph": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "type": "array"
+          },
+          "interpretation": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence",
+          "interpretation"
+        ],
+        "type": "object"
+      },
+      "Incarnation": {
+        "pattern": "^[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "IndexApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/$defs/Availability"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          }
+        },
+        "required": [
+          "scope",
+          "availability",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "IndexId": {
+        "pattern": "^idx_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "InitializationStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_legacy_digest": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "JointAssetBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/$defs/AssetRole"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Digest"
+          }
+        },
+        "required": [
+          "role",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "JointCalibration": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JointAssetBinding"
+            },
+            "type": "object"
+          },
+          "compiler": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "model": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/$defs/JointRule"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "score_abi": {
+            "$ref": "#/$defs/ScoreAbi"
+          },
+          "task_policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          }
+        },
+        "required": [
+          "schema",
+          "model",
+          "compiler",
+          "task_policy",
+          "score_abi",
+          "assets",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "JointRule": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/ContextActionClass"
+          },
+          "allowed_gaps": {
+            "items": {
+              "$ref": "#/$defs/Gap"
+            },
+            "type": "array"
+          },
+          "allowed_reasons": {
+            "items": {
+              "$ref": "#/$defs/ContextReason"
+            },
+            "type": "array"
+          },
+          "allowed_relevance": {
+            "items": {
+              "$ref": "#/$defs/RelevanceHypothesis"
+            },
+            "type": "array"
+          },
+          "allowed_roles": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRole"
+            },
+            "type": "array"
+          },
+          "minimum_raw_margin": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action",
+          "allowed_gaps",
+          "allowed_reasons",
+          "allowed_roles",
+          "allowed_relevance",
+          "minimum_raw_margin"
+        ],
+        "type": "object"
+      },
+      "ManagementRequest": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected_legacy_configuration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Sha256Digest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "operation": {
+                "const": "initialize",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "indexes": {
+                "items": {
+                  "$ref": "#/$defs/Enrollment"
+                },
+                "type": "array"
+              },
+              "operation": {
+                "const": "configure",
+                "type": "string"
+              },
+              "selected_profile": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Sha256Digest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "stage": {
+                "$ref": "#/$defs/Stage"
+              }
+            },
+            "required": [
+              "operation",
+              "expected_revision",
+              "stage",
+              "enabled",
+              "indexes"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "const": "provision",
+                "type": "string"
+              },
+              "profile": {
+                "$ref": "#/$defs/Sha256Digest"
+              }
+            },
+            "required": [
+              "operation",
+              "expected_revision",
+              "profile"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "const": "cancel",
+                "type": "string"
+              },
+              "stage": {
+                "$ref": "#/$defs/Stage"
+              }
+            },
+            "required": [
+              "operation",
+              "expected_revision",
+              "stage"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "const": "remove",
+                "type": "string"
+              },
+              "profile": {
+                "$ref": "#/$defs/Sha256Digest"
+              }
+            },
+            "required": [
+              "operation",
+              "expected_revision",
+              "profile"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "const": "recover",
+                "type": "string"
+              },
+              "stage": {
+                "$ref": "#/$defs/Stage"
+              }
+            },
+            "required": [
+              "operation",
+              "expected_revision",
+              "stage"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ModelChoice": {
+        "enum": [
+          "arbiter-small-intern-08b",
+          "arbiter-small-strands-2b",
+          "arbiter-large-intern-4b",
+          "arbiter-large-kev-4b",
+          "arbiter-focus-qwen3-reranker-06b",
+          "arbiter-context-qwen3-17b",
+          "arbiter-context-qwen3-4b"
+        ],
+        "type": "string"
+      },
+      "NativeRead": {
+        "enum": [
+          "search",
+          "definitions",
+          "references",
+          "read_evidence",
+          "document_sections",
+          "context"
+        ],
+        "type": "string"
+      },
+      "Outcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              },
+              "status": {
+                "const": "accepted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "decision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "const": "abstained",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "const": "invalid_input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PartitionAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "$ref": "#/$defs/PartitionCoverage"
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeBinding"
+          },
+          "termination": {
+            "$ref": "#/$defs/PartitionTermination"
+          }
+        },
+        "required": [
+          "scope",
+          "coverage",
+          "termination"
+        ],
+        "type": "object"
+      },
+      "PartitionCoverage": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/AssessmentUnavailable"
+              },
+              "status": {
+                "const": "unassessed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ordinal": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "const": "assessed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "ordinal"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PartitionTermination": {
+        "enum": [
+          "pending",
+          "covered",
+          "clarification_required",
+          "no_justified_read",
+          "no_progress",
+          "budget",
+          "deadline",
+          "refused",
+          "stale",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "Profile": {
+        "additionalProperties": false,
+        "properties": {
+          "abi": {
+            "$ref": "#/$defs/ScoreAbi"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/$defs/Asset"
+            },
+            "type": "array"
+          },
+          "calibration": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "compiler": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "cpu_fit": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CpuFit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "downloads": {
+            "items": {
+              "$ref": "#/$defs/AssetDownload"
+            },
+            "type": "array"
+          },
+          "manifest": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "max_candidates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "memory_reservation_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "peak_disk_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "qualification": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualified_targets": {
+            "items": {
+              "$ref": "#/$defs/QualifiedTarget"
+            },
+            "type": "array"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_policies": {
+            "additionalProperties": false,
+            "properties": {
+              "airk.context_action.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.context_gap.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.context_next_read.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.evidence_relevance.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.evidence_role.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.focus_rank.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.recipe_choice.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.request_supported.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "airk.retrieval_route.v1": {
+                "$ref": "#/$defs/Sha256Digest"
+              }
+            },
+            "type": "object"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/Task"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "model",
+          "profile_id",
+          "manifest",
+          "runtime",
+          "compiler",
+          "calibration",
+          "policy",
+          "tasks",
+          "abi",
+          "max_tokens",
+          "max_candidates",
+          "memory_reservation_bytes",
+          "peak_disk_bytes",
+          "assets"
+        ],
+        "type": "object"
+      },
+      "ProfileStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/$defs/Availability"
+          },
+          "cpu_fit": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CpuFit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "download_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memory_reservation_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "model": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualified_targets": {
+            "items": {
+              "$ref": "#/$defs/QualifiedTarget"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/Task"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "model",
+          "availability",
+          "reason",
+          "tasks"
+        ],
+        "type": "object"
+      },
+      "QualifiedTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_identity": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "execution_identity",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "Readout": {
+        "enum": [
+          "decision_symbol",
+          "pointer_head",
+          "focus_yes_no"
+        ],
+        "type": "string"
+      },
+      "RelevanceHypothesis": {
+        "enum": [
+          "useful",
+          "complementary",
+          "redundant",
+          "uncertain"
+        ],
+        "type": "string"
+      },
+      "RevisionEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "generation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "incarnation": {
+            "$ref": "#/$defs/Incarnation"
+          },
+          "revision": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "token": {
+            "$ref": "#/$defs/RevisionToken"
+          }
+        },
+        "required": [
+          "collection",
+          "incarnation",
+          "generation",
+          "revision",
+          "token"
+        ],
+        "type": "object"
+      },
+      "RevisionToken": {
+        "pattern": "^airk-r1:[0-9a-f]{32}:(0|[1-9][0-9]{0,19}):[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "ScopeBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "catalog": {
+            "$ref": "#/$defs/Incarnation"
+          },
+          "configuration_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "index_id": {
+            "$ref": "#/$defs/IndexId"
+          },
+          "installation": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "publication": {
+            "$ref": "#/$defs/RevisionEnvelope"
+          }
+        },
+        "required": [
+          "installation",
+          "catalog",
+          "index_id",
+          "authorization",
+          "configuration_revision",
+          "publication"
+        ],
+        "type": "object"
+      },
+      "ScoreAbi": {
+        "additionalProperties": false,
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/$defs/TensorContract"
+            },
+            "type": "array"
+          },
+          "output": {
+            "$ref": "#/$defs/TensorContract"
+          },
+          "readout": {
+            "$ref": "#/$defs/Readout"
+          }
+        },
+        "required": [
+          "readout",
+          "inputs",
+          "output"
+        ],
+        "type": "object"
+      },
+      "Sha256Digest": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "SourceUnitKind": {
+        "enum": [
+          "hit"
+        ],
+        "type": "string"
+      },
+      "Stage": {
+        "enum": [
+          "focus",
+          "context"
+        ],
+        "type": "string"
+      },
+      "StageConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "indexes": {
+            "items": {
+              "$ref": "#/$defs/Enrollment"
+            },
+            "type": "array"
+          },
+          "selected_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "indexes"
+        ],
+        "type": "object"
+      },
+      "StageStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "active_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "availability": {
+            "$ref": "#/$defs/Availability"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/$defs/ProfileStatus"
+            },
+            "type": "array"
+          },
+          "queued": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "running": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "availability",
+          "reason",
+          "queued",
+          "running",
+          "profiles"
+        ],
+        "type": "object"
+      },
+      "Status": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/$defs/Configuration"
+          },
+          "context": {
+            "$ref": "#/$defs/StageStatus"
+          },
+          "focus": {
+            "$ref": "#/$defs/StageStatus"
+          },
+          "initialization": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InitializationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Presence marks configuration as a non-writable disabled placeholder."
+          },
+          "schema": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "configuration",
+          "focus",
+          "context"
+        ],
+        "type": "object"
+      },
+      "StopReason": {
+        "enum": [
+          "covered",
+          "no_progress",
+          "no_valid_read",
+          "budget",
+          "deadline",
+          "stale",
+          "refused",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "Task": {
+        "enum": [
+          "airk.request_supported.v1",
+          "airk.retrieval_route.v1",
+          "airk.recipe_choice.v1",
+          "airk.evidence_relevance.v1",
+          "airk.evidence_role.v1",
+          "airk.context_next_read.v1",
+          "airk.context_gap.v1",
+          "airk.context_action.v1",
+          "airk.focus_rank.v1"
+        ],
+        "type": "string"
+      },
+      "TensorContract": {
+        "additionalProperties": false,
+        "properties": {
+          "axes": {
+            "description": "Profile-pinned symbolic axes; batch is always one.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "element": {
+            "$ref": "#/$defs/TensorType"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "element",
+          "axes"
+        ],
+        "type": "object"
+      },
+      "TensorType": {
+        "enum": [
+          "int64",
+          "float32",
+          "bool"
+        ],
+        "type": "string"
+      },
+      "Work": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "calls": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "candidates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "compile_us": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fanout": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inference_us": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "input_tokens": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policy_us": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "queue_us": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rounds": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "rounds",
+          "fanout",
+          "input_tokens",
+          "candidates",
+          "bytes"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "arbiter_contract": 2,
+    "roots": [
+      "Configuration",
+      "StageConfiguration",
+      "StageStatus",
+      "FocusApplicationReceipt",
+      "FocusObservation",
+      "FocusApplication",
+      "FocusProfileLimits",
+      "Profile",
+      "CompilerProfile",
+      "ContextRequest",
+      "ContextResponse",
+      "Advice",
+      "ManagementRequest",
+      "Status",
+      "ContextRequestV2",
+      "ContextResponseV2",
+      "ContextActionRoster",
+      "JointCalibration"
+    ],
+    "title": "AIRK Arbiter Core contract"
+  }
+}

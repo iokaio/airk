@@ -182,14 +182,14 @@ fn arbiter_remaining(
     now_ns: u64,
 ) -> Result<Duration> {
     ensure!(
-        (1..=30_000).contains(&remaining_ms),
+        (1..=120_000).contains(&remaining_ms),
         "invalid Arbiter remaining budget"
     );
     let remaining = attempt
         .context("native Arbiter attempt budget required")?
         .remaining_at(clock, now_ns)?
         .min(Duration::from_millis(remaining_ms))
-        .min(Duration::from_secs(30));
+        .min(Duration::from_secs(120));
     ensure!(
         !remaining.is_zero(),
         "Original native read deadline exhausted before send"

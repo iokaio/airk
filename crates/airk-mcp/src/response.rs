@@ -356,7 +356,7 @@ pub struct VerificationArgs {
     )]
     #[schemars(schema_with = "verification_bytes_schema")]
     pub verification_max_bytes: Option<u64>,
-    /// Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.
+    /// Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -384,7 +384,7 @@ fn verification_bytes_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sch
     schemars::json_schema!({"type":"integer","minimum":1,"maximum":1073741824,"default":16777216})
 }
 fn verification_deadline_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({"type":"integer","minimum":1,"maximum":30000,"default":2000})
+    schemars::json_schema!({"type":"integer","minimum":1,"maximum":120000,"default":2000})
 }
 fn verification_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type":"string","enum":["off","report","require"],"default":"report"})

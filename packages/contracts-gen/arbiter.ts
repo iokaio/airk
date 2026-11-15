@@ -68,6 +68,7 @@ export type AssetDownload = {
 };
 
 export type AssetPart = {
+    backup_urls?: Array<string>;
     bytes: number;
     sha256: Sha256Digest;
     url: string;

@@ -53,8 +53,8 @@ impl NativeContextActionRequest {
                 && self.question.len() <= 16_384
                 && self.records.len() <= 64
                 && (1..=3).contains(&self.ordinal)
-                && (1..=30_000).contains(&self.remaining_ms)
-                && (1..=2048).contains(&self.remaining_input_tokens)
+                && (1..=120_000).contains(&self.remaining_ms)
+                && (1..=8192).contains(&self.remaining_input_tokens)
                 && self.remaining_input_tokens <= self.parent_budget.input_tokens
                 && usize::from(self.ordinal) <= self.parent_budget.rounds.min(3)
                 && self.remaining_ms <= self.parent_budget.deadline_ms

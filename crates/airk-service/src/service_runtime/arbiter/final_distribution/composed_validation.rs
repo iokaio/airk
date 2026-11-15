@@ -475,7 +475,7 @@ fn journal(reference: &Value) -> Result<Vec<Record>> {
                 && event.sequence == events.len() as u64 + 1
                 && event.binding.dispatch_identity > 0
                 && event.binding.tokens > 0
-                && event.binding.tokens <= 2048
+                && event.binding.tokens <= 8192
                 && !event.binding.charge_identity.is_empty()
                 && event.binding.charge_bytes > 0
                 && event.binding.original_deadline_unix_ms > 0,
@@ -889,7 +889,7 @@ fn composed_packet(
             && focus_tokens <= budget.input_tokens / 2
             && focus_tokens.checked_add(context_tokens) == Some(packet.work.input_tokens)
             && packet.work.input_tokens <= budget.input_tokens
-            && budget.input_tokens <= 2048,
+            && budget.input_tokens <= 8192,
         "actual composed costs absent, changed, or exceed original shared allocation"
     );
     ensure!(

@@ -855,7 +855,168 @@ impl Transaction {
             stage: self.stage.try_clone()?,
             operation: self.record.clone(),
             published: false,
+            partial_sealed: false,
+            partial_proof: None,
         }))
+    }
+    /// Restart only the exact unpublished asset after a failed source attempt.
+    /// This consumes local custody, not download, retry or deadline authority.
+    pub fn restart_failed_asset_if(
+        &self,
+        writer: AssetWriter,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<AssetWriter> {
+        self.restart_failed_asset_checked(writer, &check, || Ok(()))
+    }
+    #[cfg(test)]
+    fn restart_failed_asset(&self, writer: AssetWriter) -> Result<AssetWriter> {
+        self.restart_failed_asset_if(writer, || Ok(()))
+    }
+    #[cfg(test)]
+    fn restart_failed_asset_with(
+        &self,
+        writer: AssetWriter,
+        before_cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<AssetWriter> {
+        self.restart_failed_asset_checked(writer, &|| Ok(()), before_cleanup)
+    }
+    fn restart_failed_asset_checked(
+        &self,
+        mut writer: AssetWriter,
+        check: &impl Fn() -> Result<()>,
+        before_cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<AssetWriter> {
+        check()?;
+        ensure!(
+            !writer.published
+                && writer.operation == self.record
+                && Arc::ptr_eq(&writer._ownership, &self.store.ownership)
+                && writer.stage.identity()? == self.stage.identity()?
+                && self.profile.assets.contains(&writer.asset),
+            "Failed asset writer belongs to another original operation; bytes preserved"
+        );
+        let (custody, _) = self
+            .store
+            .read(&self.directory, &self.profile)?
+            .context("Original failed-asset custody is missing")?;
+        ensure!(
+            custody.revision == self.record.revision
+                && custody.configuration_revision == self.record.configuration_revision
+                && custody.phase == Phase::Downloading,
+            "Failed asset operation was superseded; bytes preserved"
+        );
+        let intent = self.stage.read_file(OsStr::new("operation.json"), 131072)?;
+        ensure!(
+            intent == canonical(&self.record)?,
+            "Original failed-asset stage changed; bytes preserved"
+        );
+        let asset = writer.asset.clone();
+        let written_bytes = writer.bytes;
+        let expected_hash = Sha256Digest::from_bytes(writer.hash.clone().finalize().into());
+        let expected_identity = file_identity(&writer.file)?;
+        writer.seal_partial()?;
+        let proof_name = format!("{}.partial.json", asset.name);
+        let mut proof = writer
+            .partial_proof
+            .take()
+            .context("Failed asset partial seal lacks its original descriptor")?;
+        let proof_identity = file_identity(&proof)?;
+        proof.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        (&mut proof).take(131073).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= 131072,
+            "Failed asset partial proof exceeds bound"
+        );
+        drop(writer);
+        check()?;
+        before_cleanup()?;
+        let mut current_proof = self
+            .stage
+            .open_file(OsStr::new(&proof_name), SetupFileMode::Read)?;
+        ensure!(
+            file_identity(&current_proof)? == proof_identity,
+            "Failed asset partial proof was replaced; bytes preserved"
+        );
+        let mut expected_proof = asset.clone();
+        expected_proof.bytes = u64::try_from(bytes.len())?;
+        expected_proof.sha256 = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+        hash(&mut current_proof, &expected_proof)?;
+        drop(current_proof);
+        ensure!(
+            self.stage.read_file(OsStr::new("operation.json"), 131072)? == intent,
+            "Failed asset operation changed before cleanup; bytes preserved"
+        );
+        let partial: PartialRecord = serde_json::from_slice(&bytes)?;
+        ensure!(
+            canonical(&partial)? == bytes
+                && partial.schema == "airk.arbiter.partial/3"
+                && partial.operation == self.record
+                && partial.asset == asset
+                && partial.written_bytes == written_bytes
+                && partial.sha256 == expected_hash
+                && partial.file_identity == expected_identity
+                && written_bytes <= asset.bytes,
+            "Failed asset partial proof differs; bytes preserved"
+        );
+        let mut observed = asset.clone();
+        observed.bytes = written_bytes;
+        observed.sha256 = expected_hash;
+        #[cfg(windows)]
+        let raw_stage = {
+            use airk_process::directory::OpenedDirectory;
+            let root = OpenedDirectory::open(self.store.ownership.root())?;
+            same_directory(&root, &self.store.root)?;
+            let directory = root
+                .open_child(OsStr::new("arbiter-v3"))?
+                .open_child(OsStr::new("assets"))?
+                .open_child(OsStr::new(&self.profile.manifest.to_string()))?;
+            same_directory(&directory, &self.directory)?;
+            let stage =
+                directory.open_child(OsStr::new(&format!("stage-{}", self.record.revision)))?;
+            same_directory(&stage, &self.stage)?;
+            stage
+        };
+        #[cfg(not(windows))]
+        {
+            let mut file = self
+                .stage
+                .open_file(OsStr::new(&asset.name), SetupFileMode::Read)?;
+            ensure!(
+                file_identity(&file)? == expected_identity,
+                "Failed asset object replaced; bytes preserved"
+            );
+            hash(&mut file, &observed)?;
+            check()?;
+            self.stage
+                .unlink_file_if_identity(OsStr::new(&asset.name), &file)?;
+            self.stage
+                .unlink_file_if_identity(OsStr::new(&proof_name), &proof)?;
+        }
+        #[cfg(windows)]
+        remove_verified_with(
+            &raw_stage,
+            OsStr::new(&proof_name),
+            &expected_proof,
+            Some(proof_identity),
+            |_| {
+                // Keep the authenticated proof under native write/delete exclusion
+                // while disposing only its authenticated unfinished asset.
+                check()?;
+                remove_verified_with(
+                    &raw_stage,
+                    OsStr::new(&asset.name),
+                    &observed,
+                    Some(expected_identity),
+                    |_| check(),
+                )
+            },
+        )?;
+        drop(proof);
+        self.stage.sync()?;
+        check()?;
+        self.asset(&asset)?
+            .context("Failed-asset restart cannot adopt a completed file")
     }
     pub fn publish(&self, writer: AssetWriter) -> Result<()> {
         self.publish_with(writer, || Ok(()))
@@ -866,7 +1027,9 @@ impl Transaction {
         before_publish: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         ensure!(
-            writer.operation == self.record && self.profile.assets.contains(&writer.asset),
+            !writer.partial_sealed
+                && writer.operation == self.record
+                && self.profile.assets.contains(&writer.asset),
             "Arbiter publication belongs to another original operation"
         );
         ensure!(
@@ -961,10 +1124,12 @@ pub struct AssetWriter {
     stage: SetupDirectory,
     operation: Record,
     published: bool,
+    partial_sealed: bool,
+    partial_proof: Option<File>,
 }
 impl AssetWriter {
     fn seal_partial(&mut self) -> Result<()> {
-        if self.published {
+        if self.published || self.partial_sealed {
             return Ok(());
         }
         self.file.sync_all()?;
@@ -995,7 +1160,17 @@ impl AssetWriter {
             .open_file(OsStr::new(&name), SetupFileMode::CreateNew)?;
         receipt.write_all(&canonical(&record)?)?;
         receipt.sync_all()?;
-        self.stage.sync()
+        self.stage.sync()?;
+        let proof = self
+            .stage
+            .open_file(OsStr::new(&name), SetupFileMode::Read)?;
+        ensure!(
+            file_identity(&proof)? == file_identity(&receipt)?,
+            "Arbiter sealed partial proof was replaced"
+        );
+        self.partial_proof = Some(proof);
+        self.partial_sealed = true;
+        Ok(())
     }
 }
 impl Drop for AssetWriter {
@@ -1005,6 +1180,11 @@ impl Drop for AssetWriter {
 }
 impl Write for AssetWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.partial_sealed {
+            return Err(std::io::Error::other(
+                "Arbiter partial writer is already sealed",
+            ));
+        }
         let size = u64::try_from(bytes.len()).map_err(std::io::Error::other)?;
         if self
             .bytes

@@ -667,7 +667,7 @@ def macos_bundle_files(version):
         files[f"AIRK.app/Contents/Library/LaunchAgents/{label}.plist"] = plistlib.dumps({
             "Label": label, "BundleProgram": "Contents/MacOS/airk",
             "ProgramArguments": (["airk", "__airk_role", "service-login-current"]
-                                 if tuple(map(int, version.split("."))) >= (1, 9, 0)
+                                 if tuple(map(int, version.split("."))) >= (1, 8, 201)
                                  else ["airk", "runtime", entry, "--channel", channel]),
             "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
             "ThrottleInterval": 30, "ProcessType": "Background",

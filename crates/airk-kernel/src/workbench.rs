@@ -1424,7 +1424,7 @@ fn argument_schema(key: &str) -> Value {
             json!({"type":"integer","minimum":1,"maximum":1073741824,"default":16777216})
         }
         "verification_deadline_ms" => {
-            json!({"type":"integer","minimum":1,"maximum":30000,"default":2000})
+            json!({"type":"integer","minimum":1,"maximum":120000,"default":2000})
         }
         "reply_detail" => {
             let mut values: Vec<Value> = airk_core::reply::ReplyDetail::ALL

@@ -214,10 +214,10 @@ fn current_request_preserves_all_public_maxima_but_refuses_other_versions_and_au
             calls: 12,
             rounds: 4,
             fanout: 12,
-            input_tokens: 2048,
+            input_tokens: 8192,
             candidates: 64,
             max_bytes: 524_288,
-            deadline_ms: 30_000,
+            deadline_ms: 120_000,
         },
     };
     request.validate()?;

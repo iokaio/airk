@@ -18,6 +18,7 @@ pub(super) struct State {
     cancel: CancellationToken,
     handle: Option<Handle>,
     pending: Option<PreparedLaunch>,
+    source_log: Option<airk_host::service_logs::Log>,
     #[cfg(all(test, feature = "test-support"))]
     warm_observer: Option<super::warm_observer::Observer>,
 }
@@ -33,6 +34,7 @@ impl Default for State {
             cancel: CancellationToken::new(),
             handle: None,
             pending: None,
+            source_log: None,
             #[cfg(all(test, feature = "test-support"))]
             warm_observer: None,
         }
@@ -559,11 +561,16 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                     Availability::Downloading,
                     "Downloading the exact compiled qualified Arbiter asset parts.",
                 )?;
+                let source_log = {
+                    let state = shared.lock().map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+                    state.source_log.clone()
+                };
                 super::assets::provision(
                     execution.description(),
                     &store,
                     expected.revision,
                     &cancel,
+                    source_log.as_ref(),
                 )
                 .await?;
             }
@@ -826,6 +833,13 @@ fn unavailable_stage_status(
 }
 
 impl StageOwner {
+    pub(super) fn bind_source_diagnostics(&self, log: airk_host::service_logs::Log) -> Result<()> {
+        self.lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+            .source_log = Some(log);
+        Ok(())
+    }
     pub(super) fn unavailable_status(&self, reason: &str) -> Result<StageStatus> {
         let state = self
             .lifecycle
@@ -922,7 +936,7 @@ impl StageOwner {
                 } else if active == Some(profile.manifest) {
                     (Availability::Requested,"Previous native session is retained but is not admitted for the current enabled selection.".into())
                 } else {
-                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)|Some(Phase::Removing)=>(Availability::Failed,"Prior asset operation did not complete. Explicit recovery is required; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
+                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)=>(Availability::Failed,"Asset acquisition did not complete. Use a new explicit Provision or verified local Import; Recover does not download.".into()),Some(Phase::Removing)=>(Availability::Failed,"An unfinished asset removal requires local Recover; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
                 };
                 ProfileStatus {
                     cpu_fit: profile.cpu_fit.clone(),

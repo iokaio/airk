@@ -79,6 +79,16 @@ impl Owner {
             gate,
         })
     }
+    pub(super) fn with_source_diagnostics(self, log: airk_host::service_logs::Log) -> Result<Self> {
+        #[cfg(feature = "local-inference")]
+        {
+            self.focus.bind_source_diagnostics(log.clone())?;
+            self.context.bind_source_diagnostics(log)?;
+        }
+        #[cfg(not(feature = "local-inference"))]
+        let _ = log;
+        Ok(self)
+    }
     fn stage(&self, stage: Stage) -> &StageOwner {
         match stage {
             Stage::Focus => &self.focus,
@@ -198,7 +208,7 @@ impl Owner {
                 Some(FocusProfileLimits {
                     max_candidates: profile.max_candidates,
                     pair_input_tokens: profile.max_tokens,
-                    max_input_tokens: 2048,
+                    max_input_tokens: 8192,
                 })
             }
             #[cfg(not(feature = "local-inference"))]
@@ -264,7 +274,7 @@ impl Owner {
             let limits = FocusProfileLimits {
                 max_candidates: profile.max_candidates,
                 pair_input_tokens: profile.max_tokens,
-                max_input_tokens: 2048,
+                max_input_tokens: 8192,
             };
             limits.validate()?;
             ensure!(

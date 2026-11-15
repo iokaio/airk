@@ -103,7 +103,7 @@ impl PartitionAllowance {
             && self.parent_budget.rounds == 1
             && self.parent_budget.fanout == 1
             && self.resources.calls == 1
-            && (1..=2048).contains(&self.resources.input_tokens)
+            && (1..=8192).contains(&self.resources.input_tokens)
             && (1..=64).contains(&self.resources.candidates)
             && (1024..=65_536).contains(&self.resources.bytes)
             && self.resources.fits(&Resources::budget(&self.parent_budget))
@@ -594,10 +594,10 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
                 calls: 12,
                 rounds: 4,
                 fanout: 12,
-                input_tokens: 2048,
+                input_tokens: 8192,
                 candidates: 64,
                 max_bytes: 524288,
-                deadline_ms: 30000,
+                deadline_ms: 120000,
             },
         )?;
         return packet_delivery_bindings(&typed);

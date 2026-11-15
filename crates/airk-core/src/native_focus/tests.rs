@@ -112,6 +112,17 @@ fn original_worker_scope_clock_and_attempt_are_required_before_focus() -> Result
     let mut value = original.clone();
     value.remaining_ms = 30_001;
     assert!(validate(&value).is_err());
+    let mut wide = original.clone();
+    wide.parent_budget.deadline_ms = 120_000;
+    wide.parent_budget.input_tokens = 8192;
+    wide.remaining_ms = 120_000;
+    wide.remaining_input_tokens = 8192;
+    assert!(validate(&wide).is_ok());
+    wide.remaining_ms = 120_001;
+    assert!(validate(&wide).is_err());
+    wide.remaining_ms = 120_000;
+    wide.remaining_input_tokens = 8193;
+    assert!(validate(&wide).is_err());
     Ok(())
 }
 #[test]

@@ -194,7 +194,7 @@ remain literal; no production deadline or source-check budget is increased.
 
 Ordinary combined reads also report each member's share of the original request
 clock remaining after metadata I/O. Comparisons validate member identities,
-the canonical balanced remainder split and the aggregate 30000ms ceiling before
+the canonical balanced remainder split and the aggregate 120000ms ceiling (relaxed from 30000ms in 1.8.201) before
 normalizing only `/members/*/allocation/deadline_ms`. Count, byte and verification
 allocations remain literal, as do unrelated or nested fields with that name.
 Combined context allocations declare their original context budget and remain

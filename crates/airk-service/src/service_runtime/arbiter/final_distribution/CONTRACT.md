@@ -1,4 +1,4 @@
-# Final selected-profile promotion and offline distribution
+# Final selected-profile promotion and approved-source distribution
 
 Private preparation only. Root must record and freeze this proof decision and
 Rust-emitted refusal cases before consumers mount. There is no new crate,
@@ -43,10 +43,17 @@ evidence/citation checks and execution/input seals must also reconcile.
 Only the Core qualification digest, qualified-target proof pins, reviewed release
 transport roster and release manifest identity are added. The new release
 manifest uses the recorded domain `airk.arbiter.release-profile/1` over the final
-Rust Profile with only its manifest field zeroed. Release part names derive from
-the selected model and asset SHA, avoiding a manifest/URL digest cycle. Each part
-is at most 1GiB; complete logical files remain bounded by Core. Root must approve
-that identity recipe before any actual qualified emission.
+Rust Profile with only its manifest field zeroed. The promoter never creates
+URLs or filenames from a tag, model or digest. Candidate.download_sources is a
+required PinnedFile containing the Core-owned Vec<AssetDownload>; the separate
+RecordedDecision.approved_download_source_maps must explicitly approve that
+exact file SHA. Missing/unapproved maps refuse before acquiring any delivery
+authority. The exact asset/file census, Core source/backup roster and every
+ordered part length/hash are checked against bounded local reads, followed by
+the complete logical asset length/hash. Origin trust stays Core-owned; no
+unreviewed repository or source fallback is admitted. Each part remains at most
+1GiB and complete logical files retain Core bounds. A validated metadata map is
+not a claim that a remote payload has been published or downloaded.
 
 The native owner emits catalog/2 plus an offline file projection with schema
 `airk.arbiter.offline-bundle-plan/1`. It includes the exact catalog SHA, release
@@ -54,6 +61,18 @@ tag, final proof/decision hashes, three bundle directories named by final profil
 manifest and each logical file's name/length/SHA. A separately pinned PRIVATE
 source map supplies actual original filenames. It is not shipped. The existing
 compiled publication projection independently checks final release-part pins.
+Publication.assets and private Sources.parts contain only GitHub files actually
+present as primary or backup locations in the approved map and matching the
+requested release tag. HF-only locations do not invent a GitHub file; complete
+immutable HF origin/revision/filename and backup authority remains authenticated
+by the compiled catalog/profile hash. A real GitHub backup is projected even
+when the primary is HF. Duplicate filenames require identical pins. Exact three
+selected qualified models remain mandatory even when there are zero GitHub
+files. No release publication or availability follows from projection.
+
+The offline plan remains a secondary manual-import option. Optional Arbiter
+weights are not installer/VSIX payloads; app-owned explicit on-demand acquisition
+is primary, subject to actual source availability and all qualification gates.
 
 The stager requires those exact native output pins, a fresh named output under
 an explicit artifact anchor and reviewed licensed sources. It copies only the
@@ -224,3 +243,15 @@ substitute. Strict original dispatch/mutation-completion/return ordering and
 actual delivery refusal, settlement and explicit subsequent stage disable/final
 charge release remain required. Canonical authority fields are never removed
 to make an unaffected-read comparison pass.
+
+
+Source-map consumer controls (Core download-origin gate required first)
+
+The private changes consume Core AssetPart.backup_urls, source_url and
+AssetDownload.source_count; they cannot mount before the recorded Core decision
+and actual native fixture gate. Synthetic controls exercise missing/unapproved
+map, omitted required Candidate field, duplicate/foreign/missing logical asset,
+extra local mapping, changed same-length source, wrong part/full hash, reordered
+slices, wrong lengths/origin/backup roster, HF-only projection and actual declared
+GitHub backup/tag handling. These are inert metadata/file controls, not model,
+remote-availability or release qualification. Root alone executes Cargo/NN.

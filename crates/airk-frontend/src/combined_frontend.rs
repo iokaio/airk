@@ -1693,7 +1693,7 @@ impl<S: Session> Backend<S> {
         let total = SharedBudgets {
             limit: before.members.len(),
             max_bytes: 65536,
-            deadline_ms: 30000,
+            deadline_ms: 120000,
             verification_max_sources: budget.max_sources,
             verification_max_bytes: budget.max_bytes,
             verification_deadline_ms: budget.deadline_ms.min(remaining),
@@ -2244,7 +2244,7 @@ impl<S: Session> Backend<S> {
         let budgets = SharedBudgets {
             limit,
             max_bytes,
-            deadline_ms: remaining_deadline_ms.unwrap_or(30000).clamp(1, 30000),
+            deadline_ms: remaining_deadline_ms.unwrap_or(120000).clamp(1, 120000),
             verification_max_sources: verification_budget.map_or(0, |budget| budget.max_sources),
             verification_max_bytes: verification_budget.map_or(0, |budget| budget.max_bytes),
             verification_deadline_ms: verification_budget.map_or(0, |budget| budget.deadline_ms),
@@ -2884,7 +2884,11 @@ impl<S: Session> Backend<S> {
                     ),
                 );
             }
-            let observation_budget = if native == "airk_status" { 2000 } else { 30000 };
+            let observation_budget = if native == "airk_status" {
+                2000
+            } else {
+                120000
+            };
             let deadline = context.deadline().min(
                 dispatch_started
                     + Duration::from_millis(

@@ -21,7 +21,7 @@ impl StageOwner {
         };
         let remaining = attempt
             .remaining_at(clock, airk_process::monotonic::now_ns()?)?
-            .min(Duration::from_millis(request.remaining_ms.min(30_000)));
+            .min(Duration::from_millis(request.remaining_ms.min(120_000)));
         ensure!(
             !remaining.is_zero(),
             "Arbiter original deadline expired before admission"
@@ -32,9 +32,9 @@ impl StageOwner {
         self.validate_scope(request.worker, request.authority)?;
         ensure!(
             request.remaining_ms > 0
-                && request.remaining_ms <= 30_000
+                && request.remaining_ms <= 120_000
                 && request.remaining_input_tokens > 0
-                && request.remaining_input_tokens <= 2048
+                && request.remaining_input_tokens <= 8192
                 && request.question.len() <= 16384
                 && request.records.len() <= 32
                 && !request.choices.is_empty()

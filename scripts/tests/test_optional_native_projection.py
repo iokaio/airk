@@ -42,6 +42,32 @@ class NativePublicationProjection(unittest.TestCase):
             with self.assertRaises(ValueError): OWNER.validate_projection(changed, projection)
             with self.assertRaises(ValueError): OWNER.projection('v0.0.0', path=path)
 
+    def test_empty_and_subset_github_part_maps_follow_the_native_projection_exactly(self):
+        # Sources hosted only on Hugging Face publish no GitHub part; Native still binds the complete catalog digest.
+        capture = json.loads((ROOT / 'fixtures/arbiter/publication_cases.json').read_bytes())
+        projection = next(row for row in capture['cases'] if row['accepted'])['projection']
+        names = sorted(projection['assets'])
+        self.assertGreaterEqual(len(names), 2)
+        for kept in ([], names[:1]):
+            owner = json.loads(json.dumps(projection))
+            owner['assets'] = {name: projection['assets'][name] for name in kept}
+            self.assertEqual(OWNER.part_inputs(owner, 'a' * 40, '7'), {OWNER.part_input(name, 'a' * 40, '7') for name in kept})
+            OWNER.validate_projection(json.loads(json.dumps(owner)), owner)
+            with self.assertRaises(ValueError):
+                OWNER.validate_projection(projection, owner)
+            published = {name: projection['assets'][name]['sha256'] for name in kept}
+            published['unrelated.bin'] = '2' * 64
+            document = {'assets': dict(published)}
+            OWNER._remove_assets(document, owner)
+            self.assertEqual(document['assets'], {'unrelated.bin': '2' * 64})
+            if kept:
+                missing = {'assets': {'unrelated.bin': '2' * 64}}
+                with self.assertRaises(ValueError):
+                    OWNER._remove_assets(missing, owner)
+                changed = {'assets': dict(published, **{kept[0]: '3' * 64})}
+                with self.assertRaises(ValueError):
+                    OWNER._remove_assets(changed, owner)
+
 
 if __name__ == '__main__':
     unittest.main()

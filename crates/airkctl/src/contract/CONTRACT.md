@@ -264,7 +264,7 @@ fallback or fabricated capability gate. Same-version identity alone does not
 prove an older development service supports the field. A sent/lost response
 retains existing nonretryable/unknown classification. Core's125s read maximum
 and ordinary budgets above30s remain supported; Answer intersects its original
-parent remaining with its serialized30000ms ceiling, and NativeNextRead keeps
+parent remaining with its serialized120000ms ceiling (relaxed from 30000ms in 1.8.201), and NativeNextRead keeps
 its existing30s cap. None retains125s canonical/135s transport response behavior.
 
 Generic Invoke can perform nonread operations too. Do not interpret this read

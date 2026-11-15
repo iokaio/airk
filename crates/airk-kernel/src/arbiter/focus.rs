@@ -33,6 +33,30 @@ fn state(context: &NativeContext) -> Result<std::sync::MutexGuard<'_, Attempt>> 
         .map_err(|_| anyhow::anyhow!("optional request accounting unavailable"))
 }
 
+/// The ORIGINAL optional deadline the Host supplied, when one is held. Native
+/// metadata observations clip their waits to it; absent, they are unchanged.
+pub(super) fn original_deadline(context: &NativeContext) -> Option<Instant> {
+    context.focus.lock().ok().and_then(|held| held.deadline)
+}
+
+/// Focus eligibility observation whose native wait cannot outlive the read.
+fn observe_focus_application(
+    context: &NativeContext,
+    publication: &airk_core::evidence::RevisionEnvelope,
+) -> Result<Option<airk_core::arbiter::FocusApplication>> {
+    match original_deadline(context) {
+        Some(deadline) => context.owner.focus_application_before(
+            context.worker,
+            context.authority,
+            publication,
+            deadline,
+        ),
+        None => context
+            .owner
+            .focus_application(context.worker, context.authority, publication),
+    }
+}
+
 impl crate::Kernel {
     /// The Host supplies the actual absolute deadline, never a replacement
     /// duration derived after selection, queueing or model loading.
@@ -252,11 +276,7 @@ impl crate::Kernel {
             return Err(airk_core::scoped_reads::ScopeReadRefused.into());
         }
         let frame = remaining_frame(self, &response)?.saturating_sub(metadata_bytes);
-        let observed = match context.owner.focus_application(
-            context.worker,
-            context.authority,
-            publication,
-        ) {
+        let observed = match observe_focus_application(context, publication) {
             Ok(Some(observed)) => observed,
             Ok(None) => return Ok(response),
             Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
@@ -657,9 +677,7 @@ impl crate::Kernel {
                 )?
             }
         };
-        let fresh = context
-            .owner
-            .focus_application(context.worker, context.authority, publication);
+        let fresh = observe_focus_application(context, publication);
         let valid = match fresh {
             Ok(Some(fresh)) => {
                 fresh.validate().is_ok()

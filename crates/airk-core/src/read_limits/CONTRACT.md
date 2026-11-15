@@ -13,7 +13,7 @@ saved-byte verification and workbench plans all check:
 |---|---|---|
 | `MAX_SOURCES` | 256 | sources one verification may read |
 | `MAX_BYTES` | 1,073,741,824 | bytes one verification may read |
-| `MAX_DEADLINE_MS` | 30,000 | one verification's deadline |
+| `MAX_DEADLINE_MS` | 120,000 | one verification's deadline (relaxed from 30,000 in the 1.8.201 local candidate; see `docs/arbiter/relaxations.md`) |
 | `MAX_STEP_REPORTS` | 72 (`6 * 12`) | step reports in one workbench result |
 
 Before S7.4, the first three lived in `verification` and the last in

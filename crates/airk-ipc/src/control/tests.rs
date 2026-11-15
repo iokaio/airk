@@ -62,7 +62,16 @@ fn arbiter_native_response_budget_uses_original_clock_and_never_refreshes_it() -
         .is_err()
     );
     assert!(arbiter_remaining(None, 30_000, ReadClock::UnixMonotonic, 0).is_err());
-    assert!(arbiter_remaining(Some(attempt()), 30_001, ReadClock::UnixMonotonic, 0).is_err());
+    assert!(arbiter_remaining(Some(attempt()), 120_001, ReadClock::UnixMonotonic, 0).is_err());
+    assert_eq!(
+        arbiter_remaining(
+            Some(attempt()),
+            120_000,
+            ReadClock::UnixMonotonic,
+            23_000_000_000
+        )?,
+        Duration::from_secs(7)
+    );
     let mut malformed = attempt();
     malformed.schema = 2;
     assert!(arbiter_remaining(Some(malformed), 30_000, ReadClock::UnixMonotonic, 0).is_err());

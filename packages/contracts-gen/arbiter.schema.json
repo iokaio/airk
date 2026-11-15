@@ -292,6 +292,13 @@
     "AssetPart": {
       "additionalProperties": false,
       "properties": {
+        "backup_urls": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "type": "array"
+        },
         "bytes": {
           "format": "uint64",
           "minimum": 0,

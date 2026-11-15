@@ -1710,6 +1710,9 @@ async fn serve_owned(
             Some(owner.into_owner_for(&_ownership, &gate)?)
         }
     };
+    let arbiter = arbiter
+        .map(|owner| owner.with_source_diagnostics(log.clone()))
+        .transpose()?;
     let state = Arc::new(State {
         draining: std::sync::atomic::AtomicBool::new(false),
         arbiter,

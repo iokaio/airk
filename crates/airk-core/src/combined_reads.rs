@@ -586,8 +586,8 @@ impl SharedBudgets {
             "limit_per_index must be 1..100"
         );
         ensure!(
-            (1..=30_000).contains(&self.deadline_ms),
-            "combined deadline must be 1..30000 ms"
+            (1..=120_000).contains(&self.deadline_ms),
+            "combined deadline must be 1..120000 ms"
         );
         ensure!(
             self.verification_max_sources <= crate::read_limits::MAX_SOURCES

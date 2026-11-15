@@ -58,6 +58,7 @@ pub(super) async fn provision(
     store: &Arc<AssetStore>,
     revision: u64,
     cancel: &CancellationToken,
+    source_log: Option<&airk_host::service_logs::Log>,
 ) -> Result<()> {
     profile.validate_release_downloads()?;
     let probe = store.clone();
@@ -81,14 +82,24 @@ pub(super) async fn provision(
                 .iter()
                 .find(|download| download.asset_name == asset.name)
                 .context("Arbiter asset transport missing")?;
-            for part in &download.parts {
-                if let Err(error) = super::download::part(part, &mut writer, cancel).await {
+            writer = match whole_asset(
+                &transaction,
+                download,
+                writer,
+                cancel,
+                &mut native_part,
+                source_log.map(|log| (log, asset.sha256)),
+            )
+            .await
+            {
+                Ok(writer) => writer,
+                Err(error) => {
                     if cancel.is_cancelled() {
                         transaction.cancel()?;
                     }
                     return Err(error);
                 }
-            }
+            };
             transaction.publish(writer)?;
         }
     }
@@ -97,4 +108,103 @@ pub(super) async fn provision(
         anyhow::bail!("Arbiter provisioning canceled");
     }
     transaction.finish()
+}
+
+type PartFuture<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = std::result::Result<(), super::download::Failure>>
+            + Send
+            + 'a,
+    >,
+>;
+fn native_part<'a>(
+    part: &'a AssetPart,
+    ordinal: usize,
+    budget: &'a mut super::download::PartBudget,
+    writer: &'a mut airk_store::service::arbiter_assets::AssetWriter,
+    cancel: &'a CancellationToken,
+) -> PartFuture<'a> {
+    Box::pin(super::download::part(part, ordinal, budget, writer, cancel))
+}
+async fn whole_asset<F>(
+    transaction: &airk_store::service::arbiter_assets::Transaction,
+    download: &airk_core::arbiter::AssetDownload,
+    mut writer: airk_store::service::arbiter_assets::AssetWriter,
+    cancel: &CancellationToken,
+    request: &mut F,
+    diagnostics: Option<(
+        &airk_host::service_logs::Log,
+        airk_core::identity::Sha256Digest,
+    )>,
+) -> Result<airk_store::service::arbiter_assets::AssetWriter>
+where
+    F: for<'a> FnMut(
+        &'a AssetPart,
+        usize,
+        &'a mut super::download::PartBudget,
+        &'a mut airk_store::service::arbiter_assets::AssetWriter,
+        &'a CancellationToken,
+    ) -> PartFuture<'a>,
+{
+    let sources = download.source_count()?;
+    let mut budgets: Vec<Option<super::download::PartBudget>> =
+        (0..download.parts.len()).map(|_| None).collect();
+    let mut failures = Vec::new();
+    for ordinal in 0..sources {
+        ensure!(!cancel.is_cancelled(), "Arbiter provisioning canceled");
+        for budget in budgets.iter().flatten() {
+            budget.live()?;
+        }
+        let mut failed = None;
+        for (index, part) in download.parts.iter().enumerate() {
+            let budget = budgets[index].get_or_insert_with(super::download::PartBudget::new);
+            if let Err(error) = request(part, ordinal, budget, &mut writer, cancel).await {
+                failed = Some(error);
+                break;
+            }
+        }
+        match failed {
+            None => return Ok(writer),
+            Some(error) => {
+                failures.push(format!("source ordinal {ordinal}: {}", error.class()));
+                if let Some((log, asset_sha256)) = diagnostics {
+                    log.record_code(
+                        airk_core::service_logs::LogKind::ModelFailed,
+                        None,
+                        None,
+                        Some(&source_failure_code(asset_sha256, ordinal, &error)),
+                    );
+                }
+                if !error.can_fallback() || ordinal + 1 == sources || cancel.is_cancelled() {
+                    return Err(anyhow::anyhow!(
+                        "Arbiter asset source attempts stopped: {}",
+                        failures.join("; ")
+                    ))
+                    .context(error);
+                }
+                for budget in budgets.iter().flatten() {
+                    budget.live()?;
+                }
+                writer = transaction.restart_failed_asset_if(writer, || {
+                    ensure!(!cancel.is_cancelled(), "Arbiter provisioning canceled");
+                    for budget in budgets.iter().flatten() {
+                        budget.live()?;
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+    }
+    anyhow::bail!("Arbiter complete source roster exhausted")
+}
+
+#[cfg(test)]
+mod source_attempt_tests;
+
+fn source_failure_code(
+    asset: airk_core::identity::Sha256Digest,
+    ordinal: usize,
+    failure: &super::download::Failure,
+) -> String {
+    format!("arbiter_source_{asset}_{ordinal}_{}", failure.class())
 }

@@ -379,7 +379,7 @@ impl Record {
             "private native event schema/sequence/time refused"
         );
         ensure!(
-            (1..=2048).contains(&self.binding.tokens)
+            (1..=8192).contains(&self.binding.tokens)
                 && self.binding.charge_bytes > 0
                 && !self.binding.charge_identity.is_empty()
                 && self.binding.charge_identity.len() <= 128

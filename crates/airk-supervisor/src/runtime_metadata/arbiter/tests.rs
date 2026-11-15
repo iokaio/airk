@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Actual async IO driver entry controls. No service/model/NN or forged role.
-use super::drive_control;
+use super::{clipped, drive_control};
 use anyhow::{Context, Result, ensure};
 use std::{
     io::{Read, Write},
@@ -169,6 +169,72 @@ fn sync_control_constructs_timers_inside_driver_and_keeps_expired_original_deadl
     ensure!(
         calls.load(Ordering::SeqCst) == 1,
         "expired callback replayed"
+    );
+    Ok(())
+}
+
+#[test]
+fn metadata_waits_clip_to_the_original_read_deadline_and_never_start_late() -> Result<()> {
+    // A transport that never answers is cut off at the ORIGINAL deadline, well
+    // inside the unchanged five-second I1 request ceiling.
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(100);
+    let hung = drive_control(|| {
+        clipped(
+            deadline,
+            "test metadata",
+            std::future::pending::<Result<()>>(),
+        )
+    });
+    let error = hung
+        .err()
+        .context("a hung callback outlived its deadline")?;
+    ensure!(
+        error
+            .to_string()
+            .contains("original deadline exhausted in native transport"),
+        "unexpected clipping error: {error}"
+    );
+    ensure!(
+        started.elapsed() < Duration::from_secs(3),
+        "clipped wait was not bounded by the original deadline"
+    );
+    // An already-expired deadline refuses before any transport work is polled.
+    let polled = Arc::new(AtomicUsize::new(0));
+    let witness = polled.clone();
+    let past = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap_or_else(Instant::now);
+    let expired = drive_control(|| {
+        clipped(past, "test metadata", async move {
+            witness.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    });
+    ensure!(
+        expired.is_err_and(|error| error
+            .to_string()
+            .contains("original deadline exhausted before native transport")),
+        "expired deadline was started"
+    );
+    ensure!(
+        polled.load(Ordering::SeqCst) == 0,
+        "expired callback polled"
+    );
+    // A prompt answer, and a typed scope refusal, pass through unchanged.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    ensure!(
+        drive_control(|| clipped(deadline, "test metadata", async { Ok(7u8) }))? == 7,
+        "prompt answer altered"
+    );
+    let refused = drive_control(|| {
+        clipped(deadline, "test metadata", async {
+            Err::<(), anyhow::Error>(airk_core::scoped_reads::ScopeReadRefused.into())
+        })
+    });
+    ensure!(
+        refused.is_err_and(|error| error.is::<airk_core::scoped_reads::ScopeReadRefused>()),
+        "scope refusal was not preserved"
     );
     Ok(())
 }

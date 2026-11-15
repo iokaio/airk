@@ -41,6 +41,27 @@ pub trait NativeController: Send + Sync {
         authority: airk_core::service::ScopedReadRef,
         publication: &airk_core::evidence::RevisionEnvelope,
     ) -> Result<IndexApplication>;
+    /// Same observation, but its native wait must not outlive the ORIGINAL read's
+    /// absolute deadline. The default keeps in-process owners unchanged.
+    fn application_before(
+        &self,
+        worker: airk_core::service::WorkerIdentity,
+        authority: airk_core::service::ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        _deadline: Instant,
+    ) -> Result<IndexApplication> {
+        self.application(worker, authority, publication)
+    }
+    /// Deadline-clipped Focus eligibility observation; see `application_before`.
+    fn focus_application_before(
+        &self,
+        worker: airk_core::service::WorkerIdentity,
+        authority: airk_core::service::ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        _deadline: Instant,
+    ) -> Result<Option<airk_core::arbiter::FocusApplication>> {
+        self.focus_application(worker, authority, publication)
+    }
     fn next_read(
         &self,
         _request: NativeNextReadRequest,
@@ -77,10 +98,18 @@ fn observed_application(
     publication: &airk_core::evidence::RevisionEnvelope,
     prior: Option<&IndexApplication>,
 ) -> Result<IndexApplication> {
-    match context
-        .owner
-        .application(context.worker, context.authority, publication)
-    {
+    let observed = match focus::original_deadline(context) {
+        Some(deadline) => context.owner.application_before(
+            context.worker,
+            context.authority,
+            publication,
+            deadline,
+        ),
+        None => context
+            .owner
+            .application(context.worker, context.authority, publication),
+    };
+    match observed {
         Ok(application) => {
             application.validate()?;
             Ok(application)
@@ -277,7 +306,7 @@ impl crate::Kernel {
                         remaining_ms: deadline
                             .saturating_duration_since(Instant::now())
                             .as_millis()
-                            .min(30_000) as u64,
+                            .min(120_000) as u64,
                         remaining_input_tokens: request
                             .budget
                             .input_tokens

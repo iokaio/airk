@@ -230,7 +230,7 @@ async fn resolved_existing_connection(
         "native HTTP connection identity changed"
     );
     let context = airk_mcp::read_attempt::ReadAttemptContext::new(
-        std::time::Instant::now() + std::time::Duration::from_secs(30),
+        std::time::Instant::now() + std::time::Duration::from_secs(120),
         tokio_util::sync::CancellationToken::new(),
     );
     let selection =

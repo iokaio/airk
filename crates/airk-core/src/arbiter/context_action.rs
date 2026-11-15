@@ -409,7 +409,7 @@ impl ContextActionAdvice {
                 && self.task == Task::ContextAction
                 && self.runtime == RUNTIME
                 && self.scope.configuration_revision > 0
-                && (1..=2048).contains(&self.reserved_input_tokens)
+                && (1..=8192).contains(&self.reserved_input_tokens)
                 && self.work.input_tokens == self.observed_input_tokens.unwrap_or(0)
                 && self.work.calls == 0
                 && self.work.rounds == 0

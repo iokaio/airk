@@ -159,6 +159,26 @@ test('publication /3 matches exact opaque native owner and preserves historical 
     assert.throws(()=>selectInstaller(release,accepted,target,null));
 });
 
+test('publication /3 accepts empty and mixed GitHub part maps derived from the native owner and refuses roster drift',()=>{
+    // Hugging Face-only sources legitimately publish no GitHub part; the full compiled catalog digest still binds authority.
+    const source=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../../../fixtures/split/receipts/publication_3.json'),'utf8')) as {owner:{assets:Record<string,unknown>};cases:{kind:string;input:unknown;accepted:boolean}[]};
+    const base=source.cases.find(row=>row.kind==='release' && row.accepted && (row.input as {channel:string}).channel==='stable')!.input as {assets:Record<string,string>};
+    const names=Object.keys(source.owner.assets);
+    assert.ok(names.length>=2);
+    for(const kept of [[] as string[],[names[0]]]) {
+        const owner={...source.owner,assets:Object.fromEntries(kept.map(name=>[name,source.owner.assets[name]]))};
+        const published=Object.fromEntries(Object.entries(base.assets).filter(([name])=>kept.includes(name)||!names.includes(name)));
+        const input={...base,assets:published,optional_models:owner};
+        validatePublication(input,owner);
+        const stray={...input,assets:{...published,[names[1]]:base.assets[names[1]]}};
+        assert.throws(()=>validatePublication(stray,owner),'a part the native owner did not list is refused');
+        if(kept.length>0) {
+            const missing={...input,assets:Object.fromEntries(Object.entries(published).filter(([name])=>name!==kept[0]))};
+            assert.throws(()=>validatePublication(missing,owner),'a native-listed part must be published');
+        }
+    }
+});
+
 test('release bundle binds exact owning source bytes and refuses absent production authority',()=>{
     const builder=require('../../scripts/build-bootstrap.cjs') as {compileRelease():Buffer;verifyReleaseBundle(bytes:Buffer,required?:boolean):void};
     const bytes=builder.compileRelease();
@@ -168,7 +188,10 @@ test('release bundle binds exact owning source bytes and refuses absent producti
     const other=spawnSync(process.execPath,['-e',`process.stdout.write(require(${JSON.stringify(file)}).compileRelease())`],{cwd:path.resolve(__dirname,'../..'),maxBuffer:4*1024*1024});
     assert.equal(other.status,0,other.stderr.toString());assert.deepEqual(other.stdout,bytes,'npm and repository working directories produce identical sealed bytes');
     assert.throws(()=>builder.verifyReleaseBundle(Buffer.concat([bytes,Buffer.from('\n/* changed after compilation */\n')]),false));
-    if(!fs.existsSync(path.resolve(__dirname,'../../../../fixtures/arbiter/publication_catalog.json'))){assert.throws(()=>builder.verifyReleaseBundle(bytes,true));}
+    const finalSeries=/^1\.(?:9|[1-9][0-9]+)\./.test(String((require('../../package.json') as {version:string}).version))||!/^1\./.test(String((require('../../package.json') as {version:string}).version));
+    const captured=fs.existsSync(path.resolve(__dirname,'../../../../fixtures/arbiter/publication_catalog.json'));
+    if(!captured&&finalSeries){assert.throws(()=>builder.verifyReleaseBundle(bytes,true));}
+    if(!captured&&!finalSeries){builder.verifyReleaseBundle(bytes,true);}
 });
 
 test('provenance owner rejects valid-JavaScript body changes and static imports after compilation',()=>{

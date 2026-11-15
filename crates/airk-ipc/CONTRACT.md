@@ -180,7 +180,7 @@ read/model dispatch. Native/Tokio sampling is conservative. Existing shorter
 connect/write caps and all frame/input limits remain unchanged. No timeout,
 unknown response or old closed-reader refusal creates a retry or None fallback.
 Generic queries can retain budgets above30s, up to Core's existing125s ceiling.
-Only Answer intersects its own serialized30000ms ceiling; optional next-read
+Only Answer intersects its own serialized120000ms ceiling (relaxed from 30000ms in 1.8.201); optional next-read
 keeps its existing30s cap. None remains125s canonical/135s response behavior.
 Service scope/backend resolution, frontend/MCP capacity handling, native member
 reads, Kernel and scorer share the earliest decoded parent context. Existing

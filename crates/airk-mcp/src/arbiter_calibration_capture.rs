@@ -157,7 +157,7 @@ async fn capture(hybrid: bool) -> Result<()> {
             CaptureClient::Sdk(Box::new(local::LocalTools::new(kernel).await?))
         };
         let started = Instant::now();
-        let deadline = started + Duration::from_secs(30);
+        let deadline = started + Duration::from_secs(120);
         let mut search_args=json!({"query":question.question,"limit":8,"max_bytes":4096,"full_chunks":true,"response_mode":"full","include_status":true}).as_object().unwrap().clone();
         let initial = tools
             .call("airk_search", std::mem::take(&mut search_args))
@@ -206,8 +206,8 @@ async fn capture(hybrid: bool) -> Result<()> {
             remaining_ms: deadline
                 .saturating_duration_since(Instant::now())
                 .as_millis()
-                .min(30_000) as u64,
-            remaining_input_tokens: 2048,
+                .min(120_000) as u64,
+            remaining_input_tokens: 8192,
         };
         let mut outcomes = Vec::new();
         for choice in choices {

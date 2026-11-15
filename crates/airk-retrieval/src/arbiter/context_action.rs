@@ -190,6 +190,15 @@ pub fn build_roster_with_eligible(
     Ok(roster)
 }
 
+/// Compact, lossless model view of one native roster.
+///
+/// Every offered source unit, verified read, card, gap, reason and hypothesis is
+/// presented; nothing is truncated or selected. Repeated file paths and
+/// repeated hypothesis sets are interned once, and rows are positional tuples.
+/// Machine identities (record, read-choice and card digests) never enter the
+/// prompt: the roster's frozen order is the native alias mapping, so `e<n>` is
+/// `basis.source_units_presented[n-1]`, `r<n>` is `basis.read_choices_scored[n-1]`
+/// and `a<n>` is `cards[n-1]`.
 pub fn prompt(request: &NativeContextActionRequest) -> Result<Prompt> {
     let roster = &request.roster;
     roster.validate(&request.records)?;
@@ -200,10 +209,46 @@ pub fn prompt(request: &NativeContextActionRequest) -> Result<Prompt> {
             && request.question.len() <= 16_384,
         "joint task input/policy mismatch"
     );
-    let mut excerpts = Vec::new();
-    for (index, unit) in roster.basis.source_units_presented.iter().enumerate() {
-        let record = request
-            .records
+    compact_prompt(
+        &request.question,
+        &request.records,
+        &request.choices,
+        roster,
+    )
+}
+
+/// First-use ordered table of distinct file paths.
+#[derive(Default)]
+struct PathTable(Vec<String>);
+impl PathTable {
+    fn index(&mut self, path: &str) -> usize {
+        if let Some(index) = self.0.iter().position(|known| known == path) {
+            return index;
+        }
+        self.0.push(path.to_owned());
+        self.0.len() - 1
+    }
+}
+
+/// Native snake_case spelling of a closed enum, owned by its serde definition.
+fn tag<T: serde::Serialize>(value: &T) -> Result<String> {
+    match serde_json::to_value(value)? {
+        serde_json::Value::String(text) => Ok(text),
+        _ => anyhow::bail!("closed joint label is not a plain tag"),
+    }
+}
+
+fn compact_prompt(
+    question: &str,
+    records: &[EvidenceRecord],
+    choices: &[ReadChoice],
+    roster: &ContextActionRoster,
+) -> Result<Prompt> {
+    use airk_core::arbiter::{context_action::ContextAction, literal::SourceLiteral};
+    let mut paths = PathTable::default();
+    let mut evidence = Vec::new();
+    for unit in &roster.basis.source_units_presented {
+        let record = records
             .iter()
             .find(|record| record.id == unit.record)
             .ok_or_else(|| anyhow::anyhow!("joint task source missing"))?;
@@ -211,67 +256,105 @@ pub fn prompt(request: &NativeContextActionRequest) -> Result<Prompt> {
             record
                 .canonical_result
                 .pointer(&unit.result_pointer)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("joint task source unit missing"))?
                 .clone(),
         )?;
-        excerpts.push(
-            json!({"alias":format!("e{}",index+1),"path":hit.citation.path,
-            "start_line":hit.citation.start_line,"end_line":hit.citation.end_line,
-            "text_excerpt":&hit.text[unit.utf8_start..unit.utf8_end],
-            "returned_utf8_start":unit.utf8_start,"returned_utf8_end":unit.utf8_end,
-            "original_utf8_bytes":hit.text.len(),"native_hit_truncated":hit.truncated}),
-        );
+        let excerpt = hit
+            .text
+            .get(unit.utf8_start..unit.utf8_end)
+            .ok_or_else(|| anyhow::anyhow!("joint task source window invalid"))?;
+        evidence.push(json!([
+            paths.index(&hit.citation.path),
+            hit.citation.start_line,
+            hit.citation.end_line,
+            unit.utf8_start,
+            unit.utf8_end,
+            hit.text.len(),
+            hit.truncated,
+            excerpt
+        ]));
     }
-    let mut candidates = Vec::new();
     let mut reads = Vec::new();
-    for (index, id) in roster.basis.read_choices_scored.iter().enumerate() {
-        let choice = request
-            .choices
+    for id in &roster.basis.read_choices_scored {
+        let choice = choices
             .iter()
             .find(|choice| choice.id == *id)
             .ok_or_else(|| anyhow::anyhow!("joint verified read not captured"))?;
-        reads.push(
-            json!({"alias":format!("r{}",index+1),"operation":choice.operation,
-            "native_target":choice.target}),
-        );
+        let operation = tag(&choice.operation)?;
+        // The native SourceLiteral owner parses its own target. Query, path,
+        // line and span stay semantic; the record identity stays native.
+        reads.push(match SourceLiteral::parse(&choice.target)? {
+            Some(source) => json!([
+                "literal",
+                operation,
+                paths.index(&source.path),
+                source.line,
+                source.returned_utf8_start,
+                source.returned_utf8_end,
+                source.query
+            ]),
+            None => json!(["target", operation, choice.target]),
+        });
     }
+    let mut sets: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut candidates = Vec::new();
     for (index, card) in roster.cards.iter().enumerate() {
-        let hypotheses = card
-            .assessments
-            .iter()
-            .map(|assessment| {
-                let position = roster
-                    .basis
-                    .source_units_presented
-                    .iter()
-                    .position(|unit| unit == &assessment.evidence)
-                    .unwrap();
-                json!({"unit":format!("e{}",position+1),"role":assessment.role,
-                "relevance":assessment.relevance})
-            })
-            .collect::<Vec<_>>();
-        // IDs, actual arguments and source paths stay in the native frozen
-        // mapping. The model receives only compact option/unit aliases.
+        let mut hypotheses = Vec::new();
+        for assessment in &card.assessments {
+            let position = roster
+                .basis
+                .source_units_presented
+                .iter()
+                .position(|unit| unit == &assessment.evidence)
+                .ok_or_else(|| anyhow::anyhow!("joint hypothesis unit not presented"))?;
+            hypotheses.push(json!([
+                position + 1,
+                tag(&assessment.role)?,
+                tag(&assessment.relevance)?
+            ]));
+        }
+        let hypotheses = if hypotheses.is_empty() {
+            "none".to_owned()
+        } else {
+            let known = sets.iter().position(|set| *set == hypotheses);
+            let set = known.unwrap_or_else(|| {
+                sets.push(hypotheses);
+                sets.len() - 1
+            });
+            format!("h{}", set + 1)
+        };
         let action = match card.action {
-            airk_core::arbiter::context_action::ContextAction::Read { choice } => {
+            ContextAction::Read { choice } => {
                 let position = roster
                     .basis
                     .read_choices_scored
                     .iter()
                     .position(|id| *id == choice)
-                    .unwrap();
-                json!({"kind":"read","verified_choice":format!("r{}",position+1)})
+                    .ok_or_else(|| anyhow::anyhow!("joint card read not scored"))?;
+                format!("read r{}", position + 1)
             }
-            _ => serde_json::to_value(card.action)?,
+            ContextAction::Sufficient => "sufficient".to_owned(),
+            ContextAction::Clarify => "clarify".to_owned(),
+            ContextAction::NoJustifiedRead => "no_justified_read".to_owned(),
         };
         candidates.push(Candidate {
             id: format!("a{}", index + 1),
-            text: json!({"action":action,"gap":card.gap,"reason":card.reason,
-                "hypotheses":hypotheses})
-            .to_string(),
+            text: format!(
+                "{action}; gap {}; reason {}; hypotheses {hypotheses}",
+                tag(&card.gap)?,
+                tag(&card.reason)?
+            ),
         });
     }
-    let state = json!({"user_question":request.question,"indexed_evidence":excerpts,"verified_reads":reads,
+    let hypothesis_sets: serde_json::Map<String, serde_json::Value> = sets
+        .into_iter()
+        .enumerate()
+        .map(|(index, set)| (format!("h{}", index + 1), serde_json::Value::Array(set)))
+        .collect();
+    let state = json!({"user_question":question,
+        "format":"Rows are positional. paths: file paths, named elsewhere by 0-based index. indexed_evidence[i] is e(i+1) = [path, start_line, end_line, utf8_start, utf8_end, original_utf8_bytes, native_hit_truncated, text_excerpt]. verified_reads[i] is r(i+1) = [\"literal\", operation, path, line, utf8_start, utf8_end, query] or [\"target\", operation, native_target]. hypothesis_sets: h(k) lists [evidence number, role, relevance] and is shared by every action naming it; none means no hypotheses.",
+        "paths":paths.0,"indexed_evidence":evidence,"verified_reads":reads,
+        "hypothesis_sets":hypothesis_sets,
         "source_units_available":roster.basis.source_units_available,
         "source_units_omitted":roster.basis.source_units_omitted,
         "source_units_partial":roster.basis.source_units_partial,
@@ -419,3 +502,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub(crate) mod prompt_tests;

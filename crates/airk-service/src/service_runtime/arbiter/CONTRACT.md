@@ -127,7 +127,7 @@ Private Focus application/rank I1 callbacks retain the original read-attempt
 identity, absolute expiry, parent budget and native source authority. Admission
 precedes tokenizer dispatch. A service-owned shared Focus/Context ledger binds
 stage/index/local read ordinal, one-use Context ordinal, common original token
-ceiling (at most 2048), partition token/call ceilings and immutable original
+ceiling (at most 8192, relaxed from 2048 in 1.8.201), partition token/call ceilings and immutable original
 expiry. Focus uses exact qualified profile pair-token bounds and scores only the
 already admitted original prefix. Each pair contains the original question and
 one explicit source window; full source bodies and original source IDs remain
@@ -387,3 +387,52 @@ partitions keep their original frontend digest. Core still validates the
 original attempt, index, parent/resources and candidate/source bindings before
 this predicate, and the native issue/source/configuration/delivery fences stay
 mandatory. No model work, budget or authority is created by this distinction.
+
+
+## Canonical optional asset sources and bounded whole-asset fallback
+
+Only explicit Provision may use network transport. Recover locally reconciles
+and warms already verified assets; status, startup, read and import never download.
+Core's immutable origin policy and complete source ordinal roster own every URL.
+Service accepts native primary and at most two actual same-byte backup rosters;
+it never creates a URL, mirror, profile or source authority from downloaded data.
+
+Every native part retains its first established absolute 900-second deadline and
+four-redirect budget across whole-asset attempts. Response and body-idle deadlines
+remain thirty seconds. Successful earlier parts of an uncommitted failed asset
+may be replayed into the fresh writer, retaining their original clocks/counters;
+expired earlier parts refuse replay. Cancellation, supersession and custody or
+policy failures stop without backup. Only source-class transport/status/body/hash
+failure can move once to the next complete compiled ordinal, at most three
+whole-asset attempts total. No fallback grants time, consent or enrollment.
+
+An alternate starts only after Store's same-Transaction restart authenticates
+and removes the exact positively sealed current failed asset/proof and returns a
+new zero-byte writer. No failed-part append and no deletion of completed assets
+or foreign/unsealed/replaced state. Other completed assets use verified cache.
+Full part hashes and complete logical asset SHA/length still gate publication.
+Failed sources retain bounded diagnostics by asset, ordinal and failure class;
+signed redirect queries and arbitrary response content are never logged.
+
+Initial sources use Core download_origin. GitHub redirects stay on exact existing
+official release CDN routes. HF redirects stay on the original pinned repo/file
+resolve-cache route or the actually observed HTTPS us.aws.cdn.hf.co
+xet-bridge-us/<24hex>/<64hex> route. No wildcard CDN, source cross-over, arbitrary
+relative path, credentials or port. Redirect transport is not an independent
+backup and never changes native bytes/hash authority. Authenticated publisher
+metadata/HEAD alone does not claim an actual complete model transfer.
+
+No optional Arbiter weights enter installer/native/VSIX payload inventories.
+Existing core MiniLM embedding remains separate. Manual offline import is
+secondary; genuine canonical source availability and final model/platform gates
+are required before shipping. Empty backup lists retain old native bytes.
+
+Production composition binds the already-running service Log to both stage
+lifecycle states before launch. Provision clones that handle under the lifecycle
+lock, releases the lock, then uses the existing nonblocking record_code path
+outside every Store proof guard. Existing ModelFailed records carry only public
+asset SHA, bounded source ordinal and static failure class (at most128 bytes);
+no URL, signed query, token, body or local path is recorded. Existing dropped-log
+telemetry remains authoritative; retention is not infallible. Pure tests may
+explicitly omit the sink and make no durable-diagnostics claim. No new log kind,
+record schema, file format, writer thread or logging framework is introduced.

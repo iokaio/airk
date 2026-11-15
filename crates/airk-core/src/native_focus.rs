@@ -163,9 +163,9 @@ impl NativeFocusRequest {
                 && (self.candidates.is_empty() == (self.score_count == 0))
                 && (1..=12).contains(&self.ordinal)
                 && usize::from(self.ordinal) <= self.parent_budget.calls
-                && (1..=30_000).contains(&self.remaining_ms)
+                && (1..=120_000).contains(&self.remaining_ms)
                 && self.remaining_ms <= self.parent_budget.deadline_ms
-                && (1..=2048).contains(&self.remaining_input_tokens)
+                && (1..=8192).contains(&self.remaining_input_tokens)
                 && self.remaining_input_tokens <= self.parent_budget.input_tokens
                 && serde_json::to_vec(self)?.len() <= crate::service::MAX_TOOLS_CALL_REQUEST_BYTES,
             "native Focus original bounds exceeded"

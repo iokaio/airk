@@ -702,8 +702,8 @@ fn body_with_budgets(
                             .context("combined deadline allocation overflow")
                     })?;
                 ensure!(
-                    deadline <= 30_000,
-                    "allocated member deadlines exceeded the configured 30000 ms request deadline"
+                    deadline <= 120_000,
+                    "allocated member deadlines exceeded the 120000 ms request deadline ceiling"
                 );
             }
         }
@@ -836,7 +836,7 @@ fn normalize_member_allocation_timing(logical: &mut Value) -> Result<()> {
         deadlines.push(allocation.deadline_ms);
     }
     ensure!(
-        (1..=30_000).contains(&total),
+        (1..=120_000).contains(&total),
         "remaining member clocks exceed original request deadline or have no admitted clock"
     );
     let count = members.len() as u64;
@@ -3603,7 +3603,7 @@ fn current_body_copy(raw: &Value, status: bool) -> Result<Value> {
         let allocation: airk_core::combined_reads::MemberAllocation =
             serde_json::from_value(member["allocation"].clone())?;
         ensure!(
-            allocation.deadline_ms <= 30000,
+            allocation.deadline_ms <= 120_000,
             "invalid original member allowance"
         );
         // Fixed count/byte/verification caps stay literal. The shared elapsed

@@ -46,7 +46,7 @@ pub struct VerificationOptions {
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=1073741824))]
     #[serde(skip_serializing_if = "Option::is_none")]
     verification_max_bytes: Option<u64>,
-    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=30000))]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=120000))]
     #[serde(skip_serializing_if = "Option::is_none")]
     verification_deadline_ms: Option<u64>,
 }

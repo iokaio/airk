@@ -40,8 +40,8 @@ impl FocusProfileLimits {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             (1..=64).contains(&self.max_candidates)
-                && (1..=2048).contains(&self.pair_input_tokens)
-                && (1..=2048).contains(&self.max_input_tokens)
+                && (1..=8192).contains(&self.pair_input_tokens)
+                && (1..=8192).contains(&self.max_input_tokens)
                 && self.pair_input_tokens <= self.max_input_tokens,
             "invalid qualified Focus profile limits"
         );
@@ -94,7 +94,7 @@ pub fn focus_token_allowance(
 ) -> Result<usize> {
     limits.validate()?;
     ensure!(
-        (1..=2048).contains(&local_parent_tokens),
+        (1..=8192).contains(&local_parent_tokens),
         "invalid original local Focus token allocation"
     );
     let ceiling = if initial_context_ready {
@@ -127,7 +127,10 @@ pub fn ordinary_search_allocation(
         returned_count <= requested_limit && returned_count <= MAX_RETURNED_CANDIDATES,
         "Focus actual returned count exceeds canonical Search limits"
     );
-    let deadline_ms = attempt.remaining_at(clock, now_ns)?.as_millis().min(30_000) as u64;
+    let deadline_ms = attempt
+        .remaining_at(clock, now_ns)?
+        .as_millis()
+        .min(120_000) as u64;
     let candidates = returned_count
         .min(requested_limit)
         .min(64)
@@ -555,10 +558,10 @@ pub fn validation_budget() -> Budget {
         calls: 12,
         rounds: 4,
         fanout: 12,
-        input_tokens: 2048,
+        input_tokens: 8192,
         candidates: 64,
         max_bytes: 65_536,
-        deadline_ms: 30_000,
+        deadline_ms: 120_000,
     }
 }
 #[derive(Clone, Debug, Default)]

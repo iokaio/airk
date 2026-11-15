@@ -399,9 +399,9 @@ mutation or embedding-regeneration action belongs to this contract.
 
 ## Explicit compiled asset transport decision (2026-11-14)
 
-Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
+Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, backup_urls, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
 
-Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. URLs are exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` with bounded safe ASCII tag/filename components, no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
+Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. Primary and optional backup URLs use Core `download_origin`: exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` or the reviewed immutable HF forms below, with bounded safe ASCII components and no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
 
 ## Private evaluation admission decision (2026-11-14)
 
@@ -840,3 +840,63 @@ Rust cases prove the complete selected ABI and independent refusals; synthetic
 current Context profiles use it explicitly. Historical four-model fixtures remain
 unchanged and gain no selected-model eligibility. No wire field, tokenizer/model
 math, budget, persisted format or historical qualification identity changes.
+
+
+### Immutable model acquisition origins and complete backup ordinals
+
+The recorded optional-source decision adds AssetPart.backup_urls, serde default
+and omitted when empty. At most two distinct backups share the SAME part bytes
+and SHA; no alternate payload identity exists. Empty lists retain original part
+and Profile canonical bytes, demonstrated by literal old part bytes and the
+retained old nested Rust Profile serializer/hashed fixture. No airk-state/1
+fixture is rewritten. Nonempty release descriptors require a new authenticated
+manifest/catalog through final promotion, never rewritten consent or enablement.
+
+Core download_origin is the sole initial-source predicate. Existing official
+iokaio/airk GitHub release URLs retain their exact safe tag/file rules. HF URLs
+are HTTPS huggingface.co with exact reviewed repositories Qwen/Qwen3-Reranker-0.6B,
+Qwen/Qwen3-0.6B-Base, Qwen/Qwen3-1.7B, Qwen/Qwen3-4B and
+onnx-community/Qwen3-Reranker-0.6B-ONNX, then resolve/40-lowercase-hex/safe-single-file.
+No credentials, explicit ports, branches, query, fragment, escapes or traversal;
+no derived AIRK repository is invented. Metadata/source shape does not establish
+actual availability, rights or payload qualification. Redirect admission remains
+an independently bounded native transport duty.
+
+AssetDownload.source_count validates a complete same-count backup ordinal on
+EVERY ordered part, at most initial+two alternatives. AssetPart.source_url(0)
+returns primary and later ordinals its declared backup, without changing bytes
+or SHA. Part locations are distinct across the asset; existing positive/1GiB
+part bounds, sixteen-part cap, full length sum and singleton whole SHA remain.
+Profile.validate_release_downloads validates this entire closure.
+
+Only explicit Provision acquires network bytes. Recover stays local reconciliation
+and warm; startup/query/status/import grant no download. Whole-asset fallback
+requires narrow Store-owned sealed-partial restart, no failed-part append or
+mutation of completed/foreign/unsealed files. Every original per-part900s deadline,
+30s response/idle limit and shared four redirects per part remain across source
+attempts; no retry or new time follows from a backup. Cancellation, supersession,
+revocation or local custody failure stops immediately. Native publication lists
+only actual GitHub-hosted files; all HF descriptors stay in authenticated catalog
+closure. Rust structural GH-backup cases assert no working URL or publication.
+
+## Relaxed ceilings in the 1.8.201 local candidate
+
+At the user's direction the structural ceilings below were multiplied by four so
+a local candidate can be tested. This is **not** qualification. Every changed
+value, its reason and the evidence needed to restore it is in
+`docs/arbiter/relaxations.md`.
+
+- Token ceilings: compiler/Context profile `max_tokens`, `Budget.input_tokens`,
+  `FocusProfileLimits.{pair,max}_input_tokens`, Focus local parent allocation,
+  `reserved_input_tokens`, native Focus/Context `remaining_input_tokens` and
+  combined-context `resources.input_tokens` accept 1..=8192 (was 2048).
+- Deadline ceilings: `Budget.deadline_ms`, native `remaining_ms`, combined
+  `deadline_ms` and `read_limits::MAX_DEADLINE_MS` accept up to 120000 ms (was
+  30000). `Budget::default()` is deliberately unchanged (2048 tokens, 30000 ms),
+  so existing retained fixtures remain valid; callers must request larger
+  budgets explicitly.
+- The exported Focus graph has a static `[1, max_tokens]` input width (see
+  `selected_graph_shape`). A Focus profile wider than the exported 512 cannot
+  load without a new graph export. Context graphs have dynamic token axes.
+- Qualification floors (T2048, 30 s p95, resource and numeric rows) were not
+  changed and still describe the earlier evidence.

@@ -531,8 +531,27 @@ fn nested_focus_allocation_is_cumulative_local_and_leaves_context_capacity() -> 
     limits.max_input_tokens = 512;
     assert_eq!(focus_token_allowance(2048, false, 0, 2048, &limits)?, 512);
     assert!(focus_token_allowance(0, true, 0, 2048, &limits).is_err());
-    assert!(focus_token_allowance(2049, true, 0, 2048, &limits).is_err());
+    assert!(focus_token_allowance(8193, true, 0, 2048, &limits).is_err());
+    assert!(focus_token_allowance(8192, true, 0, 8192, &limits).is_ok());
     limits.pair_input_tokens = 0;
     assert!(focus_token_allowance(2048, true, 0, 2048, &limits).is_err());
     Ok(())
+}
+
+#[test]
+fn focus_profile_token_ceilings_are_literal_8192() {
+    let ok = FocusProfileLimits {
+        max_candidates: 8,
+        pair_input_tokens: 8192,
+        max_input_tokens: 8192,
+    };
+    assert!(ok.validate().is_ok());
+    for (pair, maximum) in [(8193, 8193), (512, 8193), (8193, 8192), (0, 8192)] {
+        let limits = FocusProfileLimits {
+            max_candidates: 8,
+            pair_input_tokens: pair,
+            max_input_tokens: maximum,
+        };
+        assert!(limits.validate().is_err(), "{pair}/{maximum}");
+    }
 }

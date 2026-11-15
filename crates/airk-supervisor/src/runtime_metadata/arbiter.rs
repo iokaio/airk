@@ -60,6 +60,25 @@ where
     }
 }
 
+/// Clip one native transport wait to the ORIGINAL read's absolute deadline.
+/// The wrapped request keeps its own five-second I1 ceiling and retry rules;
+/// this only prevents the wait from outliving the read. A refusal or other
+/// error from the work is returned unchanged.
+async fn clipped<T>(
+    deadline: Instant,
+    what: &'static str,
+    work: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    ensure!(
+        deadline > Instant::now(),
+        "{what} original deadline exhausted before native transport"
+    );
+    match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), work).await {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!("{what} original deadline exhausted in native transport"),
+    }
+}
+
 struct Controller(PathBuf);
 impl NativeController for Controller {
     fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
@@ -99,6 +118,39 @@ impl NativeController for Controller {
             _ => anyhow::bail!("Arbiter Focus native application unavailable"),
         }
     }
+    fn focus_application_before(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        deadline: Instant,
+    ) -> Result<Option<FocusApplication>> {
+        let response = drive_control(|| {
+            clipped(
+                deadline,
+                "Focus metadata",
+                airk_installer::control_client::request_for_version_and_instance_once(
+                    &self.0,
+                    ControlMethod::ArbiterFocusApplication {
+                        worker,
+                        authority,
+                        publication: publication.clone(),
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+        })?;
+        match response {
+            ControlResponse::ArbiterFocusApplication { application } => {
+                Ok(application.map(|application| *application))
+            }
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("Arbiter Focus native application unavailable"),
+        }
+    }
     fn focus_rank(
         &self,
         mut request: airk_core::native_focus::NativeFocusRequest,
@@ -107,7 +159,7 @@ impl NativeController for Controller {
         let remaining = deadline.saturating_duration_since(Instant::now());
         request.remaining_ms = request
             .remaining_ms
-            .min(remaining.as_millis().min(30_000) as u64);
+            .min(remaining.as_millis().min(120_000) as u64);
         ensure!(
             request.remaining_ms > 0,
             "Focus original deadline exhausted"
@@ -162,7 +214,7 @@ impl NativeController for Controller {
         let remaining = deadline.saturating_duration_since(Instant::now());
         request.remaining_ms = request
             .remaining_ms
-            .min(remaining.as_millis().min(30_000) as u64);
+            .min(remaining.as_millis().min(120_000) as u64);
         ensure!(
             request.remaining_ms > 0,
             "joint original deadline exhausted"
@@ -238,6 +290,37 @@ impl NativeController for Controller {
             _ => anyhow::bail!("Arbiter native index application unavailable"),
         }
     }
+    fn application_before(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        deadline: Instant,
+    ) -> Result<IndexApplication> {
+        let response = drive_control(|| {
+            clipped(
+                deadline,
+                "Arbiter application metadata",
+                airk_installer::control_client::request_for_version_and_instance(
+                    &self.0,
+                    ControlMethod::ArbiterApplication {
+                        worker,
+                        authority,
+                        publication: publication.clone(),
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+        })?;
+        match response {
+            ControlResponse::ArbiterApplication { application } => Ok(*application),
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("Arbiter native index application unavailable"),
+        }
+    }
     fn next_read(
         &self,
         mut request: NativeNextReadRequest,
@@ -246,14 +329,14 @@ impl NativeController for Controller {
         let remaining_ms = deadline
             .saturating_duration_since(Instant::now())
             .as_millis()
-            .min(30_000) as u64;
+            .min(120_000) as u64;
         ensure!(remaining_ms > 0, "Arbiter original deadline exhausted");
         request.remaining_ms = remaining_ms;
         let monotonic = airk_process::monotonic::now_ns()?;
         let remaining_ns = deadline
             .saturating_duration_since(Instant::now())
             .as_nanos()
-            .min(30_000_000_000) as u64;
+            .min(120_000_000_000) as u64;
         request.read_attempt = Some(airk_core::read_attempt::ReadAttemptBudget {
             schema: 1,
             request_id: airk_kernel::service_broker::new_instance_id()?,

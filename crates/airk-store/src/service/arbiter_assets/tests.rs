@@ -603,3 +603,329 @@ fn final_object_custody_precedes_publication_and_survives_interruption() -> Resu
     assert_eq!(store.phase(&profile)?, Some(Phase::Removed));
     Ok(())
 }
+
+#[test]
+fn failed_source_restart_starts_at_zero_and_preserves_completed_cache() -> Result<()> {
+    let (root, store, profile) = fixture()?;
+    let transaction = store.begin(&profile, 1)?;
+    let mut cached = transaction.asset(&profile.assets[1])?.unwrap();
+    cached.write_all(b"asset-data")?;
+    transaction.publish(cached)?;
+    let cached_file = transaction
+        .directory
+        .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
+    let cached_identity = file_identity(&cached_file)?;
+    drop(cached_file);
+    let mut failed = transaction.asset(&profile.assets[0])?.unwrap();
+    failed.write_all(b"asset-")?;
+    failed.write_all(b"da")?; // A completed prefix part plus failed next-part prefix.
+    let mut replacement = transaction.restart_failed_asset(failed)?;
+    assert_eq!(replacement.bytes, 0);
+    assert_eq!(replacement.file.metadata()?.len(), 0);
+    replacement.write_all(b"asset-data")?;
+    transaction.publish(replacement)?;
+    for asset in profile.assets.iter().skip(2) {
+        let mut writer = transaction.asset(asset)?.unwrap();
+        writer.write_all(b"asset-data")?;
+        transaction.publish(writer)?;
+    }
+    let cached_file = transaction
+        .directory
+        .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
+    assert_eq!(file_identity(&cached_file)?, cached_identity);
+    drop(cached_file);
+    transaction.finish()?;
+    assert_eq!(store.phase(&profile)?, Some(Phase::Ready));
+    let pinned = store.pin(&profile)?;
+    for asset in &profile.assets {
+        assert_eq!(pinned.read(asset)?, b"asset-data");
+    }
+    let stage = root
+        .path()
+        .join("arbiter-v3/assets")
+        .join(profile.manifest.to_string())
+        .join("stage-1");
+    assert!(!stage.join(&profile.assets[0].name).exists());
+    assert!(
+        !stage
+            .join(format!("{}.partial.json", profile.assets[0].name))
+            .exists()
+    );
+    assert!(stage.join("operation.json").exists());
+    Ok(())
+}
+
+#[test]
+fn failed_source_restart_refuses_writer_from_other_root_or_settled_operation() -> Result<()> {
+    let (first_root, first, profile) = fixture()?;
+    let (_second_root, second, _) = fixture()?;
+    let transaction = first.begin(&profile, 1)?;
+    let other = second.begin(&profile, 1)?;
+    let mut wrong = other.asset(&profile.assets[0])?.unwrap();
+    wrong.write_all(b"asse")?;
+    assert!(transaction.restart_failed_asset(wrong).is_err());
+    assert_eq!(
+        other
+            .stage
+            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
+        b"asse"
+    );
+    drop(other);
+    let mut old = transaction.asset(&profile.assets[0])?.unwrap();
+    old.write_all(b"asset-")?;
+    transaction.cancel()?;
+    let current = first.begin(&profile, 2)?;
+    assert!(current.restart_failed_asset(old).is_err());
+    let old_path = first_root
+        .path()
+        .join("arbiter-v3/assets")
+        .join(profile.manifest.to_string())
+        .join("stage-1");
+    assert_eq!(
+        std::fs::read(old_path.join(&profile.assets[0].name))?,
+        b"asset-"
+    );
+    assert!(
+        old_path
+            .join(format!("{}.partial.json", profile.assets[0].name))
+            .exists()
+    );
+    assert!(
+        current
+            .stage
+            .open_file(OsStr::new(&profile.assets[0].name), SetupFileMode::Read)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_source_restart_seal_failure_preserves_unfinished_and_foreign_proof() -> Result<()> {
+    let (_root, store, profile) = fixture()?;
+    let transaction = store.begin(&profile, 1)?;
+    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+    writer.write_all(b"asset-")?;
+    let proof_name = format!("{}.partial.json", profile.assets[0].name);
+    let mut foreign = transaction
+        .stage
+        .open_file(OsStr::new(&proof_name), SetupFileMode::CreateNew)?;
+    foreign.write_all(b"unowned-proof")?;
+    drop(foreign);
+    assert!(transaction.restart_failed_asset(writer).is_err());
+    assert_eq!(
+        transaction
+            .stage
+            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
+        b"asset-"
+    );
+    assert_eq!(
+        transaction.stage.read_file(OsStr::new(&proof_name), 32)?,
+        b"unowned-proof"
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_source_restart_refuses_replaced_or_linked_asset_and_changed_operation() -> Result<()> {
+    for defect in ["replaced", "linked", "operation"] {
+        let (root, store, profile) = fixture()?;
+        let transaction = store.begin(&profile, 1)?;
+        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+        writer.write_all(b"asset-")?;
+        let stage = root
+            .path()
+            .join("arbiter-v3/assets")
+            .join(profile.manifest.to_string())
+            .join("stage-1");
+        let asset_path = stage.join(&profile.assets[0].name);
+        let retained = root.path().join("retained-original");
+        assert!(
+            transaction
+                .restart_failed_asset_with(writer, || {
+                    match defect {
+                        "replaced" => {
+                            std::fs::rename(&asset_path, &retained)?;
+                            std::fs::write(&asset_path, b"asset-")?;
+                        }
+                        "linked" => {
+                            std::fs::hard_link(&asset_path, &retained)?;
+                        }
+                        "operation" => {
+                            std::fs::write(stage.join("operation.json"), b"foreign operation")?;
+                        }
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&asset_path)?, b"asset-");
+        if defect != "operation" {
+            assert_eq!(std::fs::read(&retained)?, b"asset-");
+        }
+        assert!(
+            stage
+                .join(format!("{}.partial.json", profile.assets[0].name))
+                .exists()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_source_restart_refuses_replaced_or_changed_partial_proof_before_asset_effects()
+-> Result<()> {
+    for replace in [false, true] {
+        let (root, store, profile) = fixture()?;
+        let transaction = store.begin(&profile, 1)?;
+        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+        writer.write_all(b"asset-")?;
+        let stage = root
+            .path()
+            .join("arbiter-v3/assets")
+            .join(profile.manifest.to_string())
+            .join("stage-1");
+        let proof = stage.join(format!("{}.partial.json", profile.assets[0].name));
+        assert!(
+            transaction
+                .restart_failed_asset_with(writer, || {
+                    if replace {
+                        let bytes = std::fs::read(&proof)?;
+                        std::fs::rename(&proof, root.path().join("retained-proof"))?;
+                        std::fs::write(&proof, bytes)?;
+                    } else {
+                        std::fs::write(&proof, b"{}")?;
+                    }
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(stage.join(&profile.assets[0].name))?,
+            b"asset-"
+        );
+        assert!(proof.exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn sealed_failed_writer_cannot_be_extended_or_published_as_complete() -> Result<()> {
+    let (_root, store, profile) = fixture()?;
+    let transaction = store.begin(&profile, 1)?;
+    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+    writer.write_all(b"asset-data")?;
+    writer.seal_partial()?;
+    assert!(writer.write_all(b"x").is_err());
+    assert!(transaction.publish(writer).is_err());
+    assert!(
+        transaction
+            .directory
+            .open_file(OsStr::new(&profile.assets[0].name), SetupFileMode::Read)
+            .is_err()
+    );
+    assert_eq!(
+        transaction
+            .stage
+            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
+        b"asset-data"
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_source_restart_postseal_cancel_or_expiry_preserves_partial_proof_and_cache() -> Result<()>
+{
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    for expire in [false, true] {
+        let (_root, store, profile) = fixture()?;
+        let transaction = store.begin(&profile, 1)?;
+        let mut cached = transaction.asset(&profile.assets[1])?.unwrap();
+        cached.write_all(b"asset-data")?;
+        transaction.publish(cached)?;
+        let cached_file = transaction
+            .directory
+            .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
+        let identity = file_identity(&cached_file)?;
+        drop(cached_file);
+        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+        writer.write_all(b"asset-")?;
+        let canceled = AtomicBool::new(false);
+        let clock = AtomicU64::new(100);
+        let check = || {
+            ensure!(
+                !canceled.load(Ordering::SeqCst) && clock.load(Ordering::SeqCst) < 200,
+                "original cancellation/deadline refused"
+            );
+            Ok(())
+        };
+        assert!(
+            transaction
+                .restart_failed_asset_checked(writer, &check, || {
+                    if expire {
+                        clock.store(201, Ordering::SeqCst);
+                    } else {
+                        canceled.store(true, Ordering::SeqCst);
+                    }
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(
+            transaction
+                .stage
+                .read_file(OsStr::new(&profile.assets[0].name), 16)?,
+            b"asset-"
+        );
+        assert!(
+            transaction
+                .stage
+                .open_file(
+                    OsStr::new(&format!("{}.partial.json", profile.assets[0].name)),
+                    SetupFileMode::Read
+                )
+                .is_ok()
+        );
+        let cached_file = transaction
+            .directory
+            .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
+        assert_eq!(file_identity(&cached_file)?, identity);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn failed_source_restart_native_posthash_admission_refuses_before_disposition() -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (root, store, profile) = fixture()?;
+    let transaction = store.begin(&profile, 1)?;
+    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
+    writer.write_all(b"asset-")?;
+    let stage = root
+        .path()
+        .join("arbiter-v3/assets")
+        .join(profile.manifest.to_string())
+        .join("stage-1");
+    let path = stage.join(&profile.assets[0].name);
+    // This independent peer observes the native write exclusion held by the
+    // existing exact-byte/hash deletion adapter; it writes/truncates nothing.
+    assert!(std::fs::OpenOptions::new().write(true).open(&path).is_ok());
+    let posthash_fence_observed = AtomicBool::new(false);
+    let result = transaction.restart_failed_asset_if(writer, || {
+        if std::fs::OpenOptions::new().write(true).open(&path).is_err() {
+            posthash_fence_observed.store(true, Ordering::SeqCst);
+            anyhow::bail!("injected cancellation at actual native posthash admission fence");
+        }
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert!(posthash_fence_observed.load(Ordering::SeqCst));
+    assert_eq!(std::fs::read(path)?, b"asset-");
+    assert!(
+        stage
+            .join(format!("{}.partial.json", profile.assets[0].name))
+            .exists()
+    );
+    Ok(())
+}

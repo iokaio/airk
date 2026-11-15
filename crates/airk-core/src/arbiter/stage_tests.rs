@@ -329,7 +329,7 @@ struct RetainedProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cpu_fit: Option<CpuFit>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    downloads: Vec<AssetDownload>,
+    downloads: Vec<RetainedAssetDownload>,
     model: ModelChoice,
     profile_id: String,
     manifest: Sha256Digest,
@@ -345,6 +345,21 @@ struct RetainedProfile {
     memory_reservation_bytes: u64,
     peak_disk_bytes: u64,
     assets: Vec<Asset>,
+}
+// Retain the old nested owner too: using current AssetPart here would mask
+// accidental insertion into an existing persisted profile's canonical bytes.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedAssetPart {
+    url: String,
+    bytes: u64,
+    sha256: Sha256Digest,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedAssetDownload {
+    asset_name: String,
+    parts: Vec<RetainedAssetPart>,
 }
 #[test]
 fn retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification() -> Result<()> {
