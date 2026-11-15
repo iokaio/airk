@@ -1,0 +1,44 @@
+AIRK Arbiter paper image prompts
+
+Tool: built-in image_gen
+Transparency: false for both assets
+
+model-lifecycle.png
+
+Use case: infographic-diagram
+Asset type: landscape educational PNG figure for a public technology paper, 1536 by 1024 composition
+Primary request: explain the separation between model training and local inference in AIRK Arbiter.
+Style/medium: polished professional editorial infographic, exceptionally clean, generous white space, flat restrained illustration and very legible typography. White background, dark navy lettering, teal and blue connectors with a small gold accent. No logo, no watermark.
+Composition: two spacious horizontal lanes separated by a light gray rule.
+Top lane heading exactly: "Before deployment".
+Three large connected blocks left to right:
+1. "Training", subtitle "Examples → learned weights".
+2. "Preparation", subtitle on two lines "Native export" and "Calibration and evaluation".
+3. "Verified model bundle", four short lines "Weights", "Tokenizer", "Decision settings", "Checks".
+Use simple restrained icons for a training grid, a preparation workbench, and a sealed package, subordinate to text.
+A single vertical arrow descends from the verified model bundle to the lower lane.
+Lower lane heading exactly: "On your machine".
+Lower lane shows "Explicit download" pointing right into "Local inference".
+A distinct separate stack labeled "Indexed documents" sits below and connects upward ONLY into "Local inference".
+Include small footer text: "Indexed documents are used for inference, not model training."
+Constraints: arrows communicate training to preparation to verified bundle, verified bundle down to explicit download, explicit download to local inference, indexed documents to local inference only. No arrow from indexed documents toward training. No cloud icons, no server architecture, no code, no extra claims or labels. Keep every exact label spelled correctly. This is a conceptual lifecycle, not a product screenshot.
+
+answer-retrieval-flow.png
+
+Use case: infographic-diagram
+Asset type: landscape educational PNG figure for a public technology paper, 1536 by 1024 composition
+Primary request: explain how AIRK Arbiter refines retrieval for an AI agent.
+Style/medium: polished professional editorial infographic, exceptionally clean, generous white space, flat restrained illustration and very legible typography. White background, dark navy lettering, teal and blue connectors with a small gold accent. No logo, no watermark. Use the same visual language as a high quality enterprise architecture paper.
+Composition: readable left-to-right flow in a wide landscape graphic, with a large pale blue enclosing frame around the middle FOUR stages only. Label the frame at the top exactly "AIRK · Original scope and budget".
+Outside the frame on the left, a compact "Agent question" box feeds into the frame.
+Inside the frame left to right, four boxes:
+1. "AIRK retrieval", subtitle "Find candidates".
+2. "Focus", subtitle "Rank candidates", small badge "Optional".
+3. "Context", subtitle "Assess evidence", small badge "Optional".
+4. "Evidence packet", subtitle "Citations and gaps".
+Outside the frame on the right, a compact "Agent response" box receives the evidence packet.
+Below the main flow but inside the enclosing frame, show a clear return arrow starting at Context and pointing BACK LEFT into AIRK retrieval, labeled exactly "Additional authorized reads". This is a bounded retrieval loop, not a loop into the agent.
+Under the Context box within the frame include a small line "Compact 1.7B or Large 4B".
+All forward arrows point right. The return arrow points left toward AIRK retrieval and connects to that box, keeping the return path separate from the forward row.
+Use restrained small document icons and a magnifier, no robots, no brain imagery, no cloud icons.
+Constraints: the agent question and agent response MUST be outside the AIRK frame. Focus and Context MUST visibly say Optional. The return arrow must stay within the original scope and budget frame. Every requested label must be spelled correctly with comfortable spacing; no overlapping text, no tiny type. No extra labels or code. Conceptual diagram only, not a product screenshot.

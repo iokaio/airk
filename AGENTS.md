@@ -1,5 +1,7 @@
 # Working on AIRK
 
+**RULE** Do not use a Codex specific sandbox user for anything. Always use the logged in user for all work.
+
 AIRK is an independent Artifact Indexing and Retrieval Kernel. This file holds the standing rules for agents. Campaign-specific state lives in "Current work" at the end and in the documents it names. Keep AGENTS.md and CLAUDE.md byte-identical.
 
 Before changing behavior, read the affected source, its tests and the owning component's `CONTRACT.md`. Consult README.md, CONTRIBUTING.md and docs/architecture.md when relevant. Do not preload manuals or dated history.
