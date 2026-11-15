@@ -1455,6 +1455,21 @@ next-read authority or exhaustive recall. Both stages off preserve ordinary
 results. Record reviewed native contract/catalog/state decisions before dependent
 consumers, including independent stage configuration and receipts.
 
+The user's later delivery requirement excludes optional Arbiter weights from the
+installer and the extension. Bundled MiniLM remains available with the service.
+Optional model assets are acquired by the app on demand from a verified canonical
+public/common source, after explicit provisioning. A verified backup is supported
+only where one actually exists for the same compatible artifact. Optional manual
+offline bundles remain secondary; they are not required installer payloads.
+
+The current AIRK-derived native exports must not be equated with a publisher's
+BF16 checkpoint or another community ONNX graph. If their exact authenticated
+bytes are not available from an approved public source, keep those profiles
+unavailable. Source-origin/redirect/part/backup contract changes require the normal
+recorded decision and native fixtures before consumers. This records the required
+delivery design, not public source availability, qualification or permission to
+publish artifacts or add cloud inference.
+
 Product Help must explain the pipeline, each model's role, independent stage
 enablement, index consent, provisioning/offline use, selected versus active state,
 resource requirements, fallback, removal and errors. Hardware requirements come

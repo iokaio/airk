@@ -85,6 +85,18 @@ separately enabled and the index is enrolled for it. With Focus off, Context can
 use the ordinary native candidate ordering. With Context off, Focus can still
 help ordinary retrieval where supported.
 
+The service installer includes bundled MiniLM, but no optional Focus or Context
+weights. Optional model acquisition belongs to AIRK Service after you choose a
+supported profile and explicitly provision it. Installing or updating AIRK does
+not download those optional weights.
+
+When a qualified profile is offered, its catalog identifies the canonical public
+source for the exact compatible assets. A backup source is usable only if it has
+been verified for those same assets; a backup is not promised for every profile.
+A publisher's general model download is not automatically a compatible AIRK
+profile. If no verified source is available, the profile remains unavailable;
+AIRK does not silently choose different weights, precision or execution.
+
 Model provisioning is an explicit management operation. A status query, ordinary
 search or contextual question does not authorize a download. Review the selected
 profile, transfer and staging/rollback disk requirements before provisioning.
@@ -180,7 +192,9 @@ After a supported profile's complete assets have been verified and provisioned,
 inference is local inside AIRK Service. The product does not send indexed
 questions or evidence to a cloud model, run a model server or execute code from
 a model repository. Offline import must authenticate the same complete assets
-as online provisioning. Missing assets remain unavailable when offline.
+as online provisioning. A separately obtained manual offline bundle is a
+secondary option, not a required installer payload. Missing assets remain
+unavailable when offline.
 
 Disable each stage through its supported native controls. Disablement prevents
 new optional work and suppresses stale delivery while already admitted work

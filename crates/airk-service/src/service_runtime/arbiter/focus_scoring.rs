@@ -48,14 +48,7 @@ impl StageOwner {
         let deadline = started
             .checked_add(remaining)
             .context("Focus deadline overflow")?;
-        if let (Some(partition), Some(selection)) =
-            (&request.partition, request.authority.selection)
-        {
-            ensure!(
-                partition.selection == selection.scope_identity,
-                "Focus partition differs from the actual installed selection"
-            );
-        }
+        validate_partition_selection(request.partition.as_ref(), request.authority.selection)?;
         let application = self.application(
             request.worker,
             request.authority,
@@ -408,3 +401,23 @@ fn focus_response(
     response.validate(request)?;
     Ok(Some(response))
 }
+
+// This follows Core native-request validation; it grants no source authority.
+fn validate_partition_selection(
+    partition: Option<&airk_core::combined_context::PartitionAllowance>,
+    selection: Option<airk_core::scoped_reads::SelectionScopeRef>,
+) -> Result<()> {
+    if let Some(partition) = partition {
+        partition.validate()?;
+        if partition.is_ordinary_focus() {
+            ensure!(
+                selection.is_some_and(|selection| partition.selection == selection.scope_identity),
+                "Focus partition differs from the actual installed selection"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

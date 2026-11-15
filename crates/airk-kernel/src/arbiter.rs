@@ -194,10 +194,10 @@ impl crate::Kernel {
             .context("new native context unexpectedly shared")?;
         ensure!(
             context.authority.index_id == allowance.index_id
-                && context
-                    .authority
-                    .selection
-                    .is_none_or(|selection| selection.scope_identity == allowance.selection)
+                && (!allowance.is_ordinary_focus()
+                    || context.authority.selection.is_some_and(|selection| {
+                        selection.scope_identity == allowance.selection
+                    }))
                 && self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "context partition differs from installed authority"
         );

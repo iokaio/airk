@@ -47,3 +47,18 @@ already use their own bounded airk-pool-client communication thread/runtime and
 remain unchanged. Runtime bundle/work observations remain async. Native model
 execution, lease/reservations and completion/drain stay under their existing
 owning service; this transport bridge creates no inference owner.
+
+Native I1 QueryResult embeds the existing closed MCP-shaped tool result
+(content, optional structuredContent and isError). The negotiated public SDK
+resultType discriminator belongs to the outer MCP transport, not this native
+frame. Normal LocalTools dispatch already omits it; worker-level early scoped
+and recognized unscoped error serialization must omit it too. Keep every error
+body, scope observation, retry flag and native-body distinction unchanged.
+Kernel closed-envelope sizing continues to refuse arbitrary extensions; no
+frame/allocation increase or unknown-field trimming is authorized.
+
+Cheap proof: response_tests::early_worker_errors_use_closed_native_envelopes
+constructs real SDK refusals, demonstrates the SDK discriminator, then checks
+actual worker helpers against Kernel context_member_payload_bytes without a
+model/worker process. A framing correction does not establish that an underlying
+member operation succeeded or authorize replay of a failed finite Answer.

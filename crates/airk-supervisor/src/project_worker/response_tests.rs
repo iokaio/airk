@@ -97,3 +97,46 @@ fn actual_unscoped_worker_boundary_redacts_unknown_internal_failure_and_preserve
     assert!(!reply.to_string().contains(sentinel));
     Ok(())
 }
+
+#[test]
+fn early_worker_errors_use_closed_native_envelopes() -> Result<()> {
+    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let admin = Kernel::open(root.path(), None)?;
+    let scoped = session(&admin)?;
+    let error = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused);
+    let sdk = airk_mcp::response::scoped_error_result(&scoped, &error);
+    assert!(
+        sdk.result_type.is_some(),
+        "control must exercise the real SDK constructor"
+    );
+    let sdk_value = serde_json::to_value(&sdk)?;
+    assert!(
+        airk_kernel::combined_reads::context_member_payload_bytes(&sdk_value).is_err(),
+        "the public SDK envelope is not an unreserved native frame"
+    );
+    let native = scoped_worker_error(&scoped, &error, false);
+    assert!(native.get("resultType").is_none());
+    assert_eq!(body(&native), scoped_worker_error(&scoped, &error, true));
+    let mut expected = sdk_value;
+    expected.as_object_mut().unwrap().remove("resultType");
+    assert_eq!(
+        native, expected,
+        "only the native/public discriminator differs"
+    );
+    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&native)? > 0);
+    assert_eq!(body(&native)["error"]["code"], "scoped_read_unavailable");
+    let typed = anyhow::Error::new(airk_store::quota::QuotaContention);
+    let sdk =
+        airk_mcp::response::typed_error_result(&typed).context("real typed refusal absent")?;
+    assert!(sdk.result_type.is_some());
+    let native = unscoped_worker_error(&typed);
+    let mut expected = serde_json::to_value(sdk)?;
+    expected.as_object_mut().unwrap().remove("resultType");
+    assert_eq!(native, expected);
+    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&native)? > 0);
+    let unknown = unscoped_worker_error(&anyhow::anyhow!("private/sentinel"));
+    assert!(unknown.get("resultType").is_none());
+    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&unknown)? > 0);
+    assert!(!unknown.to_string().contains("private/sentinel"));
+    Ok(())
+}

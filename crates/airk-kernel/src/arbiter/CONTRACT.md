@@ -86,3 +86,15 @@ Explicit Off retains the legacy 4096-byte closed-render reserve. Cumulative
 mandatory Focus custody and final post-application/deadline packing use the same
 additional reserve. Metadata-only refusal remains valid if mandatory custody
 cannot fit; no source verification or uncertain native work is replayed.
+
+A genuine combined Context partition's selection digest is the frontend's
+whole current member snapshot identity. Open and W4/A2 snapshot domains may
+differ from the original installed selection identity; the digest grants no
+source authority and must not be compared as if it were that credential.
+Kernel still checks Core allowance validity, exact original attempt/index and
+actual installed authority fingerprint. Only the ordinary singleton Focus
+purpose additionally requires its captured selection digest to equal the
+actual installed SelectionScopeRef identity (and an installed selection).
+The service Focus scorer applies that same purpose distinction after native
+request/worker/source/parent/partition validation, so nested Focus retains the
+original whole-selection accounting identity without creating an allowance.

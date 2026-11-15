@@ -668,3 +668,148 @@ fn combined_focus_outer_binding_is_admitted_before_nn_while_off_keeps_fitting_by
     }
     Ok(())
 }
+
+#[test]
+fn native_context_partition_keeps_snapshot_digest_separate_from_installed_selection() -> Result<()>
+{
+    use airk_core::{
+        combined_context::PartitionAllowance,
+        scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+    };
+    let (_temp, original, owner, _) = fixture(Mode::Off)?;
+    let current = original.arbiter_context.as_ref().unwrap();
+    let worker = current.worker;
+    let wire = current.attempt.unwrap();
+    let fixtures: Value = serde_json::from_slice(include_bytes!(
+        "../../../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
+    ))?;
+    for selected_owner in [SelectionOwnerKind::Window, SelectionOwnerKind::Agent] {
+        let base = crate::Kernel::open(original.root(), Some(original.data_dir().to_path_buf()))?;
+        let selection = SelectionScopeRef {
+            owner: selected_owner,
+            grant_nonce: Incarnation::from_bytes([80; 16]),
+            service_instance: worker.service,
+            scope_identity: digest(81),
+            catalog_revision: CatalogRevision::INITIAL,
+        };
+        let sources = vec![SourceDescriptor {
+            source_root_id: SourceRootId::from_identity(Incarnation::from_bytes([3; 16])),
+            original_root: original.root().to_str().unwrap().into(),
+        }];
+        let scoped = if selected_owner == SelectionOwnerKind::Agent {
+            base.with_open_reads(crate::scoped_reads::OpenReadAuthority {
+                schema: 1,
+                backing: worker.project,
+                index_id: current.authority.index_id,
+                selection,
+                sources,
+                source_revision: CatalogRevision::INITIAL,
+                policy_epoch: 0,
+                policy_digest: None,
+            })?
+        } else {
+            let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
+            base.with_selection_reads(crate::scoped_reads::SelectionReadAuthority {
+                schema: 1,
+                backing: worker.project,
+                index_id: current.authority.index_id,
+                project_ids: vec![project],
+                selection,
+                sources,
+                atoms: vec![(
+                    project,
+                    ScopeAtom {
+                        source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
+                            [3; 16],
+                        )),
+                        kind: PathScope::Subtree,
+                        path: "public".into(),
+                    },
+                )],
+                membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+                source_revision: CatalogRevision::INITIAL,
+                policy_epoch: 0,
+                policy_digest: None,
+            })?
+        };
+        let authority = ScopedReadRef {
+            schema: 1,
+            lease_generation: 1,
+            index_id: current.authority.index_id,
+            grant_id: None,
+            grant_revision: None,
+            selection: Some(selection),
+            fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
+        };
+        let native = scoped.with_native_arbiter(worker, authority, owner.clone())?;
+        for row in ["context", "zero_optional_work", "ordinary_focus"] {
+            let mut allowance: PartitionAllowance =
+                serde_json::from_value(fixtures[row]["allowance"].clone())?;
+            allowance.attempt = wire.request_id;
+            allowance.index_id = authority.index_id;
+            // Ordinary Focus's single selection identity is exact. Context
+            // keeps its differently domained whole-member snapshot digest.
+            allowance.selection = if allowance.is_ordinary_focus() {
+                selection.scope_identity
+            } else {
+                digest(82)
+            };
+            let injected = native.with_context_partition(allowance.clone(), wire)?;
+            assert_eq!(
+                serde_json::to_value(
+                    injected
+                        .arbiter_context
+                        .as_ref()
+                        .unwrap()
+                        .partition
+                        .as_ref()
+                )?,
+                serde_json::to_value(Some(&allowance))?
+            );
+            assert_eq!(
+                injected.scoped_read_fingerprint()?,
+                Some(authority.fingerprint)
+            );
+            let mut different = allowance.clone();
+            different.selection = digest(83);
+            assert_eq!(
+                native.with_context_partition(different, wire).is_err(),
+                allowance.is_ordinary_focus()
+            );
+            let mut foreign = allowance.clone();
+            foreign.index_id = IndexId::from_identity(Incarnation::from_bytes([84; 16]));
+            assert!(native.with_context_partition(foreign, wire).is_err());
+            let mut foreign = wire;
+            foreign.request_id = Incarnation::from_bytes([85; 16]);
+            assert!(
+                native
+                    .with_context_partition(allowance.clone(), foreign)
+                    .is_err()
+            );
+        }
+        let mut captured: PartitionAllowance =
+            serde_json::from_value(fixtures["context"]["allowance"].clone())?;
+        captured.attempt = wire.request_id;
+        captured.index_id = authority.index_id;
+        native.revoke_scoped_reads();
+        assert!(
+            native.with_context_partition(captured, wire).is_err(),
+            "revoked installed authority was reused"
+        );
+    }
+    // A catalog-backed Context share remains valid; a Focus-only selection
+    // assertion cannot be invented when no selection credential is installed.
+    let native = original.with_native_arbiter(worker, current.authority, owner.clone())?;
+    for row in ["context", "zero_optional_work", "ordinary_focus"] {
+        let mut allowance: PartitionAllowance =
+            serde_json::from_value(fixtures[row]["allowance"].clone())?;
+        allowance.attempt = wire.request_id;
+        allowance.index_id = current.authority.index_id;
+        assert_eq!(
+            native.with_context_partition(allowance, wire).is_err(),
+            row == "ordinary_focus"
+        );
+    }
+    assert!(owner.requests.lock().unwrap().is_empty());
+    Ok(())
+}

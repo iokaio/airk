@@ -375,3 +375,15 @@ On Windows the journal writer sync_data-flushes each complete record while its
 file remains open before callers rely on directory last-write notifications.
 Ordinary File::flush alone does not establish an observable write notification.
 This storage flush runs only in the separate writer, never the warm callback.
+
+## Partition identity domains
+
+The installed native selection reference is authority; Context's validated
+partition.selection is an inert whole-snapshot accounting identity and can
+differ from that reference's scope_identity (notably combined Open/W4).
+Focus scoring compares these identities only for Core's ordinary singleton
+Focus purpose, which also requires an installed selection. Genuine Context
+partitions keep their original frontend digest. Core still validates the
+original attempt, index, parent/resources and candidate/source bindings before
+this predicate, and the native issue/source/configuration/delivery fences stay
+mandatory. No model work, budget or authority is created by this distinction.

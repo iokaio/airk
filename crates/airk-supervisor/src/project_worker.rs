@@ -568,7 +568,9 @@ fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::Q
 /// This worker boundary previously exposed only a fixed public failure. Keep
 /// unknown internal paths/content private while retaining recognized receipts.
 fn unscoped_worker_error(error: &anyhow::Error) -> serde_json::Value {
-    if let Some(reply) = airk_mcp::response::typed_error_result(error) {
+    if let Some(mut reply) = airk_mcp::response::typed_error_result(error) {
+        // This is the closed native I1 result, not negotiated public MCP.
+        reply.result_type = None;
         return serde_json::to_value(reply).expect("typed worker failure receipt");
     }
     let body = serde_json::json!({"error":{"code":"read_failed",
@@ -579,7 +581,10 @@ fn unscoped_worker_error(error: &anyhow::Error) -> serde_json::Value {
 /// Preserve the direct transport's native/MCP envelope distinction while using
 /// the same bounded, typed refusal factory as canonical MCP reads.
 fn scoped_worker_error(kernel: &Kernel, error: &anyhow::Error, native: bool) -> serde_json::Value {
-    let reply = airk_mcp::response::scoped_error_result(kernel, error);
+    let mut reply = airk_mcp::response::scoped_error_result(kernel, error);
+    // Match LocalTools normal dispatch for every early worker error exit.
+    // The outer MCP adapter owns its negotiated discriminator.
+    reply.result_type = None;
     if native {
         // The canonical factory always supplies JSON for a scoped response,
         // including generic failures and frame-budget refusals.
