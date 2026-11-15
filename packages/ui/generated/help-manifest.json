@@ -1,8 +1,8 @@
 {
   "schema": "airk.help.manifest/1",
   "catalogVersion": 1,
-  "productVersion": "1.8.201",
-  "extensionVersion": "1.8.201",
+  "productVersion": "1.8.202",
+  "extensionVersion": "1.8.202",
   "channel": null,
   "topics": [
     {
@@ -10029,6 +10029,6 @@
         "title": "Arbiter Focus, Context and model requirements"
       }
     ],
-    "version": "1.8.201"
+    "version": "1.8.202"
   }
 }

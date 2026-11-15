@@ -389,6 +389,29 @@ Results describe indexed evidence. `airk_changes` calls its validation `index-cu
 
 Storage uses independent collection ownership, admitted publication/replacement space, bounded readers and conservative recovery. DiskANN is the selected disk-backed vector engine; bootstrap lexical/retained-snapshot adapters are not a substitute for that engine. Scoped repair preserves original sources and reports partial failures. See [publication](docs/service-publication.md), [storage ownership](docs/service-storage-ownership.md) and [maintenance plans](docs/service-maintenance.md).
 
+## Optional Arbiter models: where they are and what was changed
+
+AIRK's optional Arbiter stages use three models that the installer does **not** contain. The service downloads the one you select, after you give consent, from this GitHub prerelease: **[models-1.8.201](https://github.com/iokaio/airk/releases/tag/models-1.8.201)**. In this 1.8.x test series they are `unqualified-local-test` profiles: they have not passed AIRK's qualification gates, and the 1.9.0 series refuses unqualified profiles. See [known issues](docs/arbiter/knownissues.md) and [relaxed limits](docs/arbiter/relaxations.md).
+
+| AIRK choice | Original model (pinned revision) | AIRK file set (release parts) | Size |
+|---|---|---|---|
+| Arbiter Focus | [Qwen/Qwen3-Reranker-0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) at [`e61197e`](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/tree/e61197ed45024b0ed8a2d74b80b4d909f1255473) | `arbiter-focus-qwen3-reranker-06b.*` (10 files; weights in 2 parts) | 1.13 GB |
+| Arbiter Context, Compact | [Qwen/Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) at [`70d244c`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e) | `arbiter-context-qwen3-17b.*` (13 files; weights in 7 parts) | 6.90 GB |
+| Arbiter Context, Large | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) at [`1cfa9a7`](https://huggingface.co/Qwen/Qwen3-4B/tree/1cfa9a7208912126459214e8b04321603b3df60c) | `arbiter-context-qwen3-4b.*` (21 files; weights in 15 parts) | 16.10 GB |
+
+Every part's exact name, size and SHA-256 is listed in the [release notes](https://github.com/iokaio/airk/releases/tag/models-1.8.201). Only one Context size is used at a time, and Focus is independent of Context. MiniLM, the bundled retrieval model, is unchanged and ships in the installer.
+
+**How they differ from the originals.** The upstream weights are converted, not retrained. No fine-tuning or other training is recorded in their provenance.
+
+- **Focus** is an ONNX export of Qwen3-Reranker-0.6B with 8-bit block-32 weights and a fixed 512-token input. It reads the model's yes/no relevance logit.
+- **Context Compact and Large** are exact FP32 ONNX exports of Qwen3-1.7B and Qwen3-4B (no quantization; an 8-bit Compact export failed its numerical tolerance and was rejected). They are wrapped with AIRK's option-scoring readout, which takes the question positions and candidate options and returns one score per option.
+- **Unchanged:** the tokenizers and the Apache-2.0 LICENSE files are unmodified copies from the pinned upstream revisions.
+- **Added by AIRK:** compiler, calibration and fixture metadata (`compiler.json`, `*calibration*.json`, numeric fixtures). These are AIRK-authored and contain no private corpora.
+
+**Why the files are split into parts.** A GitHub release asset must be small enough for reliable transfer, and AIRK bounds each part at 1 GiB and each file at 16 parts. The largest weight file (about 16 GB) is therefore 15 parts. The service downloads the parts named in its compiled profile, checks each part's exact size and SHA-256, joins them in order, and verifies the whole file's SHA-256 before using it. If the download fails, it reports the failure with a "try again later" note. Do not rename or edit the release files: the app pins them by name, size and digest, and a corrected set would be published under a new tag instead.
+
+**Licenses.** The upstream models are Apache-2.0. Their LICENSE files are included in each file set.
+
 ## Development and records
 
 Developer references: [every MCP tool: purpose, contracts and examples](docs/mcp-developer-guide.md) and [every CLI command: behavior and implementation](docs/cli-developer-guide.md). Current CLI `tools list/help/call/shell` and public HTTPS share the Rust-owned unified catalog. Read `airkctl tools list --json` for the actual complete schemas and supported operations.

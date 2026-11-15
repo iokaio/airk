@@ -26,19 +26,27 @@ check passed.
   proofs.
 - **Next:** Follow `docs/arbiter/whatsleft.md` section 4 after manual testing.
 
-## 2. Optional model weights cannot be downloaded
+## 2. Optional models download from one GitHub prerelease with no backup
 
-- **What:** The app contains the on-demand acquisition, source-fallback and
-  restart paths, but no verified public source exists for the optional model
-  files. Provisioning reports the models as unavailable.
-- **Why:** Seven of 23 raw assets match public Git/LFS metadata. Sixteen
-  derived assets, including all six model graph/data files, have no verified
-  public location, and the public ONNX variants differ from the tested exports.
-  Hosting them needs a publication decision, verified rights and your explicit
-  authorization. No namespace, URL or upload was invented or performed.
-- **Next:** Decide and authorize hosting (and an independent backup, if any),
-  stage the local parts, verify complete bytes through the native transport and
-  bind the actual source maps into the final compiled catalog.
+- **What:** The three models are 44 parts (24,130,010,313 bytes) in the public
+  prerelease [`models-1.8.201`](https://github.com/iokaio/airk/releases/tag/models-1.8.201).
+  The app downloads them on explicit Provision. There is **no backup source**: if
+  GitHub is unreachable or returns an unexpected response, Provision fails with
+  a message that says the download failed and to try again later, and nothing is
+  enabled. Already-downloaded verified files are kept.
+- **Verified:** GitHub's computed digest and size match the staged manifest for
+  all 44 parts, and one 1 GiB part (`arbiter-focus-qwen3-reranker-06b.model.onnx.data.part01`)
+  was downloaded anonymously and its SHA-256 matched.
+- **Not verified:** A full download-and-load of all three models through the
+  app (Provision, join, ONNX load, ABI) has not been run. Load behavior,
+  latency and memory with these exports in the service are unknown.
+- **Scale risk:** One host serves every download. Large is about 16 GB per user.
+  GitHub does not guarantee release-asset bandwidth and may throttle heavy use.
+  An independent mirror would need a separate hosting decision.
+- **Decision history:** Hugging Face was considered and rejected because the
+  tested derived exports (W8 Focus graph, FP32 Compact/Large with AIRK's readout)
+  are not hosted there and public ONNX variants differ from them. Seven of 23
+  raw assets match public Git/LFS metadata; the rest exist only as these parts.
 
 ## 2a. Unqualified local-test profiles (pre-1.9.0 only)
 
