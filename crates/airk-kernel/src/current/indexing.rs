@@ -690,6 +690,13 @@ impl Kernel {
                 .context(Stage("vector_settings"))?,
                 "semantic_upgrade_required: retained vectors belong to a retired native model or runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
             );
+            if let Some(state) = state.as_ref() {
+                ensure!(
+                    !super::enrichment::graph_regeneration_required(&read, &self.store, state)
+                        .context(Stage("vector_settings"))?,
+                    "semantic_upgrade_required: the saved vector graph was built by an earlier graph format; rebuild the index to regenerate it; retained lexical evidence remains readable"
+                );
+            }
         }
         let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {
             ensure!(!full, "reviewed refresh cannot silently rebuild");

@@ -198,10 +198,9 @@ fn completed(setup: &Setup) -> Result<bool> {
         .map_err(|error| anyhow::anyhow!("original completion unproven: {}", error.code()))?;
     owner.existing(&files::pointer_path()?)?;
     if !plan::removes(setup.operation.kind) {
+        // The payload inventory binds both executables; the split payload
+        // carries no `airk-runtime.json`.
         setup.verify_payload()?;
-        let main =
-            Path::new(&setup.operation.locations.program).join(&setup.inventory.executables.airk);
-        airk_host::runtime_pair::verify_installed_pair(&main, VERSION)?;
     }
     Ok(true)
 }
@@ -240,9 +239,6 @@ pub(super) fn emit(request: &SetupRequest, field: RecoveryField, clock: Clock) -
                 "false".into()
             } else if setup.receipt.reached(SetupPhase::Placed) {
                 setup.verify_payload()?;
-                let main = Path::new(&setup.operation.locations.program)
-                    .join(&setup.inventory.executables.airk);
-                airk_host::runtime_pair::verify_installed_pair(&main, VERSION)?;
                 "false".into()
             } else {
                 "true".into()

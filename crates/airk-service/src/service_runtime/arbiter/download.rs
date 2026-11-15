@@ -42,10 +42,23 @@ pub(super) struct PartBudget {
     deadline: tokio::time::Instant,
     redirects: usize,
 }
+/// Minimum per-part deadline; larger parts get time for this sustained rate.
+const PART_DEADLINE_FLOOR: Duration = Duration::from_secs(900);
+/// Sustained transfer rate a part's deadline allows (256 KiB/s). Stalls are
+/// still bounded separately by the idle timeout.
+const PART_MIN_BYTES_PER_SECOND: u64 = 256 * 1024;
+
 impl PartBudget {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::for_part(0)
+    }
+    /// One budget per catalog part, never reset across sources: 900 s, or
+    /// enough time for `bytes` at 256 KiB/s when that is longer.
+    pub(super) fn for_part(bytes: u64) -> Self {
+        let scaled = Duration::from_secs(bytes.div_ceil(PART_MIN_BYTES_PER_SECOND));
         Self {
-            deadline: tokio::time::Instant::now() + Duration::from_secs(900),
+            deadline: tokio::time::Instant::now() + PART_DEADLINE_FLOOR.max(scaled),
             redirects: 0,
         }
     }
@@ -445,6 +458,19 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn large_part_deadline_allows_the_minimum_sustained_rate() -> Result<()> {
+        // A full 1 GiB catalog part at 256 KiB/s needs 4096 s; small parts keep 900 s.
+        let large = PartBudget::for_part(1 << 30);
+        let small = PartBudget::for_part(1 << 20);
+        tokio::time::advance(Duration::from_secs(4095)).await;
+        large.live()?;
+        assert!(matches!(small.live(), Err(Failure::Deadline)));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(large.live(), Err(Failure::Deadline)));
         Ok(())
     }
 

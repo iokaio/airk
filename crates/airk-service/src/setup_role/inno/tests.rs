@@ -77,3 +77,37 @@ fn startup_refuses_before_finalized_inno_custody_and_sibling_receipt_but_accepts
         b"finalized script"
     );
 }
+
+#[test]
+fn seal_accepts_the_split_layout_without_runtime_pair_metadata_and_refuses_changed_images() {
+    // The Windows split payload ships bin\airkctl.exe and service\airk.exe with
+    // no airk-runtime.json; the I4 record is the pair identity (1.8.202 failed here).
+    let temporary = tempfile::tempdir().unwrap();
+    let program = temporary.path().join("program");
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../fixtures/split/i4/i4_cases.json"
+    ))
+    .unwrap();
+    let mut record: InstallRecord =
+        serde_json::from_str(fixture["records"][0]["text"].as_str().unwrap()).unwrap();
+    for (executable, bytes) in [
+        (&mut record.executables.airk, b"service image".as_slice()),
+        (&mut record.executables.airkctl, b"cli image".as_slice()),
+    ] {
+        let path = program.join(&executable.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        executable.sha256 = digest(bytes);
+        executable.bytes = bytes.len() as u64;
+    }
+    assert!(!program.join("service").join("airk-runtime.json").exists());
+    require_placed_executables(&program, &record).unwrap();
+    std::fs::write(program.join(&record.executables.airkctl.path), b"cli imagf").unwrap();
+    let refused = require_placed_executables(&program, &record).unwrap_err();
+    assert!(
+        refused.to_string().contains("inno_seal_refused"),
+        "{refused:#}"
+    );
+    std::fs::remove_file(program.join(&record.executables.airk.path)).unwrap();
+    assert!(require_placed_executables(&program, &record).is_err());
+}

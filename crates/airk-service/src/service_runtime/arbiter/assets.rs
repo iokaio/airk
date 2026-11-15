@@ -157,7 +157,8 @@ where
         }
         let mut failed = None;
         for (index, part) in download.parts.iter().enumerate() {
-            let budget = budgets[index].get_or_insert_with(super::download::PartBudget::new);
+            let budget = budgets[index]
+                .get_or_insert_with(|| super::download::PartBudget::for_part(part.bytes));
             if let Err(error) = request(part, ordinal, budget, &mut writer, cancel).await {
                 failed = Some(error);
                 break;

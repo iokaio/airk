@@ -62,12 +62,22 @@ and numeric rows in `airk-inference` `pool/arbiter/qualification*` and
 | `crates/airk-mcp/src/arbiter_calibration_capture.rs` collector deadline and `remaining_ms`/`remaining_input_tokens` | 30 s → 120 s, 2048 → 8192 | Private capture collector | same |
 | Tests: `crates/airk-cli/tests/combined_reads.rs` three `30000` ceiling assertions | 30000 → 120000 | Same ceilings, still upper bounds | Restore with the production values |
 
+## Download part deadline (1.8.203)
+
+The per-part download deadline was a fixed 900 s. With 1 GiB catalog parts that
+required about 1.19 MiB/s sustained, so slower connections could never finish
+Provision. It is now 900 s or `ceil(part bytes / 256 KiB/s)` seconds, whichever
+is longer (`crates/airk-service/src/service_runtime/arbiter/download.rs`
+`PartBudget::for_part`). The budget is still per part, never reset across
+sources; the 30 s response/idle limit and four redirects are unchanged. To
+restore: re-split the catalog into parts that fit 900 s at a qualified rate.
+
 ## Deliberately kept (not relaxed)
 
 - `Budget::default()` stays 2048 tokens / 30000 ms. Many retained fixtures embed
   it. Raising it requires regenerating `fixtures/split/arbiter/*.json` and
   `fixtures/split/i1/combined_context_allowance.json`.
-- The 5 s I1 metadata callback timeout, the 900 s download deadline,
+- The 5 s I1 metadata callback timeout,
   `MAX_GRANT_TTL_MS`, window TTL, OCR, installer and unrelated 30 s timers.
 - Qualification floors and evidence validators (`qualification.rs`,
   `qualification/context.rs`, `final_distribution.rs`): `T2048/N8`, 30 s p95,

@@ -872,7 +872,8 @@ Profile.validate_release_downloads validates this entire closure.
 Only explicit Provision acquires network bytes. Recover stays local reconciliation
 and warm; startup/query/status/import grant no download. Whole-asset fallback
 requires narrow Store-owned sealed-partial restart, no failed-part append or
-mutation of completed/foreign/unsealed files. Every original per-part900s deadline,
+mutation of completed/foreign/unsealed files. Every original per-part deadline
+(900s, or the part's bytes at 256KiB/s when longer, from 1.8.203),
 30s response/idle limit and shared four redirects per part remain across source
 attempts; no retry or new time follows from a backup. Cancellation, supersession,
 revocation or local custody failure stops immediately. Native publication lists

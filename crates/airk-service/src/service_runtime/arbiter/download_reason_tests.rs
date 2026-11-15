@@ -13,7 +13,7 @@ fn source_failure_after_all_attempts_says_try_again_later_without_transport_deta
     let reason = user_failure_reason(&error);
     assert_eq!(
         reason,
-        "The model download failed because the download source is unavailable or returned an unexpected response. Nothing was enabled. Try again later."
+        "The model download failed because the download source is unavailable or returned an unexpected response. Nothing was enabled. Try again later. Partially downloaded data is kept; use Remove to reclaim its disk space before retrying."
     );
     assert!(!reason.contains("secret-token") && !reason.contains("example.invalid"));
 }
@@ -23,7 +23,7 @@ fn deadline_failure_says_try_again_later() {
     let error = anyhow::anyhow!("stopped").context(Failure::Deadline);
     assert_eq!(
         user_failure_reason(&error),
-        "The model download did not finish before its deadline. Nothing was enabled. Try again later."
+        "The model download did not finish before its deadline. Nothing was enabled. Try again later. Partially downloaded data is kept; use Remove to reclaim its disk space before retrying."
     );
 }
 

@@ -161,6 +161,21 @@ fn require_start_custody_with(
     }
 }
 
+/// The I4 record is the split payload's pair identity: the placed `airk` and
+/// `airkctl` must equal its digests and sizes. The payload carries no
+/// `airk-runtime.json` (setup_role CONTRACT.md, platform wrappers).
+#[cfg(windows)]
+fn require_placed_executables(program: &Path, record: &InstallRecord) -> Result<()> {
+    for executable in [&record.executables.airk, &record.executables.airkctl] {
+        let placed = files::digest_file(&program.join(&executable.path))?;
+        ensure!(
+            placed == (executable.sha256, executable.bytes),
+            "inno_seal_refused: placed executables differ from the install record"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn write(operation: &SetupOperation, image: &InstallationImage) -> Result<()> {
     ensure!(
@@ -176,10 +191,7 @@ fn write(operation: &SetupOperation, image: &InstallationImage) -> Result<()> {
     airk_process::signature::verify(signature_claim(&image.record.signing), &[own.0.as_path()])
         .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))?;
     let program = Path::new(&image.record.locations.program);
-    airk_host::runtime_pair::verify_installed_pair(
-        &program.join(&image.record.executables.airk.path),
-        VERSION,
-    )?;
+    require_placed_executables(program, &image.record)?;
     let root = airk_process::directory::OpenedDirectory::open(program)?;
     airk_ipc::endpoint::require_private_directory_handle(root.as_file())?;
     let mut candidates = Vec::new();

@@ -430,7 +430,9 @@ writes fixed owner-private recovery-<selector>.txt beside that same request.
 These derived files grant no independent authority; wrappers read only after
 successful verified helper exit. Completion-required is false only for exact
 settled successful original receipt and current pair/removal reconciliation;
-placing success additionally verifies full actual C7/C10/inventory. Read-only
+placing success additionally verifies the full payload inventory (every placed
+file, both executables, admin digests) and actual C10. The split payload ships no
+`airk-runtime.json`; its pair identity is the I4 record. Read-only
 Active observation classifies interrupted metadata without archiving/retiring
 an owner or weakening ordinary I4 reads. Wrappers preserve their outer cleanup.
 
@@ -468,7 +470,9 @@ each other's process-local numeric HANDLE rendezvous.
 Inno NativeComplete seals finalized EXE and DAT custody immediately after
 PairPublished and before login registration or StartRequested. This pending
 writer requires the typed active owner, identical original operation and
-published candidate, unchanged roots, full C7/inventory and actual C10 proofs.
+published candidate, unchanged roots, the placed `airk`/`airkctl` digests and
+sizes equal to the I4 record, the full payload inventory and actual C10 proofs
+(no `airk-runtime.json` is read).
 Ordinary and candidate-continuation startup both require the matching private
 handoff plus actual EXE/DAT hashes and uninstaller signature. The outer
 --seal-inno revalidates the same record after PATH; it does not mint a new key.

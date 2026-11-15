@@ -11,7 +11,7 @@ use anyhow::Context;
 mod assets;
 #[cfg(feature = "local-inference")]
 mod download;
-#[cfg(test)]
+#[cfg(all(test, feature = "local-inference"))]
 mod download_reason_tests;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
 pub(super) mod evaluation;

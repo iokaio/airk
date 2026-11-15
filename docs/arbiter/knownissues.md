@@ -33,7 +33,13 @@ check passed.
   The app downloads them on explicit Provision. There is **no backup source**: if
   GitHub is unreachable or returns an unexpected response, Provision fails with
   a message that says the download failed and to try again later, and nothing is
-  enabled. Already-downloaded verified files are kept.
+  enabled. Already-downloaded verified whole assets are kept. Partially
+  downloaded parts of an unfinished asset are kept on disk but are not resumed;
+  the next Provision restarts that asset. Use Remove to reclaim that space
+  before retrying (the failure message says so from 1.8.203).
+- **Part deadline (1.8.203):** each part's deadline is 900 s or enough time
+  for the part at 256 KiB/s, whichever is longer (4096 s for a 1 GiB part).
+  Stalls are still bounded by the 30 s idle limit.
 - **Verified:** GitHub's computed digest and size match the staged manifest for
   all 44 parts, and one 1 GiB part (`arbiter-focus-qwen3-reranker-06b.model.onnx.data.part01`)
   was downloaded anonymously and its SHA-256 matched.

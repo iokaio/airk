@@ -246,6 +246,27 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     readiness_with_state(read, store, &state, policy)
 }
 
+/// Whether the saved graph was built under another graph specification and
+/// can only be replaced by a full rebuild (an incremental replacement would
+/// leave unchanged artifacts bound to the retired graph).
+pub(super) fn graph_regeneration_required(
+    read: &CurrentRead,
+    store: &FileStore,
+    state: &CollectionState,
+) -> Result<bool> {
+    if read.head().graph_head.allocated_count == 0 {
+        return Ok(false);
+    }
+    let Some(model) = state.configuration.model.as_ref() else {
+        return Ok(false);
+    };
+    let dimensions = usize::try_from(crate::shared_models::descriptor(store, model)?.dimensions)?;
+    let graph = &read.head().graph_head.scope;
+    Ok(graph.specification
+        != airk_retrieval::vector::mutable::specification(dimensions, model.pipeline_digest)?
+        || graph.record_bytes != airk_retrieval::vector::mutable::record_bytes(dimensions)?)
+}
+
 /// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
 fn graph_specification_readiness(
     graph: &airk_core::graph_storage::GraphScope,

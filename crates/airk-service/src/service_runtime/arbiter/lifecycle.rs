@@ -113,10 +113,10 @@ fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
 pub(super) fn user_failure_reason(error: &anyhow::Error) -> String {
     match error.downcast_ref::<super::download::Failure>() {
         Some(super::download::Failure::Source(_)) => {
-            "The model download failed because the download source is unavailable or returned an unexpected response. Nothing was enabled. Try again later.".into()
+            "The model download failed because the download source is unavailable or returned an unexpected response. Nothing was enabled. Try again later. Partially downloaded data is kept; use Remove to reclaim its disk space before retrying.".into()
         }
         Some(super::download::Failure::Deadline) => {
-            "The model download did not finish before its deadline. Nothing was enabled. Try again later.".into()
+            "The model download did not finish before its deadline. Nothing was enabled. Try again later. Partially downloaded data is kept; use Remove to reclaim its disk space before retrying.".into()
         }
         _ => format!("{error:#}"),
     }
@@ -681,7 +681,7 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
             let failure = result
                 .as_ref()
                 .err()
-                .map(|error| format!("{error:#}"))
+                .map(user_failure_reason)
                 .unwrap_or_default();
             let restore_result = async {
                 let Some(restored) = rollback_current_intent(
