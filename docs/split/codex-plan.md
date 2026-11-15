@@ -50,32 +50,82 @@ The release is complete only when the approved release workflow and publication 
 
 Earlier planning sessions exposed no AIRK MCP tools and used scoped local searches and live reads. For the 13 November Workbench amendment, deferred AIRK discovery and `status` succeeded for collection `airk`, version `1.8.35`, project binding `e2d64c74e7e0cfd74cc288a554db34f505c4d94ec72efbbc3b896eea928cb856`, publication `airk-r1:4b9af3a7b2d5a72432e93246a61e03e2:640:a7912532910609b009b88caaeffb41dfdcd44aa638fc250e71e9bd4813c0c82e`. Scoped file/symbol navigation and the review excerpt were checked against saved/live contents before editing; collection freshness remained unavailable. Discover MCP again when implementation begins. Git inspection used a process-local `safe.directory` override without changing global configuration. Preserve unrelated work.
 
-### Current implementation checkpoint (14 November 2026)
+### Current implementation checkpoint (15 November 2026)
 
-Current working-tree checkpoint: all four TRAIN/CAL raw captures completed
-126/126 finite complete-readout rows with natural process exit. The actual
-CAL-only native fit retained all 19 outcomes per model and returned
-`unsupported_no_positive_safe_margin` for every model: no calibration asset or
-profile activation followed. Uncertified Read outcomes remain UNKNOWN, not
-semantic negatives. A1's retrieval-quality failure and the four unsupported
-Arbiter calibrations still block release/model promotion.
+Restart checkpoint: the user requests a pause after the expanded architecture
+guide and landscape Word edition. Reviewed source milestones after `b5f9a946`
+are recorded in the execution ledger; the R2 binary pair retains its original
+`b5f9a946` identity. Source commits do not replace or requalify that artifact. All four
+TRAIN/CAL raw captures completed 126/126 finite complete-readout rows with natural
+exit. The native CAL-only fit returned `unsupported_no_positive_safe_margin` for
+all four models; no calibration asset or profile activation followed. Unknown
+Read outcomes remain UNKNOWN, not semantic negatives. A1's original205 quality
+failure, unsupported Arbiter calibrations and unproved final turn reduction
+still block release/model promotion. Fresh FINAL and100-goal fixtures remain
+sealed and unconsumed.
 
-Prior actual single-index and many/Open Answer comparisons passed across
-CLI/pipe/HTTPS MCP on their recorded R37 inputs. Fresh static ORT R5 is verified;
-R41 uses those libraries and current frozen source, with scoped Clippy passed
-and remaining tests running. No fresh matched debug pair exists: the earlier
-runtime-builder attempt failed before Cargo, and retained R23/R40 test images
-are not a matched pair. Admin/full transport, installed, platform and final
-qualification remain separate pending gates. Earlier workspace Clippy and all 518 selected Core,
-MCP and joint-runtime tests pass on the R23 frozen inputs. The combined Answer
-presentation passes 87 host tests and three actual Chromium DOM tests; current
-Admin assets are sealed. Fresh matched-pair/client journeys and final platform
-qualification remain pending. One bounded visible-prefix candidate trained and
-passed native numerical/identity checks, but both variants failed to improve DEV
-retrieval (49.2% mean recall, 6/20 complete; 44 alignment refusals retained).
-The original 205-question failure remains a promotion blocker. Fresh FINAL and
-100-goal fixtures are sealed and unconsumed. The following older checkpoints
-retain their original source and artifact identities.
+The fresh matched debug pair R2 completed170.194s from `b5f9a946`, builder source
+`41b6e453...397c` over1,739files, under
+`artifacts/advanced-split/runtime-current-context-r2`. Earlier R37 actual
+single/many/Open CLI/pipe/HTTPS MCP and R41 Admin sign-in/read/cross-plane passes
+retain their own frozen identities. Fresh full-client preflight R2 exposed a
+stale ORT 1.22.1 harness expectation against approved native 1.30.0. Workbench R2
+exposed an old-shape check and R3 a whole-packet verification projection defect;
+those failures remain failures. Source-projection controls now pass 68 tests.
+The later39.65s Workbench R4 diagnostic proved actual `file_info` refusal
+`QUERY_SCOPE_CONFIGURATION_REQUIRED`; the service selector-route correction is
+mounted and passes the R54 W4/Catalog/Open explicit-selector regression (1/1).
+R54 also passes combined scoped Clippy and three query/route controls. No fresh full-client or
+Workbench transport pass is inferred from source tests.
+
+R46 lightweight/workspace all-feature Clippy passed1.407s/28.482s. R47 full-workspace Nextest selected 4,373 tests but was interrupted after two failures:
+remaining allocation-clock comparison and ambient-install-dependent CLI refusal.
+It is not a full-workspace pass. R49 scoped CLI Clippy passed 36.568s; the isolated
+discovery control passed 1/1, and all five affected clock/refusal/parity controls
+passed 13.010s test time (43.741s command). Their actual receipts are in
+`artifacts/advanced-split/receipts/cli-fixture-repairs-r49/`. The original R47
+failure and unrun remainder remain in `receipts/workspace-tests-r47/`.
+
+The ANN defect is now reproduced and corrected at its native owner. R48's
+independent 64-orthogonal-vector regression failed at the 49th insert: reserved
+seed backedge pruning stranded committed live nodes. R50 scoped Clippy and all
+11 mutable-graph regressions pass. R51 scoped Clippy passed 31.423s and five
+cache/readiness controls passed 1.441s test time (48.948s command), retaining
+Kernel image `8b63b64b...cfc632b3`; receipts are in
+`receipts/ann-connectivity-repro-r48/`, `receipts/ann-seed-fix-r50/` and
+`receipts/native-regeneration-r51/`. Actual zero-forward regeneration completed
+naturally 67.966s with one owned PID and 291MB peak: all 378 vector bit patterns and
+366 original sources stayed exact. The regenerated full 378-query self-vector
+probe completed 24.78s with exact recall and self recall 1.0 at both k10 and k64,
+versus old k10 recall.6603/k64 recall.6155/self recall.611. Its complete result is
+`models/ann-self-vector-probe-r1/execution-r5-full/`. This proves that graph
+sample and preservation boundary, not question retrieval quality. Neural DEV
+question evaluation on the corrected graph has not run; the original205 result
+is not reclassified.
+
+The earlier visible-prefix candidate remains failed DEV:49.2% mean recall,
+6/20complete,44alignment refusals retained. Native TRAIN preparation now emits
+1,262units and all1,789parents, including20explicit empty originals, with zero
+forwards. A separate weak-parent-bag preparation retains all 315fixed rows but
+admits only 99 (96QASPER/3Requests) under conservative masks; its population and
+objective confounds are explicit. No second encoder training is authorized or
+running while the ANN result and candidate prerequisites are reviewed.
+
+All 13 planned shared UI routes have source implementations. Scope/root binding,
+final-view confirmations, remaining reviews/tests, actual I3 scope-packet/DOM
+adoption and fresh asset seals are still pending integration. Browser binding
+uses the actual Admin grant source at combined `selection.selection`, with
+full effective index/project rosters; aggregate publication authority has a
+separate native digest domain. Current source controls pass 24 and Admin
+typechecking passes. Actual I3 lexical capture R4 passed with complete native
+catalog/grant/read packets, distinct grant/aggregate identities and managed
+Stop/fixture cleanup. The unchanged pinned packets pass the current controller
+and asynchronous Web Crypto owner. The separate DOM attempt failed before
+Search mounted (browser exit during navigation); browser exit/profile cleanup
+were observed, but no current DOM pass is claimed. Earlier 87 host/three Chromium Answer presentation
+passes and asset seals retain their older source identities. No current UI,
+installed/platform/package, final-workspace or release-publication completion
+is claimed. The following older checkpoints remain historical evidence.
 
 Source checkpoint `6e73dd25` is an unpublished 1.9.0 candidate. A1's frozen
 absolute retrieval-quality gates failed and still block model promotion. The

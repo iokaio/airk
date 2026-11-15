@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 06</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">Separate scope owners; native isolation</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">Preferences are not authority. Workspace defaults are not access-control lists.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="205" width="460" height="240" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M78 221 V429" stroke="#087f82" stroke-width="4"/>
+<text x="95" y="239" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">AI connection scope</text>
+<text x="95" y="268" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Owner-reviewed defaults</text>
+<text x="95" y="295" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Choice off: assigned / narrower</text>
+<text x="95" y="322" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Choice on: any index owned by</text>
+<text x="95" y="349" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">the same OS user.</text>
+<rect x="570" y="205" width="460" height="240" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M588 221 V429" stroke="#2563a6" stroke-width="4"/>
+<text x="605" y="239" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Editor window scope</text>
+<text x="605" y="268" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">W4 grant + live window lease</text>
+<text x="605" y="295" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Checked index / set selection</text>
+<text x="605" y="322" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Close or expiry revokes authority.</text>
+<text x="605" y="349" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Agent defaults are separate.</text>
+<rect x="1080" y="205" width="460" height="240" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1098 221 V429" stroke="#2563a6" stroke-width="4"/>
+<text x="1115" y="239" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Admin session scope</text>
+<text x="1115" y="268" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">A2 grant + actual session</text>
+<text x="1115" y="295" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Browser cookie / anti-forgery</text>
+<text x="1115" y="322" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Editor: private native bridge</text>
+<text x="1115" y="349" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Credentials stay out of exports.</text>
+<rect x="160" y="620" width="1280" height="140" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M178 636 V744" stroke="#087f82" stroke-width="4"/>
+<text x="195" y="654" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Native authority and delivery owners</text>
+<text x="195" y="683" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Bind installation, service instance, namespace, immutable indexes and publication.</text>
+<text x="195" y="710" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Recheck scope, source policy, cancellation and optional-model policy at delivery.</text>
+<path d="M290,445 L290,620" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="290,620 285,609 295,609" fill="#60758b"/>
+<path d="M800,445 L800,620" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="800,620 795,609 805,609" fill="#60758b"/>
+<path d="M1310,445 L1310,620" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1310,620 1305,609 1315,609" fill="#60758b"/>
+<rect x="60" y="880" width="460" height="80" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 896 V944" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="914" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Index A</text>
+<text x="95" y="943" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Own roots, revision and state</text>
+<rect x="570" y="880" width="460" height="80" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M588 896 V944" stroke="#2563a6" stroke-width="4"/>
+<text x="605" y="914" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Index B</text>
+<text x="605" y="943" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Own roots, revision and state</text>
+<rect x="1080" y="880" width="460" height="80" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1098 896 V944" stroke="#2563a6" stroke-width="4"/>
+<text x="1115" y="914" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Index C</text>
+<text x="1115" y="943" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Requires actual authority</text>
+<path d="M290,760 L290,880" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="290,880 285,869 295,869" fill="#60758b"/>
+<path d="M800,760 L800,880" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="800,880 795,869 805,869" fill="#60758b"/>
+<path d="M1310,760 L1310,880" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1310,880 1305,869 1315,869" fill="#60758b"/>
+</svg>

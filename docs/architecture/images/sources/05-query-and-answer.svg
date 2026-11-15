@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 05</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">One admitted read; bounded Answer; complete delivery</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">Optional local advice chooses verified gathering actions. It never executes an agent or command.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="195" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 211 V339" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Original admission</text>
+<text x="95" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Authenticate and resolve scope</text>
+<text x="95" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Earliest deadline / cancellation</text>
+<text x="95" y="312" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Typed arguments and lifetime</text>
+<rect x="575" y="195" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M593 211 V339" stroke="#2563a6" stroke-width="4"/>
+<text x="610" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Canonical MCP + frontend</text>
+<text x="610" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Shared read handlers</text>
+<text x="610" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Ordinary reads / Workbench</text>
+<text x="610" y="312" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Answer: Context /2 contract</text>
+<rect x="1090" y="195" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1108 211 V339" stroke="#2563a6" stroke-width="4"/>
+<text x="1125" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Partition first</text>
+<text x="1125" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Exact immutable-index roster</text>
+<text x="1125" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Shared calls / tokens / bytes</text>
+<text x="1125" y="312" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Global assessment ordinals</text>
+<path d="M510,275 L575,275" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="575,275 564,280 564,270" fill="#60758b"/>
+<path d="M1025,275 L1090,275" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1090,275 1079,280 1079,270" fill="#60758b"/>
+<rect x="60" y="520" width="760" height="170" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 536 V674" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="554" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Each local Kernel gathers evidence once</text>
+<text x="95" y="583" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Canonical records and exact citations</text>
+<text x="95" y="610" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Deterministic fallback when advice is absent</text>
+<text x="95" y="637" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Local coverage never suppresses selected siblings.</text>
+<rect x="930" y="520" width="610" height="170" rx="12" fill="#fff7e9" stroke="#a66312" stroke-width="1.7"/>
+<path d="M948 536 V674" stroke="#a66312" stroke-width="4"/>
+<text x="965" y="554" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Optional per-index Arbiter</text>
+<text x="965" y="583" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Default off; explicit verified enrollment</text>
+<text x="965" y="610" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Native cards; at most 3 assessments</text>
+<text x="965" y="637" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Availability and qualification stay distinct.</text>
+<path d="M1315,355 L1315,435 L440,435 L440,520" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="440,520 435,509 445,509" fill="#60758b"/>
+<path d="M820,605 L930,605" fill="none" stroke="#a66312" stroke-width="2.1" stroke-dasharray="7 6"/>
+<polygon points="930,605 919,610 919,600" fill="#a66312"/>
+<polygon points="820,605 831,600 831,610" fill="#a66312"/>
+<rect x="60" y="820" width="450" height="140" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 836 V944" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="854" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Whole composition</text>
+<text x="95" y="883" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">All members and full results</text>
+<text x="95" y="910" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Unknown work holds capacity</text>
+<text x="95" y="937" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">One original global budget</text>
+<rect x="575" y="820" width="450" height="140" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M593 836 V944" stroke="#087f82" stroke-width="4"/>
+<text x="610" y="854" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Whole-source proof</text>
+<text x="610" y="883" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Report / Require / Off</text>
+<text x="610" y="910" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Shared bounded native receipt</text>
+<text x="610" y="937" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">No source-claim fabrication</text>
+<rect x="1090" y="820" width="450" height="140" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M1108 836 V944" stroke="#087f82" stroke-width="4"/>
+<text x="1125" y="854" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Actual delivery cut</text>
+<text x="1125" y="883" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Live grant / source / policy</text>
+<text x="1125" y="910" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Provenance, gaps, continuations</text>
+<text x="1125" y="937" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">No uncertain execution replay</text>
+<path d="M440,690 L440,820" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="440,820 435,809 445,809" fill="#60758b"/>
+<path d="M510,890 L575,890" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="575,890 564,895 564,885" fill="#60758b"/>
+<path d="M1025,890 L1090,890" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1090,890 1079,895 1079,885" fill="#60758b"/>
+</svg>

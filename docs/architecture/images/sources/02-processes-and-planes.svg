@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 02</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">Two executables; one resident service</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">The shared UI is a client. Owners inside the service run in that one process.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="195" width="425" height="140" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 211 V319" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">VS Code window</text>
+<text x="95" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Extension host + shared UI</text>
+<text x="95" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">One window-owned helper</text>
+<rect x="595" y="195" width="425" height="140" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M613 211 V319" stroke="#2563a6" stroke-width="4"/>
+<text x="630" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airkctl session</text>
+<text x="630" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">I2 framed stdio protocol 2</text>
+<text x="630" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Exits with its editor owner</text>
+<rect x="1130" y="195" width="410" height="140" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1148 211 V319" stroke="#2563a6" stroke-width="4"/>
+<text x="1165" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Browser / AI agents</text>
+<text x="1165" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Browser: I3 Admin</text>
+<text x="1165" y="285" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Agents: HTTPS evidence</text>
+<path d="M485,265 L595,265" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="595,265 584,270 584,260" fill="#60758b"/>
+<polygon points="485,265 496,260 496,270" fill="#60758b"/>
+<rect x="520.0" y="224" width="40" height="30" fill="white"/>
+<text x="540" y="245" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#60758b" font-weight="400" text-anchor="middle">I2</text>
+<rect x="595" y="415" width="425" height="110" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M613 431 V509" stroke="#2563a6" stroke-width="4"/>
+<text x="630" y="449" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airkctl one-shots</text>
+<text x="630" y="478" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Commands exit when finished.</text>
+<rect x="60" y="650" width="1480" height="310" rx="18" fill="#f4f8fc" stroke="#2563a6"/>
+<text x="85" y="685" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="600" text-anchor="start">ONE RESIDENT airk PROCESS PER USER + INSTALLATION</text>
+<rect x="90" y="725" width="320" height="155" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M108 741 V864" stroke="#2563a6" stroke-width="4"/>
+<text x="125" y="759" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">HTTPS / Admin</text>
+<text x="125" y="788" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">I3 / native Admin</text>
+<text x="125" y="815" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">MCP evidence ingress</text>
+<rect x="455" y="725" width="320" height="155" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M473 741 V864" stroke="#2563a6" stroke-width="4"/>
+<text x="490" y="759" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Service / catalog</text>
+<text x="490" y="788" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">I1 local control</text>
+<text x="490" y="815" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Grants, jobs, lifecycle</text>
+<rect x="820" y="725" width="320" height="155" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M838 741 V864" stroke="#2563a6" stroke-width="4"/>
+<text x="855" y="759" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Native workers</text>
+<text x="855" y="788" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Index / query / cleanup</text>
+<text x="855" y="815" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">In-process runtimes</text>
+<rect x="1185" y="725" width="320" height="155" rx="12" fill="#fff7e9" stroke="#a66312" stroke-width="1.7"/>
+<path d="M1203 741 V864" stroke="#a66312" stroke-width="4"/>
+<text x="1220" y="759" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Local inference</text>
+<text x="1220" y="788" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Shared MiniLM</text>
+<text x="1220" y="815" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Optional Arbiter</text>
+<path d="M807,335 L807,375 L430,375 L430,600 L615,600 L615,725" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="615,725 610,714 620,714" fill="#60758b"/>
+<path d="M807,525 L807,600 L700,600 L700,725" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="700,725 695,714 705,714" fill="#60758b"/>
+<path d="M1335,335 L1335,570 L250,570 L250,725" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="250,725 245,714 255,714" fill="#60758b"/>
+<rect x="1263.5" y="529" width="73" height="30" fill="white"/>
+<text x="1300" y="550" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#60758b" font-weight="400" text-anchor="middle">HTTPS</text>
+<text x="95" y="930" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">Matched pair: airk + airkctl. No resident process per AI agent or model.</text>
+</svg>

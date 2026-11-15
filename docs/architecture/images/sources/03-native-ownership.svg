@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 03</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">Native components and dependency direction</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">Selected production dependencies; all 19 crate owners and direct edges are explained in the guide.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="190" width="960" height="115" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 206 V289" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="224" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk executable to airk-service</text>
+<text x="95" y="253" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Thin entry and resident composition; private setup / login roles.</text>
+<rect x="1130" y="190" width="410" height="115" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1148 206 V289" stroke="#2563a6" stroke-width="4"/>
+<text x="1165" y="224" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airkctl</text>
+<text x="1165" y="253" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">User CLI + I2 session</text>
+<rect x="60" y="445" width="310" height="125" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 461 V554" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="479" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-https</text>
+<text x="95" y="508" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">HTTP / Admin adapters</text>
+<path d="M540,305 L540,375 L215,375 L215,445" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="215,445 210,434 220,434" fill="#60758b"/>
+<rect x="450" y="445" width="310" height="125" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M468 461 V554" stroke="#2563a6" stroke-width="4"/>
+<text x="485" y="479" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-frontend</text>
+<text x="485" y="508" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Scope / combined reads</text>
+<path d="M540,305 L540,375 L605,375 L605,445" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="605,445 600,434 610,434" fill="#60758b"/>
+<rect x="840" y="445" width="310" height="125" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M858 461 V554" stroke="#2563a6" stroke-width="4"/>
+<text x="875" y="479" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-supervisor</text>
+<text x="875" y="508" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Worker lifetime</text>
+<path d="M540,305 L540,375 L995,375 L995,445" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="995,445 990,434 1000,434" fill="#60758b"/>
+<rect x="1230" y="445" width="310" height="125" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1248 461 V554" stroke="#2563a6" stroke-width="4"/>
+<text x="1265" y="479" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Service owners</text>
+<text x="1265" y="508" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Catalog / inference / setup</text>
+<path d="M540,305 L540,375 L1385,375 L1385,445" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1385,445 1380,434 1390,434" fill="#60758b"/>
+<rect x="450" y="685" width="700" height="115" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M468 701 V784" stroke="#2563a6" stroke-width="4"/>
+<text x="485" y="719" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-mcp to airk-kernel</text>
+<text x="485" y="748" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Canonical handlers to publication, gathering and queries</text>
+<path d="M605,570 L605,685" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="605,685 600,674 610,674" fill="#60758b"/>
+<path d="M995,570 L995,685" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="995,685 990,674 1000,674" fill="#60758b"/>
+<rect x="1130" y="820" width="410" height="110" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1148 836 V914" stroke="#2563a6" stroke-width="4"/>
+<text x="1165" y="854" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-ipc</text>
+<text x="1165" y="883" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Same-user I1 frames</text>
+<path d="M1490,305 L1570,305 L1570,785 L1335,785 L1335,820" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1335,820 1330,809 1340,809" fill="#60758b"/>
+<rect x="60" y="820" width="960" height="110" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 836 V914" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="854" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airk-ingest / airk-store / airk-retrieval</text>
+<text x="95" y="883" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Extraction; owned lexical / DiskANN state; retrieval / inference</text>
+<path d="M800,800 L800,820" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="800,820 795,809 805,809" fill="#60758b"/>
+<rect x="60" y="945" width="1480" height="50" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M78 961 V979" stroke="#087f82" stroke-width="4"/>
+<text x="95" y="979" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">No AIRK dependencies: airk-core contracts + airk-process platform primitives</text>
+</svg>

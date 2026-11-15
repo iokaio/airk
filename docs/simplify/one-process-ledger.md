@@ -3875,3 +3875,242 @@ retained immutable as cdb2e9d...864e48. Full probe remains pending. Repository
 check passes3,268publicfiles; formatting passes; one docs-only EOF whitespace
 was corrected afterward. Source review of the whole Answer change found no
 concrete production defect; current qualification remains scoped, not release.
+
+### 2026-11-15 — current matched pair, pending transport repairs and model blockers
+
+Fresh matched debug pair R2 completed naturally170.194s from HEAD `b5f9a946`,
+builder source seal `41b6e453...397c` over1,739files, using verified static ORT R5.
+The staged pair is `artifacts/advanced-split/runtime-current-context-r2`;
+commands, source/artifact identities and timings are retained in
+`artifacts/advanced-split/receipts/current-context-pair-build-r2/`.
+The earlier builder failure remains historical evidence. R44 current CLI
+validator passes46.572s with retained image `a1123...b4d54` in
+`receipts/native-answer-image-r44/`. R46 lightweight Clippy1.407s and workspace
+all-target/all-feature Clippy28.482s pass on unchanged native source `3726...`;
+receipts are in `receipts/workspace-clippy-r46/`. R47 full-workspace Nextest with
+restored campaigns is currently running in `receipts/workspace-tests-r47/`;
+completion is not claimed.
+
+Actual full-client preflight R2 failed because the harness still expected
+ORT1.22.1 while the native runtime correctly reports approved1.30.0. Its owner is
+correcting the shared expectation; this is not a native engine downgrade or a
+successful client qualification. W4 R2 failed an old-shape harness assumption.
+W4 R3 reached a separate actual product defect in whole-packet verification
+receipt projection; the installer/transport owner is repairing it. Preserve both
+failed inputs and diagnostics, without claiming current W4 or full-client parity.
+R37 actual single/many/Open passes and R41 Admin parity retain their original
+identities; the fresh-pair and final platform journeys remain separate gates.
+
+The complete378-vector ANN self-query diagnostic passes its execution/closure
+checks in17.22s with zero neural forwards, but reports147self misses and union
+reachability231. Evidence is in
+`models/ann-self-vector-probe-r1/execution-r4-full/`. Private source review is
+investigating a seed/reachability defect candidate. It is not yet established as
+the cause of the human retrieval failure, and no production fix or quality gain
+is inferred. A1's original absolute quality failure remains binding.
+
+Independent arithmetic over all76 already-exposed CAL decisions exactly matches
+the native fit report. Each model's largest uncertified UNKNOWN margin exceeds
+its largest certified margin, confirming that no lower-bound margin can admit
+a positive while admitting zero unknowns. Receipt
+`models/context-action-independent-fit-audit-r41.json`, SHA256
+`e685d302c028a9c629a73c7cb9d22b9a5a70483c9de424eb3f76cb20b0ab3a9a`.
+No calibration asset/profile activation follows. Private TRAIN-only adaptation
+preparation retains44questions/59positive cards per model and a107-question
+blank adjudication queue, original alternatives separate, unknown negatives
+empty and semantic labels null. Six isolation controls pass; no feature
+extraction, training or new neural evaluation ran. Specification:
+`artifacts/advanced-split/context-action-adaptation-recovery-spec-r1.md`.
+Semantic role/Sufficient/Clarify/NoJustifiedRead authority, independent
+calibration and complete A6 goal/Workbench evidence remain unresolved. None of
+these source, execution or runtime passes establishes release/model qualification.
+
+
+### 2026-11-15 — R47 interruption, CLI fixture closure and native graph regeneration
+
+R47 full-workspace Nextest selected 4,373 tests and was interrupted after
+exactly two observed failures; the unrun remainder is not qualified. The complete
+partial log remains `artifacts/advanced-split/receipts/workspace-tests-r47/workspace-all-features.log`.
+One failure compared independently elapsed member allocation deadlines as fixed
+budgets. The other assumed no user installation while running online CLI calls
+inside a test executable. R49 retains both original failures and passes scoped
+CLI Clippy36.568s, one thread-local discovery witness, and five original/new
+clock/refusal/parity controls (13.010s tests/43.741s command). Only validated,
+canonical balanced remaining-request clocks normalize; fixed count/byte/source
+verification/context allocations and unknown fields remain literal. Explicit
+NoInstallation fixtures keep strict exit3/service_missing/no-write assertions;
+the Rust-only test-support seam restores nested/panicking thread-local state.
+No environment/CLI override or user-install mutation was added. Receipts:
+`artifacts/advanced-split/receipts/cli-fixture-repairs-r49/`.
+
+R48 actually reproduced reserved-seed backedge disconnection at insert 49 using
+64 independent orthogonal vectors. R50 corrected the native owner and all 11
+mutable-graph regressions pass (.632s tests/10.088s command). R51 scoped Clippy
+passes 31.423s; all five cache/readiness controls pass 1.441s tests/48.948s command,
+with unchanged consumed inputs. Retained Kernel SHA256 is
+8b63b64b2361dcb1d69a47e5a821e473842cfaca7e8b3294aea5add3cfc632b3.
+Actual regeneration completed 67.966s naturally with one PID, 291MB peak, zero
+encoder forwards, exact 378 original vector bit patterns and 366 source identities.
+The full regenerated378 self-vector diagnostic then passed 24.78s: k10 overlap
+3780/3780, k64 overlap24192/24192 and self hits378/378 for both. Previous graph
+observations (.6603/.6155 overlap and231/378 self hits) remain unchanged historical
+results. This is graph-sample recall, not question relevance or a new quality
+pass. Actual neural DEV question evaluation remains unexecuted. Evidence:
+`receipts/ann-connectivity-repro-r48/`, `receipts/ann-seed-fix-r50/`,
+`receipts/native-regeneration-r51/`,
+`models/ann-regeneration-private-anchor-r1/result/` and
+`models/ann-self-vector-probe-r1/execution-r5-full/`, all under
+`artifacts/advanced-split/`.
+
+Workbench source-projection controls pass 68; its later actual39.65s R4 diagnostic
+returned `QUERY_SCOPE_CONFIGURATION_REQUIRED` for file_info. The owning service
+selector-route fix is mounted but pending focused native tests; no fresh W4 pass
+is claimed. All 13 shared UI routes are implemented in source. Native grant and
+combined-publication authority are distinct domains: browser scope binding now
+checks inline combined selection.selection plus exact effective rosters before
+metadata decoding and checks successful member proofs afterward. Effective
+projects derive only from the pinned complete catalog across ORIGINAL granted
+indexes, before per-read index narrowing. Twenty-four source controls and Admin
+typechecking pass. Actual I3 capture/DOM adoption, final-view confirmation
+repairs/reviews/tests and regenerated asset seals remain pending. I3 capture
+fixture R1 lacked the data parent; R3 incorrectly precreated native-owned
+state/control and was refused as unknown nonempty state. Both failures and
+cleanup evidence remain retained. Revised R4 mirrors the working fixture and
+native layout owner: harness creates source/data only; native staging alone
+creates/claims state/control. Two pure precondition/refusal controls pass; its
+actual capture is currently running, without a claimed transport pass.
+
+The original205 quality failure and all four unsupported native CAL results
+remain release/model blockers. The first visible-prefix ablation remains failed
+DEV. New native-bag preparation retains 315 rows/99 admitted (96QASPER/3Requests),
+216 explicit refusals, fixed negative IDs and epoch1 precommit; synthetic CPU
+loss/gradient/tie/RNG controls pass, but CUDA/resource/execution prerequisites and
+ANN review still hold actual training. No new training, FINAL consumption,
+profile activation, model promotion or publication follows these checks. Public
+history is pushed through `b5f9a946`; latest working-tree changes are uncommitted.
+
+
+### 2026-11-15 — actual I3 scope packets and conditional-stop handoff
+
+Actual private I3 lexical capture R4 passed through the existing managed native
+fixture, two indexes, real TLS/native endpoint issuer+leaf verification, Admin
+launch exchange, three complete catalog pages, scope grant and search.call.
+The unchanged full native grant/read responses are retained under
+`artifacts/advanced-split/i3-scope-capture-r1/actual-r4/` with source/runtime pins,
+commands, original requests, raw responses and actual managed Stop completion
+plus fixture removal. Grant SHA256 is
+2a47cb34a1c4a7716363d7e649ffe48edbf138843f6cf4e69f4717373a2ad6e3;
+read SHA256 is
+ac626fa8150aa9d489175dfd0e0902a4ebeca8ecf51ad2c92030ccbe47955a87.
+No neural work, user installation change or raw fixture publication occurred.
+R1's missing data-parent failure and R3's forbidden precreated state/control
+remain failures; R4 follows the owning native layout and preserves both.
+
+All24 current guided controller controls pass; Admin typechecking passes. The
+actual pinned I3 packets additionally pass the current controller, complete
+member-scope restoration and asynchronous Web Crypto owner (112ms). Native
+catalog/grant/read envelope fields were not rewritten, and complete original
+read JSON is retained. The separate real Chromium DOM attempt failed before
+Search mounted: the browser exited0x80000003 during Page.navigate, followed by a
+CDP cleanup deadline. Its exit and fresh-profile removal were observed; it is
+not a product DOM pass. The test now preserves primary/cleanup errors separately.
+Current source owner is `packages/admin/test/actualI3Scope.test.mjs`, SHA256
+f1b32483986d6d74cca86f54e587102e61c043fe09a99c8718ea9b15472180c4.
+Resume under the known1002 browser owner, retaining the original failed attempt:
+
+```powershell
+$env:AIRK_ACTUAL_I3_SCOPE_CAPTURE = (Resolve-Path artifacts/advanced-split/i3-scope-capture-r1/actual-r4).Path
+node --test packages/admin/test/guidedSearch.test.mjs packages/admin/test/actualI3Scope.test.mjs
+```
+
+The user requested a conditional stop after the expanded architecture Markdown
+and DOCX, then a VS Code restart/resume. No new native/browser journey or training
+is launched by this handoff. Current UI asset seals, final DOM/integration gates,
+full-workspace completion and all model/release blockers remain outstanding.
+
+### Restart checkpoint preparation — 15 November 2026 UTC
+
+The user requests a stopping place after the expanded, printable architecture
+Markdown/landscape Word document is complete, so VS Code can restart. No new
+model evaluation, training, publication or installed journey will start before
+that restart. The active objective remains the entire advanced-split plan.
+
+R52 stopped at two test-only ControlResponse Debug-format compiler errors;
+R53 then stopped at one redundant `Ok(...?)` in a query-only accessor. Both
+were corrected without changing production semantics or weakening assertions.
+R54 passes scoped all-target/all-feature Clippy for Service/CLI/Kernel/Retrieval
+32.716s; three query/route controls pass .028s test/73.413s command; the native
+W4/Catalog/Open one-index explicit-source-selector regression passes1/1,
+7.488s test/71.209s command. Kernel image capture passes12.371s. Frozen native
+source group7e1894e610226b9a80172870ed890e7f0325bde13303e8ccc191dd790f235294.
+Receipts: `artifacts/advanced-split/receipts/resume-native-r54/`.
+Retained immutable Kernel image:
+`artifacts/advanced-split/native-harnesses/context-integrated-r54/airk-kernel.exe`,
+SHA25640ecda103cd06e2ca76358859f793ce1b386641fe324487fb9edbec1a476ef35;
+artifact lock e06f85fb040174ca07e3997054adecdc501b6e0fb317dd770d26498ffffb3707,
+compile receipt f47e76ca5ee9695118c973c465aee9e6650d3c1230de3b60e00076702c6625ec.
+
+Next native/model action after resume: refresh the private query-only preparation
+packet's ann_self.rs seal for the equivalent Clippy correction, bind R54 actual
+compiler/dep-info/artifacts, create the specified current-SID-only fresh query
+anchor, run its zero-forward geometry preflight, then the separately authorized
+ALL64 original DEV queries with the unchanged20/44 grading mask. The original
+prepared-packet-r3.json629acb7d...cf1e6f3 is PREPARATION ONLY and must not be run
+unchanged after that source correction. No FINAL query or new TRAIN run occurred.
+Do not regenerate the already-successful graph or rerun its passed self probe.
+The trained candidate's human-question quality remains unknown after the graph
+fix. Four optional model CAL results remain unsupported.
+
+Browser source freeze: both typechecks and66/66 focused unit cases pass; private
+receipt `artifacts/advanced-split/receipts/browser-guided-source-handoff.json`.
+Actual I3 TLS catalog/grant/read capture and unchanged-packet controller/WebCrypto
+checks pass; actual DOM failed before mounting under the restricted browser
+identity, and its exact owner1002 rerun is pending. New guided Changes pagination,
+browser Help wording, final combined review/allowlists/asset seal, fresh pair,
+real client/Workbench/browser/editor and viewport/task qualification remain.
+Current sealed Admin9957 and runtime R2 are older identified artifacts, not builds
+of these final source changes. Do not silently relabel them.
+
+Full workspace qualification remains incomplete: R47 selected4,373 and was
+interrupted after failures; focused repaired cases pass but the full remainder,
+restored campaigns and doctests have not passed at this final source. Full
+Python qualification stopped on stale model expectations, then closure inputs;
+focused repairs pass but missing qualified publication_catalog.json remains a
+real prerequisite. Do not invent or weaken that capture. Mac R16 scoped90cases
+retain their original snapshot, not current new-graph/platform qualification.
+Installer/portable signing, dedicated-host journeys, other target/platform tests,
+model task/turn-reduction gates and authorized publication verification remain.
+
+Never stage temp/.airk/private artifacts/fixture/state/caches. Keep original user
+services airk66840/airkctl57908 and Ollama untouched. Persistent Cargo target stays
+artifacts/v190/p10-target; last observed D: free space587.7GiB, so no Windows clean
+is needed. Mac cleanup for completed R16 already settled. No PR was opened.
+
+Final restart boundary: native correction checkpoints bbbc2149 (graph/readiness),
+af20b2e2 (native regeneration/query-only harness), e4b1e063 (source narrowing and
+isolated CLI fixtures); source UI checkpoint5745b3c0 and packaging/harness8b4ba9c9.
+These are reviewed source milestones, not a completed release. One trailing
+Planner EOF blank line was normalized separately; no behavioral test rerun was
+needed for that whitespace-only correction. No private artifacts were staged.
+
+Architecture deliverable: expanded self-contained Markdown plus six print-sized
+3200x2100 diagrams and `docs/architecture/airk-architecture-landscape.docx`.
+Final Word SHAe50d907999f793627cbf160013ab770886f492865706be742fcc0406b1be1f26,
+950,402bytes,4,085 extracted words; independent package inspection confirms
+Letterlandscape, six embedded exact PNGs, no external images or macros, 10x6.5625in
+figures, figure-page boundaries, repeatable table headers, header/footer/page
+fields and optional public source hyperlinks. Layout is structurally checked;
+an Office-render preview was unavailable (automation failed before opening any
+document). The separately identified empty automation helper30380 was stopped
+only after exact image/start/commandline/zero-window proof. Existing userWord68332
+was preserved. The earlier opened `airk-architecture.docx` is an initial WIP,
+not the final artifact; preserve it unstaged because it may be open in userWord.
+The final shared file is `airk-architecture-landscape.docx`.
+
+Resume from this ledger's restart checkpoint and R54 receipts. Do not rerun
+successful static build, zero-NN graph regeneration or geometry probe. Finish
+the pending UI pagination/help/actual-browser/sealing work, refresh the private
+query packet seal for the equivalent accessor correction and bind R54 artifacts
+before its zero-forward preflight/ALL64DEV run. Fresh runtime/package/installed
+and final/model/release qualification remain required. No additional user-owned
+scope decision is being introduced by this pause.

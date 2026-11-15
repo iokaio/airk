@@ -1,5 +1,12 @@
 # Architecture
 
+> **Historical reference; current guide updated 14 November 2026.** The body
+> below retains the earlier crate map, pre-split CLI ownership and no-answer
+> description. For the authoritative current branch overview, use the
+> [advanced-split visual architecture guide](architecture/airk-architecture.md)
+> and its six diagrams. Owning source/contracts define enforcement; the
+> current guide distinguishes implemented behavior from qualification.
+
 AIRK is an independent local indexing and retrieval kernel. Source workspaces
 are authoritative and all index state is derived from them. AIRK does not
 reason, generate answers, manage agents, route model calls or require an

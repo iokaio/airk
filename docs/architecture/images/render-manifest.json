@@ -1,0 +1,51 @@
+{
+  "renderer": "Version: ImageMagick 7.1.2-17 Q16-HDRI x64 3f2f629:20260315 https://imagemagick.org",
+  "font": "Segoe UI (fallback: DejaVu Sans, sans-serif)",
+  "body_font_pixels": 44,
+  "command": "python docs/architecture/render_diagrams.py",
+  "scale": "192dpi, 2x CSS pixels; fixed landscape layout",
+  "images": [
+    {
+      "png": "images/01-product-interaction.png",
+      "svg": "images/sources/01-product-interaction.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "f10d9244e258dfc6e0cbe002e3cbf026abcea3515173a069dc8539fd650c150c",
+      "svg_sha256": "d1cabf9459fe378d47432a782b5d289aae7ad4ba2a60bf10f82f3592f0612e56"
+    },
+    {
+      "png": "images/02-processes-and-planes.png",
+      "svg": "images/sources/02-processes-and-planes.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "836ca871fe9407436d2b07f5e78dcdd7559c19a7893e172e310f38a610d062fd",
+      "svg_sha256": "2e115a8963b409cd81168161cc9f44293fabb0fbe9a4fd0f253c1f91f7cf37f2"
+    },
+    {
+      "png": "images/03-native-ownership.png",
+      "svg": "images/sources/03-native-ownership.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "0d22d34c6dd3cf91a7687b2513c4cb28fc25d64bd857e4ba500f2f43599eb006",
+      "svg_sha256": "6b1184be0481cea20159ea98cdc5c7a2e9c78fd0ded5dfc5590a3069e3c89e2c"
+    },
+    {
+      "png": "images/04-source-and-publication.png",
+      "svg": "images/sources/04-source-and-publication.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "70947353f374654aaa56f7d9327669e2118026f7c1b4a7fee0287c5efe4186f5",
+      "svg_sha256": "b4f4e42fa0ecb2442aa721cfd6c85ff53a9a69f6d8130cb43979341eb3b1843e"
+    },
+    {
+      "png": "images/05-query-and-answer.png",
+      "svg": "images/sources/05-query-and-answer.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "352d978385101ee7a6e6bda63072a5ba9b32375211c30a7a8e504e2fb8885dbf",
+      "svg_sha256": "28796a606a3bd9c09f0fc1a310c34af1d86a2dc4854d95d7c79fec650703a5c4"
+    },
+    {
+      "png": "images/06-scope-and-trust.png",
+      "svg": "images/sources/06-scope-and-trust.svg",
+      "dimensions": "3200x2100",
+      "png_sha256": "75c8dae400f2ef0035a2506f9a86489761d55c6f1ce365ff5541c7634668e9db",
+      "svg_sha256": "83bf24b1e80b14be63c29f935e2b224104b84b5b124c85282514edc023aca4cb"
+    }
+  ]
+}

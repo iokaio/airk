@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 01</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">One product, several ways to use it</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">People manage and inspect. AI agents request scoped evidence from the same service.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="195" width="660" height="120" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M78 211 V299" stroke="#087f82" stroke-width="4"/>
+<text x="95" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">People</text>
+<text x="95" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Choose scope; inspect evidence; manage indexes.</text>
+<rect x="1100" y="195" width="440" height="120" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M1118 211 V299" stroke="#087f82" stroke-width="4"/>
+<text x="1135" y="229" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">External AI agents</text>
+<text x="1135" y="258" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Ask for bounded evidence.</text>
+<rect x="60" y="450" width="660" height="180" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 466 V614" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="484" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Shared browser + editor UI</text>
+<text x="95" y="513" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Management and Search</text>
+<text x="95" y="540" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Guided evidence, Review, Strategies / Planner</text>
+<text x="95" y="567" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Editor-only workspace actions stay guarded.</text>
+<rect x="780" y="450" width="330" height="180" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M798 466 V614" stroke="#2563a6" stroke-width="4"/>
+<text x="815" y="484" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">airkctl</text>
+<text x="815" y="513" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Commands / diagnostics</text>
+<text x="815" y="540" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Session / tool shell</text>
+<text x="815" y="567" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Setup and recovery</text>
+<rect x="1170" y="450" width="370" height="180" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1188 466 V614" stroke="#2563a6" stroke-width="4"/>
+<text x="1205" y="484" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">HTTPS / MCP</text>
+<text x="1205" y="513" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Authenticated evidence</text>
+<text x="1205" y="540" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Connection scope</text>
+<text x="1205" y="567" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Complete native results</text>
+<rect x="160" y="805" width="1280" height="140" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M178 821 V929" stroke="#087f82" stroke-width="4"/>
+<text x="195" y="839" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">AIRK service</text>
+<text x="195" y="868" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Owns reads, index jobs, publication, management and local inference.</text>
+<text x="195" y="895" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Original citations, gaps, continuations and errors remain inspectable.</text>
+<path d="M390,315 L390,450" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="390,450 385,439 395,439" fill="#60758b"/>
+<path d="M720,255 L945,255 L945,450" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="945,450 940,439 950,439" fill="#60758b"/>
+<path d="M1320,315 L1320,450" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1320,450 1315,439 1325,439" fill="#60758b"/>
+<path d="M390,630 L390,805" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="390,805 385,794 395,794" fill="#60758b"/>
+<polygon points="390,630 395,641 385,641" fill="#60758b"/>
+<path d="M945,630 L945,805" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="945,805 940,794 950,794" fill="#60758b"/>
+<polygon points="945,630 950,641 940,641" fill="#60758b"/>
+<path d="M1355,630 L1355,805" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1355,805 1350,794 1360,794" fill="#60758b"/>
+<polygon points="1355,630 1360,641 1350,641" fill="#60758b"/>
+</svg>

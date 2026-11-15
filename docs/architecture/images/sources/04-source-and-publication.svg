@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="white"/>
+<rect width="1600" height="10" fill="#172b46"/>
+<text x="60" y="49" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="20" fill="#087f82" font-weight="600" text-anchor="start">AIRK / ARCHITECTURE / 04</text>
+<text x="60" y="96" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="32" fill="#172b46" font-weight="600" text-anchor="start">Read-only sources; owned derived state</text>
+<text x="60" y="136" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#50647b" font-weight="400" text-anchor="start">The workspace is authoritative. Publication and cleanup mutate only AIRK-owned state.</text>
+<path d="M60 1000 H1540" stroke="#d7e2eb"/>
+<text x="60" y="1030" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="16" fill="#50647b" font-weight="400" text-anchor="start">1.9.0 unpublished source architecture | Component diagrams are not release or model qualification.</text>
+<rect x="60" y="200" width="450" height="160" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M78 216 V344" stroke="#087f82" stroke-width="4"/>
+<text x="95" y="234" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Selected sources</text>
+<text x="95" y="263" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Original code / documents</text>
+<text x="95" y="290" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Ignore and privacy admission</text>
+<text x="95" y="317" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">No source writes</text>
+<rect x="575" y="200" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M593 216 V344" stroke="#2563a6" stroke-width="4"/>
+<text x="610" y="234" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Ingest</text>
+<text x="610" y="263" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Discover, hash, parse, extract</text>
+<text x="610" y="290" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Facts and original locations</text>
+<text x="610" y="317" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Bounded document conversion</text>
+<rect x="1090" y="200" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1108 216 V344" stroke="#2563a6" stroke-width="4"/>
+<text x="1125" y="234" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Derived staging</text>
+<text x="1125" y="263" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Artifacts / chunks / embeddings</text>
+<text x="1125" y="290" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Content and object identities</text>
+<text x="1125" y="317" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Quota and recovery checks</text>
+<path d="M510,280 L575,280" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="575,280 564,285 564,275" fill="#60758b"/>
+<path d="M1025,280 L1090,280" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1090,280 1079,285 1079,275" fill="#60758b"/>
+<rect x="1090" y="570" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M1108 586 V714" stroke="#2563a6" stroke-width="4"/>
+<text x="1125" y="604" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Kernel publication</text>
+<text x="1125" y="633" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Prepared / Applying journal</text>
+<text x="1125" y="660" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Current revision and binding</text>
+<text x="1125" y="687" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Owned publication transition</text>
+<rect x="575" y="570" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M593 586 V714" stroke="#2563a6" stroke-width="4"/>
+<text x="610" y="604" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Per-index Store</text>
+<text x="610" y="633" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">SQLite / FTS5 and facts</text>
+<text x="610" y="660" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">DiskANN-backed vector state</text>
+<text x="610" y="687" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Manifests and object leases</text>
+<rect x="60" y="570" width="450" height="160" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M78 586 V714" stroke="#2563a6" stroke-width="4"/>
+<text x="95" y="604" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Leased query reads</text>
+<text x="95" y="633" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Current publication snapshot</text>
+<text x="95" y="660" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Lexical / vector retrieval</text>
+<text x="95" y="687" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Root and revision isolation</text>
+<path d="M1315,360 L1315,570" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1315,570 1310,559 1320,559" fill="#60758b"/>
+<path d="M1090,650 L1025,650" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1025,650 1036,645 1036,655" fill="#60758b"/>
+<path d="M575,650 L510,650" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="510,650 521,645 521,655" fill="#60758b"/>
+<rect x="60" y="865" width="800" height="95" rx="12" fill="#edf9f7" stroke="#087f82" stroke-width="1.7"/>
+<path d="M78 881 V944" stroke="#087f82" stroke-width="4"/>
+<text x="95" y="899" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Saved-source verification</text>
+<text x="95" y="928" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Bounded live bytes compared with cited indexed bytes.</text>
+<rect x="940" y="865" width="600" height="95" rx="12" fill="#eef5fc" stroke="#2563a6" stroke-width="1.7"/>
+<path d="M958 881 V944" stroke="#2563a6" stroke-width="4"/>
+<text x="975" y="899" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="26" fill="#172b46" font-weight="600" text-anchor="start">Owned maintenance</text>
+<text x="975" y="928" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="22" fill="#172b46" font-weight="400" text-anchor="start">Watching, indexing and guarded cleanup.</text>
+<path d="M60,280 L30,280 L30,910 L60,910" fill="none" stroke="#087f82" stroke-width="2.1" stroke-dasharray="7 6"/>
+<polygon points="60,910 49,915 49,905" fill="#087f82"/>
+<path d="M800,730 L800,800 L1240,800 L1240,865" fill="none" stroke="#60758b" stroke-width="2.1"/>
+<polygon points="1240,865 1235,854 1245,854" fill="#60758b"/>
+</svg>

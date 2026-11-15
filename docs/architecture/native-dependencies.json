@@ -1,0 +1,249 @@
+{
+  "scope": "union of normal optional and target-specific direct AIRK dependencies; no dev/build or Cargo feature resolution",
+  "crates": [
+    {
+      "crate": "airk-catalog-control",
+      "manifest": "crates/airk-catalog-control/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-cli",
+      "manifest": "crates/airk-cli/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-https",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-service",
+        "airk-store",
+        "airk-supervisor"
+      ]
+    },
+    {
+      "crate": "airk-core",
+      "manifest": "crates/airk-core/Cargo.toml",
+      "direct_airk_dependencies": []
+    },
+    {
+      "crate": "airk-endpoint",
+      "manifest": "crates/airk-endpoint/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-host",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-frontend",
+      "manifest": "crates/airk-frontend/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ]
+    },
+    {
+      "crate": "airk-host",
+      "manifest": "crates/airk-host/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-https",
+      "manifest": "crates/airk-https/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ]
+    },
+    {
+      "crate": "airk-inference",
+      "manifest": "crates/airk-inference/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-ingest",
+      "manifest": "crates/airk-ingest/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-process"
+      ]
+    },
+    {
+      "crate": "airk-installer",
+      "manifest": "crates/airk-installer/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-ipc",
+      "manifest": "crates/airk-ipc/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-process"
+      ]
+    },
+    {
+      "crate": "airk-kernel",
+      "manifest": "crates/airk-kernel/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-ingest",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airk-mcp",
+      "manifest": "crates/airk-mcp/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-kernel"
+      ]
+    },
+    {
+      "crate": "airk-process",
+      "manifest": "crates/airk-process/Cargo.toml",
+      "direct_airk_dependencies": []
+    },
+    {
+      "crate": "airk-retrieval",
+      "manifest": "crates/airk-retrieval/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-process"
+      ]
+    },
+    {
+      "crate": "airk-service",
+      "manifest": "crates/airk-service/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-frontend",
+        "airk-host",
+        "airk-https",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store",
+        "airk-supervisor"
+      ]
+    },
+    {
+      "crate": "airk-store",
+      "manifest": "crates/airk-store/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-process"
+      ]
+    },
+    {
+      "crate": "airk-supervisor",
+      "manifest": "crates/airk-supervisor/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-catalog-control",
+        "airk-core",
+        "airk-endpoint",
+        "airk-host",
+        "airk-inference",
+        "airk-installer",
+        "airk-ipc",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ]
+    },
+    {
+      "crate": "airkctl",
+      "manifest": "crates/airkctl/Cargo.toml",
+      "direct_airk_dependencies": [
+        "airk-core",
+        "airk-ipc",
+        "airk-process"
+      ]
+    }
+  ]
+}

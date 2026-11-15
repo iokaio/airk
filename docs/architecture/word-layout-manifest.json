@@ -1,0 +1,36 @@
+{
+  "filename": "airk-architecture-landscape.docx",
+  "writer": "Pandoc + Python standard-library OOXML finishing",
+  "pandoc": "pandoc 3.12.1",
+  "page": {
+    "paper": "US Letter",
+    "orientation": "landscape",
+    "width_inches": 11,
+    "height_inches": 8.5,
+    "left_right_margin_inches": 0.5,
+    "top_bottom_margin_inches": 0.45,
+    "body_points": 11
+  },
+  "figures": {
+    "count": 6,
+    "pixel_dimensions": [
+      3200,
+      2100
+    ],
+    "body_pixel_font": 44,
+    "width_inches": 10,
+    "height_inches": 6.5625,
+    "own_pages": true,
+    "aspect_preserved": true
+  },
+  "docx_sha256": "e50d907999f793627cbf160013ab770886f492865706be742fcc0406b1be1f26",
+  "source_sha256": "85db60958d1ebc2dae4838622c6b5bce8abb8dee3668e9e1b67350303a1892e5",
+  "png_sha256": [
+    "f10d9244e258dfc6e0cbe002e3cbf026abcea3515173a069dc8539fd650c150c",
+    "836ca871fe9407436d2b07f5e78dcdd7559c19a7893e172e310f38a610d062fd",
+    "0d22d34c6dd3cf91a7687b2513c4cb28fc25d64bd857e4ba500f2f43599eb006",
+    "70947353f374654aaa56f7d9327669e2118026f7c1b4a7fee0287c5efe4186f5",
+    "352d978385101ee7a6e6bda63072a5ba9b32375211c30a7a8e504e2fb8885dbf",
+    "75c8dae400f2ef0035a2506f9a86489761d55c6f1ce365ff5541c7634668e9db"
+  ]
+}

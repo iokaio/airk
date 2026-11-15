@@ -362,6 +362,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [1.6.4 public release: upgrades, removal, MCP status and migration](releases/release-1.6.4.md)
 - [Historical unpublished 1.6.1–1.6.3 candidate evidence](releases/release-1.6.3.md)
 - [Architecture and code boundaries](architecture.md)
+- [Current visual architecture: six diagrams and native owners](architecture/airk-architecture.md)
 - [AIRK Explorer design inputs and approved 1.5.0 design](explorer/README.md): historical design records for the shipped workbench. Current native evidence and optional Explorer assistance share the [unified MCP endpoint](unified-mcp.md).
 - [AIRK 1.4.0 local service architecture and implementation plan](history/airkservice-architecture.md)
 - [1.5.9 MCP compatibility record](releases/release-1.5.9.md)
