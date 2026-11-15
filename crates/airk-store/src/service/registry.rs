@@ -31,6 +31,7 @@ mod source_relationships;
 pub use source_relationships::source_relation;
 
 mod scope;
+mod stopped_recovery;
 pub use scope::{
     SavedScopeExpired, SavedScopeObservation, SavedScopeResolution, SavedScopeStamp,
     source_scope_retryable,
@@ -95,11 +96,14 @@ pub struct ServiceRegistry {
 enum ExistingWrite {
     Maintenance(Incarnation),
     Lifecycle(Incarnation),
+    StoppedRecovery(Incarnation),
 }
 impl ExistingWrite {
     fn namespace(self) -> Incarnation {
         match self {
-            Self::Maintenance(namespace) | Self::Lifecycle(namespace) => namespace,
+            Self::Maintenance(namespace)
+            | Self::Lifecycle(namespace)
+            | Self::StoppedRecovery(namespace) => namespace,
         }
     }
 }
@@ -483,6 +487,16 @@ impl ServiceRegistry {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
         };
         let connection = Connection::open_with_flags(&path, flags)?;
+        Self::validate_existing_connection(root, connection, namespace, writable, deadline)
+    }
+
+    fn validate_existing_connection(
+        root: PathBuf,
+        connection: Connection,
+        namespace: Incarnation,
+        writable: Option<ExistingWrite>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Self> {
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         if writable.is_none() {
             connection.execute_batch("PRAGMA query_only=ON;")?;
@@ -502,6 +516,7 @@ impl ServiceRegistry {
                 None => true,
                 Some(ExistingWrite::Maintenance(_)) => matches!(version, 12 | 13),
                 Some(ExistingWrite::Lifecycle(_)) => matches!(version, 11..=13),
+                Some(ExistingWrite::StoppedRecovery(_)) => true,
             },
             "unsupported_existing_registry_write: lifecycle requires schema 11..13; maintenance requires an activated catalog"
         );
@@ -1204,6 +1219,9 @@ impl ServiceRegistry {
 
 #[cfg(test)]
 mod predecessor_schema8_tests;
+
+#[cfg(test)]
+mod stopped_recovery_tests;
 
 #[cfg(test)]
 mod tests {
