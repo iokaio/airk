@@ -43,7 +43,7 @@ class StaticOrtPolicyTests(unittest.TestCase):
                 self.assertIs(aggregate.aggregate.call_args.args[2].verify_original_build, MODULE.verify_original_build)
                 (root / "build-receipt.json").write_text("original completed evidence")
                 with patch.object(MODULE, "owned_destination", return_value=root), patch.object(MODULE, "run_owned") as compile:
-                    self.assertEqual(MODULE.build(SimpleNamespace(), root, WINDOWS), {"aggregate": True})
+                    self.assertEqual(MODULE.build(SimpleNamespace(parallel=2), root, WINDOWS), {"aggregate": True})
                     compile.assert_not_called()
                 self.assertEqual((root / "build-receipt.json").read_text(), "original completed evidence")
             with patch.object(MODULE, "verify_original_build", return_value={"original": True}), patch.object(MODULE, "load_script") as loader:
@@ -106,26 +106,47 @@ class StaticOrtPolicyTests(unittest.TestCase):
     def test_fresh_static_producer_keeps_default_all_and_adds_excluded_re2(self):
         # The observed Ninja graph proves session+re2 misses nine archives.
         # Exercise actual orchestration without starting a compiler or tools.
-        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
-            root = Path(directory).resolve()
-            stack.enter_context(patch.object(MODULE, "owned_destination", return_value=root))
-            stack.enter_context(patch.object(MODULE, "verify_source"))
-            stack.enter_context(patch.object(MODULE, "toolchain", return_value=tools()))
-            stack.enter_context(patch.object(MODULE, "digest", return_value="a" * 64))
-            stack.enter_context(patch.object(MODULE, "windows_command", side_effect=lambda command, *_: command))
-            invoked = stack.enter_context(patch.object(MODULE, "run_owned", side_effect=lambda *args: {
-                "exit_code": 0, "timed_out": False, "log_oversized": False, "owned_descendants_settled": True}))
-            stack.enter_context(patch.object(MODULE, "library_inventory", return_value=[]))
-            stack.enter_context(patch.object(MODULE, "verify_cmake_cache"))
-            stack.enter_context(patch.object(MODULE, "collect_notices", return_value=[]))
-            stack.enter_context(patch.object(MODULE, "finish_build", return_value={"verified": True}))
-            self.assertEqual(MODULE.build(SimpleNamespace(), root, WINDOWS), {"verified": True})
-            command = invoked.call_args_list[1].args[0]
-            index = command.index("--target")
-            self.assertEqual(command[index + 1:index + 3], ["all", "re2"])
-            self.assertEqual(command[-2:], ["--parallel", "2"])
-            self.assertNotIn("onnxruntime_session", command)
-            self.assertEqual(MODULE.read_json(root / "build-receipt.json")["build_argv"], command)
+        for workers in (2, 8):
+            with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory).resolve()
+                stack.enter_context(patch.object(MODULE, "owned_destination", return_value=root))
+                stack.enter_context(patch.object(MODULE, "verify_source"))
+                stack.enter_context(patch.object(MODULE, "toolchain", return_value=tools()))
+                stack.enter_context(patch.object(MODULE, "digest", return_value="a" * 64))
+                stack.enter_context(patch.object(MODULE, "windows_command", side_effect=lambda command, *_: command))
+                invoked = stack.enter_context(patch.object(MODULE, "run_owned", side_effect=lambda *args: {
+                    "exit_code": 0, "timed_out": False, "log_oversized": False, "owned_descendants_settled": True}))
+                stack.enter_context(patch.object(MODULE, "library_inventory", return_value=[]))
+                stack.enter_context(patch.object(MODULE, "verify_cmake_cache"))
+                stack.enter_context(patch.object(MODULE, "collect_notices", return_value=[]))
+                stack.enter_context(patch.object(MODULE, "finish_build", return_value={"verified": True}))
+                self.assertEqual(MODULE.build(SimpleNamespace(parallel=workers), root, WINDOWS), {"verified": True})
+                command = invoked.call_args_list[1].args[0]
+                index = command.index("--target")
+                self.assertEqual(command[index + 1:index + 3], ["all", "re2"])
+                self.assertEqual(command[-2:], ["--parallel", str(workers)])
+                self.assertNotIn("onnxruntime_session", command)
+                self.assertEqual(MODULE.read_json(root / "build-receipt.json")["build_argv"], command)
+
+    def test_static_parallel_choices_preserve_exact_full_build_command(self):
+        root = Path("approved-static-destination")
+        for workers in (2, 8):
+            expected = ["C:/tools/cmake.exe", "--build", str(root / "b/Release"),
+                        "--config", "Release", "--target", "all", "re2", "--parallel", str(workers)]
+            self.assertEqual(MODULE.static_build_argv(root, tools(), workers), expected)
+            MODULE.verify_static_build_argv(root, tools(), expected)
+            for crossed in (expected + ["--clean-first"], expected[:-1] + ["4"],
+                            expected[:6] + ["--target", "re2", "all", "--parallel", str(workers)],
+                            expected[:-2] + ["--parallel", str(workers), "--parallel", str(workers)],
+                            ["foreign-cmake"] + expected[1:]):
+                with self.assertRaises(ValueError):
+                    MODULE.verify_static_build_argv(root, tools(), crossed)
+        for unsupported in (0, 1, 4, 16, True, "8"):
+            with self.assertRaises(ValueError):
+                MODULE.static_build_argv(root, tools(), unsupported)
+        for value in ("1", "4", "16"):
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                MODULE.main(["--parallel", value])
 
     def test_official_pins_roster_and_source_seal_are_complete(self):
         MODULE.validate_lock()
@@ -150,6 +171,12 @@ class StaticOrtPolicyTests(unittest.TestCase):
             for name in MODULE.OFF_OPTIONS:
                 self.assertIn("-Donnxruntime_" + name + "=OFF", command)
             self.assertIn("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL", command)
+            windows_debug_flags = ["-DCMAKE_POLICY_DEFAULT_CMP0141=NEW",
+                                   "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=",
+                                   "-DCMAKE_POLICY_DEFAULT_CMP0137=NEW",
+                                   "-DCMAKE_TRY_COMPILE_CONFIGURATION=Release"]
+            for flag in windows_debug_flags:
+                self.assertEqual(command.count(flag), 1)
             self.assertIn("-DFETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER", command)
             self.assertIn("-DPYTHON_EXECUTABLE=C:/tools/python.exe", command)
             self.assertIn("-DPython3_EXECUTABLE=C:/tools/python.exe", command)
@@ -158,6 +185,9 @@ class StaticOrtPolicyTests(unittest.TestCase):
             self.assertIn("-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3", mac)
             linux = MODULE.configure_argv(root, "x86_64-unknown-linux-gnu", tools())
             self.assertIn("-DCMAKE_CXX_FLAGS=-march=x86-64 -mtune=generic", linux)
+            for flag in windows_debug_flags:
+                self.assertNotIn(flag, mac)
+                self.assertNotIn(flag, linux)
             self.assertFalse(any("march=native" in value or "Pyke" in value or "NuGet" in value for value in linux + mac + command))
 
     def test_actual_cmake_cache_must_match_static_policy(self):
@@ -396,6 +426,15 @@ class OwnedStaticBuildProcessTests(unittest.TestCase):
             self.assertFalse(result["timed_out"])
             self.assertTrue(result["owned_job_forced_termination"])
             self.assertFalse(MODULE.successful(result))
+            observations = result["owned_job_observed_member_images"]
+            self.assertLessEqual(len(observations), 128)
+            self.assertEqual(len({row["pid"] for row in observations}), len(observations))
+            self.assertTrue(any(row["image"] and Path(row["image"]).name.casefold() == Path(sys.executable).name.casefold()
+                                for row in observations))
+            for row in observations:
+                self.assertTrue(row["image"] is None or len(row["image"]) <= 1024)
+                self.assertGreaterEqual(row["cleanup_remaining_seconds"], 0)
+
             # Immediate actual zero after forcing is distinct from unobserved
             # settlement. Either outcome retains the failed forced qualification.
             if result["owned_descendants_settled"]:
@@ -404,6 +443,31 @@ class OwnedStaticBuildProcessTests(unittest.TestCase):
                 self.assertNotIn("cleanup_refusal", result)
             else:
                 self.assertIn("cleanup_refusal", result)
+
+    @unittest.skipUnless(os.name == "nt", "Actual Windows held-handle diagnostic failure")
+    def test_image_observer_allocation_failure_preserves_owned_cleanup_and_forced_refusal(self):
+        import ctypes
+        allocate = ctypes.create_unicode_buffer
+        observed = []
+        def fail_image(value, *args, **kwargs):
+            if value == 32768:
+                observed.append(True)
+                raise MemoryError("injected image-only diagnostic allocation failure")
+            return allocate(value, *args, **kwargs)
+        script = ("import subprocess,sys; child=subprocess.Popen([sys.executable,'-I','-B','-c',"
+                  "\"import threading;print('ready',flush=True);threading.Event().wait()\"],stdout=subprocess.PIPE);"
+                  "assert child.stdout.readline().strip()==b'ready';print('leader completed',flush=True)")
+        with tempfile.TemporaryDirectory() as directory, patch.object(ctypes, "create_unicode_buffer", side_effect=fail_image):
+            root = Path(directory).resolve()
+            result = MODULE.run_owned([sys.executable, "-I", "-B", "-c", script], root, root / "diagnostic-error.log", 10)
+        self.assertTrue(observed)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertTrue(result["owned_job_forced_termination"])
+        self.assertFalse(MODULE.successful(result))
+        self.assertTrue(result["owned_descendants_settled"])
+        self.assertEqual(result["owned_job_final_active_processes"], 0)
+        self.assertEqual(result["owned_job_final_member_pids"], [])
+        self.assertTrue(any(row.get("observer_error") == "MemoryError" for row in result["owned_job_observed_member_images"]))
 
     def test_real_owned_descendant_and_timeout_are_settled_without_process_sweeps(self):
         with tempfile.TemporaryDirectory() as directory:

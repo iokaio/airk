@@ -628,6 +628,7 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
         "WaitForSingleObject": ([w.HANDLE, w.DWORD], w.DWORD),
         "GetExitCodeProcess": ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
         "OpenProcess": ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
+        "QueryFullProcessImageNameW": ([w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)], w.BOOL),
         "IsProcessInJob": ([w.HANDLE, w.HANDLE, ctypes.POINTER(w.BOOL)], w.BOOL),
         "ResumeThread": ([w.HANDLE], w.DWORD),
         "InitializeProcThreadAttributeList": ([ctypes.c_void_p, w.DWORD, w.DWORD, ctypes.POINTER(ctypes.c_size_t)], w.BOOL),
@@ -646,6 +647,7 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
     assigned = resumed = False
     attributes_initialized = False
     emergency_members = []
+    observed_members = {}
     try:
         limits = ExtendedLimits()
         limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -744,6 +746,22 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
                         raise
                     if belongs.value:
                         retained.append(handle)
+                        # Diagnostic only; retain ownership BEFORE allocations
+                        # and never let image observation replace cleanup proof.
+                        if pid not in observed_members and len(observed_members) < 128:
+                            try:
+                                image = ctypes.create_unicode_buffer(32768)
+                                image_size = w.DWORD(len(image))
+                                image_ok = api.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(image_size))
+                                observed_members[pid] = {
+                                    "pid": pid, "image": image.value[:1024] if image_ok else None,
+                                    "image_truncated": bool(image_ok and image_size.value > 1024),
+                                    "image_error": 0 if image_ok else ctypes.get_last_error(),
+                                    "cleanup_remaining_seconds": round(max(0, cleanup_end - time.monotonic()), 6)}
+                            except Exception as observation_error:
+                                observed_members[pid] = {"pid": pid, "image": None,
+                                    "image_truncated": False, "image_error": None,
+                                    "observer_error": type(observation_error).__name__}
                     else:
                         api.CloseHandle(handle)  # A reused foreign PID is never waited on.
                 return retained
@@ -790,6 +808,7 @@ def run_windows_owned(argv, cwd, output, timeout, environment):
         checked(api.GetExitCodeProcess(info.process, ctypes.byref(code)))
         result = {"exit_code": int(code.value), "timed_out": timed_out, "log_oversized": oversized,
                   "owned_descendants_settled": settled, "owned_job_forced_termination": forced,
+                  "owned_job_observed_member_images": list(observed_members.values()),
                   "owned_job_final_active_processes": active, "owned_job_final_member_pids": members,
                   "parent_assigned_to_job": False, "child_assigned_before_resume": True}
         if not settled:
@@ -927,6 +946,16 @@ def toolchain(args, destination, target):
     return result
 
 
+# Release-only builds and whole-project IPO probes must not emit debug data.
+# Keep the actual choices in canonical argv/cache/receipts, not ambient CL flags.
+WINDOWS_CMAKE_DEBUG_FLAGS = (
+    "-DCMAKE_POLICY_DEFAULT_CMP0141=NEW",
+    "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=",
+    "-DCMAKE_POLICY_DEFAULT_CMP0137=NEW",
+    "-DCMAKE_TRY_COMPILE_CONFIGURATION=Release",
+)
+
+
 def configure_argv(destination, target, tools):
     destination = plain(destination)
     command = [tools["cmake"]["path"], "-S", str(destination / "source/cmake"),
@@ -938,6 +967,7 @@ def configure_argv(destination, target, tools):
     command.extend("-Donnxruntime_" + name + "=OFF" for name in OFF_OPTIONS)
     operating_system, architecture = TARGETS[target]
     if operating_system == "Windows":
+        command.extend(WINDOWS_CMAKE_DEBUG_FLAGS)
         command.extend(["-DCMAKE_SYSTEM_VERSION=" + tools["windows_sdk"], "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL",
                         "-DONNX_USE_MSVC_STATIC_RUNTIME=OFF", "-Dprotobuf_MSVC_STATIC_RUNTIME=OFF", "-DABSL_MSVC_STATIC_RUNTIME=OFF"])
     else:
@@ -1142,6 +1172,20 @@ def library_inventory(destination, target, build_relative="b/Release", include_s
     return rows
 
 
+def static_build_argv(destination, tools, parallel):
+    if type(parallel) is not int or parallel not in (2, 8):
+        raise ValueError("Static ORT parallel workers must be 2 or 8")
+    return [tools["cmake"]["path"], "--build", str(destination / "b/Release"),
+            "--config", "Release", "--target", "all", "re2", "--parallel", str(parallel)]
+
+
+def verify_static_build_argv(destination, tools, recorded):
+    if not isinstance(recorded, list) or not recorded or recorded[-1] not in ("2", "8"):
+        raise ValueError("Static ORT build parallel policy changed")
+    if recorded != static_build_argv(destination, tools, int(recorded[-1])):
+        raise ValueError("Static ORT build command policy changed")
+
+
 def build(args, destination, target):
     destination = owned_destination(destination, target)
     if (destination / "build-receipt.json").exists():
@@ -1154,7 +1198,7 @@ def build(args, destination, target):
     # Static archive targets do not recursively pull every link dependency.
     # Keep the reviewed original default-all producer and explicitly add re2,
     # which upstream marks EXCLUDE_FROM_ALL but ort-sys rc10 always links.
-    build_command = [tools["cmake"]["path"], "--build", str(destination / "b/Release"), "--config", "Release", "--target", "all", "re2", "--parallel", "2"]
+    build_command = static_build_argv(destination, tools, args.parallel)
     receipt = {"schema": 1, "result": "running", "ort_version": VERSION, "upstream_commit": COMMIT,
                "target": target, "lock_sha256": digest(LOCK_PATH), "toolchain": tools,
                "configure_argv": command, "build_argv": build_command,
@@ -1245,8 +1289,8 @@ def verify_original_build(destination, target):
     if receipt["configure_argv"] != configure_argv(destination, target, tools):
         raise ValueError("Static ORT configure policy changed")
     verify_cmake_cache(destination / "b/Release/CMakeCache.txt", receipt["configure_argv"])
-    expected_build = [tools["cmake"]["path"], "--build", str(destination / "b/Release"), "--config", "Release", "--target", "all", "re2", "--parallel", "2"]
-    if receipt["build_argv"] != expected_build or [row["stage"] for row in receipt["commands"]] != ["configure", "build"] or not all(successful(row) for row in receipt["commands"]):
+    verify_static_build_argv(destination, tools, receipt["build_argv"])
+    if [row["stage"] for row in receipt["commands"]] != ["configure", "build"] or not all(successful(row) for row in receipt["commands"]):
         raise ValueError("Static ORT actual build stages did not pass/settle")
     if receipt["libraries"] != library_inventory(destination, target):
         raise ValueError("Static ORT library content/roster changed")
@@ -1455,7 +1499,7 @@ def main(argv=None):
     parser.add_argument("--supplement-link-closure", action="store_true", help="Build only the real missing pinned re2 target; preserve original receipts and archives")
     parser.add_argument("--recover-link-supplement", action="store_true", help="Adopt only the exact reviewed Neo supplemental archive after its owned runner failed; never build")
     parser.add_argument("--verify", action="store_true")
-    parser.add_argument("--parallel", type=int, choices=[2], default=2)
+    parser.add_argument("--parallel", type=int, choices=[2, 8], default=2)
     parser.add_argument("--environment-file", type=Path)
     parser.add_argument("--github-env", action="store_true")
     parser.add_argument("--adopt-legacy-receipt", action="store_true", help="Import only the exact reviewed Windows C1 campaign; never rebuild it")

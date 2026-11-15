@@ -80,6 +80,19 @@ JSON as shell code or import arbitrary environment keys. Modern builds reject
 missing/mismatched static input receipts. Original compiled library reuse keeps
 its original build identity and does not become a fresh build observation.
 
+Windows pinned Ninja and static ORT configure commands explicitly disable MSVC
+debug information for these Release-only builds with
+`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=` and policies CMP0141/CMP0137 set to NEW.
+The empty setting reaches whole-project compiler/IPO checks without disabling
+IPO/LTO. Embedded `/Z7` would inflate every static component with debug data and
+can exceed the unchanged two-GiB aggregate bound; it is not selected.
+`CMAKE_TRY_COMPILE_CONFIGURATION=Release` also selects the production build
+configuration for compiler probes, avoiding Debug linker PDB generation.
+A compiler PDB server may otherwise remain in the owned job after configure
+returns. Natural complete job settlement is still required within the existing
+five-second cleanup bound; forced cleanup never qualifies a build. Failed
+receipts are retained unchanged, and corrected builds use fresh destinations.
+
 On Mac arm64, an explicit `--build-cmake-source` together with
 `--download-tools` builds the same pinned CMake 3.31.6 from its authenticated
 official source when the vendor executable cannot start. This separate owned
@@ -492,3 +505,12 @@ Production preflight requires the native-emitted
 bytes and final tag. That file is emitted only after all four native profiles
 qualify. Hypothetical `/3` fixtures test publication custody and refusal behavior;
 they never authorize model provisioning, publication or a qualification claim.
+
+
+Static ORT compilation accepts `--parallel 2` (the unchanged default) or the
+explicit `--parallel 8` choice for hosts with measured CPU/RAM headroom. Pinned
+Ninja bootstrap remains at two workers. The existing build receipt records the
+exact worker count in its canonical argv; verification accepts only these two
+counts and compares the entire command, including targets/order, with no extra
+flags. This throughput choice does not change artifact-size, lifetime, cleanup,
+retry or qualification bounds and does not rehabilitate earlier failed runs.

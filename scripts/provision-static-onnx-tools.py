@@ -305,6 +305,7 @@ def ninja_commands(root, target, cmake, options, core):
                "-DNINJA_PYTHON=" + str(Path(sys.executable).resolve())]
     tools = None
     if windows:
+        command.extend(core.WINDOWS_CMAKE_DEBUG_FLAGS)
         candidates = [options.vs_root] if options.vs_root else [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Microsoft Visual Studio/2022" / edition for edition in ("Enterprise", "Professional", "Community", "BuildTools")]
         vs = next((Path(value).resolve() for value in candidates if value and (Path(value) / "VC/Auxiliary/Build/vcvars64.bat").is_file()), None)
         if vs is None:
@@ -477,6 +478,11 @@ def verify_ninja_policy(root, target, receipt, core):
             raise ValueError("Pinned Ninja build policy differs: " + key)
     platform_keys = {"CMAKE_MAKE_PROGRAM"}
     if system == "Windows":
+        for flag in core.WINDOWS_CMAKE_DEBUG_FLAGS:
+            name, value = flag[2:].split("=", 1)
+            if definitions.get(name) != value:
+                raise ValueError("Pinned Windows debug-information policy differs: " + name)
+            platform_keys.add(name)
         if receipt["windows_tools"]["windows_sdk"] != "10.0.26100.0" or receipt["windows_tools"]["msvc_toolset"] != "14.44.35207":
             raise ValueError("Pinned Ninja MSVC toolchain changed")
         make_path = definitions.get("CMAKE_MAKE_PROGRAM", "").replace("\\", "/")

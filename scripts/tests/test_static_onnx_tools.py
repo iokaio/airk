@@ -237,6 +237,40 @@ class StaticToolTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     MODULE.verify_ninja_policy(root, "aarch64-apple-darwin", crossed, CORE)
 
+    def test_windows_release_ipo_checks_disable_debug_information_and_bind_propagation(self):
+        expected = ["-DCMAKE_POLICY_DEFAULT_CMP0141=NEW",
+                    "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=",
+                    "-DCMAKE_POLICY_DEFAULT_CMP0137=NEW",
+                    "-DCMAKE_TRY_COMPILE_CONFIGURATION=Release"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            vs = root / "vs"
+            for name in ["VC/Auxiliary/Build/vcvars64.bat",
+                         "VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/nmake.exe",
+                         "VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe"]:
+                path = vs / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"inert tool-path fixture")
+            options = SimpleNamespace(vs_root=vs, msvc_toolset="14.44.35207",
+                                      windows_sdk="10.0.26100.0")
+            configure, build, native = MODULE.ninja_commands(root, "x86_64-pc-windows-msvc", root / "cmake", options, CORE)
+            receipt = {"configure_argv": configure, "build_argv": build,
+                       "cmake": {"path": str(root / "cmake")},
+                       "python": {"path": str(Path(sys.executable).resolve())}, "windows_tools": native}
+            MODULE.verify_ninja_policy(root, "x86_64-pc-windows-msvc", receipt, CORE)
+            for flag in expected:
+                self.assertEqual(configure.count(flag), 1)
+                for kind in ["missing", "changed", "duplicate"]:
+                    crossed = copy.deepcopy(receipt)
+                    if kind == "missing":
+                        crossed["configure_argv"].remove(flag)
+                    elif kind == "changed":
+                        crossed["configure_argv"][crossed["configure_argv"].index(flag)] = flag.split("=", 1)[0] + "=unsafe"
+                    else:
+                        crossed["configure_argv"].append(flag)
+                    with self.assertRaises(ValueError, msg=(flag, kind)):
+                        MODULE.verify_ninja_policy(root, "x86_64-pc-windows-msvc", crossed, CORE)
+
     def test_base_cli_exposes_explicit_download_tools_without_implicit_cargo(self):
         with patch.object(CORE, "prepare") as prepare, patch.object(CORE, "build") as build, patch("sys.stderr", new_callable=io.StringIO):
             with self.assertRaises(SystemExit):
