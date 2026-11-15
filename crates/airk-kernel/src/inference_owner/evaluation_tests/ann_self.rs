@@ -7,6 +7,8 @@ use airk_store::current::CurrentHead;
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::Write, time::Duration};
 
+mod regenerate;
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProbeInput {
@@ -319,4 +321,60 @@ fn run_self_probe(smoke: bool) -> Result<()> {
     file.sync_all()?;
     phase("output_complete", 0)?;
     Ok(())
+}
+
+pub(super) fn require_exact_probe_publication(
+    kernel: &crate::Kernel,
+    path: &std::path::Path,
+    pin: Sha256Digest,
+) -> Result<airk_core::evidence::RevisionEnvelope> {
+    let input: ProbeInput = serde_json::from_slice(&sealed(path, pin)?)?;
+    sealed(&input.retained_capture, input.retained_capture_sha256)?;
+    ensure!(
+        kernel.root.canonicalize()? == input.source_root
+            && kernel.data_root.canonicalize()? == input.data_root
+            && kernel.collection() == input.collection,
+        "query kernel geometry differs from native proof"
+    );
+    let read = kernel.current_reader()?;
+    ensure!(
+        read.head() == &input.expected_head,
+        "query publication differs from native proof"
+    );
+    ensure!(
+        read.collection_state()?
+            .context("published state missing")?
+            .configuration
+            .model
+            .as_ref()
+            == Some(&input.expected_model),
+        "query model/pipeline differs from native proof"
+    );
+    ensure!(
+        read.head().graph_head.live_nodes == input.expected_live_nodes,
+        "query live-node population changed"
+    );
+    let snapshot = kernel
+        .load_optional()?
+        .context("published source roster missing")?;
+    let actual: BTreeMap<_, _> = snapshot
+        .artifacts
+        .iter()
+        .map(|(path, artifact)| {
+            (
+                path.clone(),
+                (artifact.bytes as u64, artifact.content_hash.clone()),
+            )
+        })
+        .collect();
+    ensure!(
+        actual == input.expected_indexed_sources,
+        "query published source roster differs"
+    );
+    read.require_token(&read.token()?)?;
+    ensure!(
+        kernel.current_reader()?.head() == &input.expected_head,
+        "query publication changed during binding"
+    );
+    crate::current::runtime::envelope(&read)
 }

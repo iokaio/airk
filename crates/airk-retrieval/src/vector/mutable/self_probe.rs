@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, time::Instant};
 
+pub mod regeneration_cache;
+
 /// Diagnostic-only immutable raw records, still retaining the exact snapshot reader.
 /// This is not a production cache, proof substitute, decoder, metric or index.
 struct AuthenticatedRecords {

@@ -114,3 +114,58 @@ bound are unchanged. A separate actual-reader first-live localization test
 uses the original five-second bound, one exact-self subset and ordinary ANN10;
 it makes no all-live recall claim. The historical uninstrumented timeout remains
 a failed run with no metrics, not evidence of an ANN defect.
+
+`ann_self::regenerate` is a separate approved120second/2GiB/two-job-slot stage
+for the exact original366-source/378-vector DEV publication. The old Store is
+opened diagnostically without recovery or mutation. Exact old specification1,
+unchanged record width, model/pipeline, authenticated embedding key/ID maps,
+source census and raw vector bits are required; the new specification must differ.
+Unknown cache keys return Err, never None; cache stores also refuse. Thus the
+ordinary cache-aware embedding path cannot fall through to FFI. Actual owning
+EmbeddingCacheStats must report zero inferences, actual forwards and misses.
+
+Fresh state uses ordinary native configuration/model installation and empty
+initialization, owning retained source/payload import and CurrentUpdater with
+the original configuration/selection, sorted original paths, bypass=false and
+the explicit strict cache. No scanner, extraction, SQL manipulation, old graph
+edge copy or hand-built native DTO is used. Old source/state/capture stay read-only;
+their original head/token and complete source byte census are checked before and
+after. Fresh scope/graph incarnation, graph specification, all physical IDs,
+embedding keys, raw float bits/order, model and source roster are checked before
+an independently identified receipt is complete. Partial publication is retained
+on failure and never relabeled a successful rebuild. A later original-DEV query
+campaign requires its own reviewed native image/input freeze and NN authorization;
+regeneration is not human-query quality or release qualification.
+
+Before acquiring a control lease or creating/importing state, regeneration
+requires a designated canonical operation anchor containing only its control
+child. Control and result are exact distinct children. The anchor must be
+disjoint in both directions from every canonical frozen source, old state,
+retained-capture parent, model-assets directory and native-input parent. Unknown
+entries, escaped/aliased children and equal/ancestor/descendant frozen locations
+refuse before output creation. The owning coordinator prepares and proves the
+private anchor/control ownership; ServiceLease retains its ordinary admission.
+
+`candidate::regenerated_queries` is a separate query-only DEV capture after the
+reviewed zero-NN rebuild. It reuses the original64 question order,20 eligible/
+44 alignment-refused mask, source manifest, U8 weights/pipeline and native vector
+top10/32768/full-result request. Both original failed capture and actual complete
+regeneration/proof inputs are pinned. The owning ProbeInput accessor checks the
+actual existing data/source geometry, exact head/model and published source
+roster. The kernel opens diagnostically with no recovery; this path calls no
+indexing, scanning, installation, rebuild, training or FINAL operation.
+
+All64 native SearchQuery shapes are validated before any neural call. Each
+original ordinal has flushed start/completion/failure metadata with original
+remaining budget and observed timings. Full native successful bodies are retained
+before late publication validation; actual errors and partial rows remain visible
+and terminate without retry/refill. Original source, model, input and publication
+fences surround the capture. Exact fresh anchor/control/output isolation is
+validated before control acquisition or output writes. Geometry preflight is a
+separate zero-NN entry; actual queries require its same-image/input proof and the
+original1800second/8GiB/two-slot DEV stage approval.
+
+Grading reuses the unchanged source-span/alternative coverage owner with its
+original20-question denominator and44 refusals. A changed graph/publication does
+not satisfy the old same-index bridge; a single-U8 before/after DEV diagnostic
+does not claim matched multi-model baselines, FINAL success or model promotion.

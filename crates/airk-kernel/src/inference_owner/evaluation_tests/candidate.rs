@@ -218,6 +218,8 @@ fn candidate_two_families_match_independent_native_bucket_oracles() -> Result<()
 // SPDX-License-Identifier: Apache-2.0
 // Separate development-only capture. Original205 entry and grader stay unchanged.
 
+mod regenerated_queries;
+
 const CORPUS_PIN: &str = "f6c6616c1de29948deee9f37c70ccaadbb7a5dc71d0cd02c91d207c9ccbac097";
 const MASK_PIN: &str = "76842592dab174fd90bc3918542759adbf9cea615080334a308acafd6924727d";
 const PROTOCOL_PIN: &str = "0fa7ffbfe381d0804704710e683f85a897d59a661073ba24e849fe53b3e298e8";
