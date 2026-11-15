@@ -758,6 +758,17 @@ impl AirkServer {
             args.response,
             args.verification.controls(),
             move |kernel| {
+                let reserve = args
+                    .verification
+                    .controls()
+                    .resolve()?
+                    .map(|budget| {
+                        airk_kernel::verification::verification_reply_metadata_floor(budget)
+                            .map(|floor| floor.saturating_mul(2).saturating_add(2048))
+                    })
+                    .transpose()?
+                    .unwrap_or(4096);
+                let kernel = kernel.with_context_reply_reserve(reserve)?;
                 reader.kernel = kernel.clone();
                 kernel.answer_with_reader_v2(
                     args.request,

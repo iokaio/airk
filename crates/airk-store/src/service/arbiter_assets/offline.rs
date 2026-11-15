@@ -90,8 +90,9 @@ fn local(file: &File) -> Result<()> {
             "Offline bundle filesystem observation failed"
         );
         let fs = unsafe { fs.assume_init() };
+        let local_flag = u32::try_from(libc::MNT_LOCAL)?;
         ensure!(
-            fs.f_flags & libc::MNT_LOCAL != 0,
+            fs.f_flags & local_flag != 0,
             "Offline bundle network filesystem refused"
         );
     }

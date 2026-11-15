@@ -12,7 +12,7 @@ unsafe extern "C" {
     fn atexit(callback: extern "C" fn()) -> std::ffi::c_int;
 }
 
-pub(super) struct SessionLease;
+pub(crate) struct SessionLease;
 impl SessionLease {
     pub(super) fn acquire() -> Result<Self> {
         USERS

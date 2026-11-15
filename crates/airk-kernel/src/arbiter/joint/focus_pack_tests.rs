@@ -153,7 +153,7 @@ fn packet_budget_omits_uncharged_record_before_later_known_or_unknown_focus_cust
     for unknown in [false, true] {
         let mut response = packet(unknown)?;
         let retained = response.records[2].canonical_result.clone();
-        pack(&mut response, None, 32_768, false)?;
+        pack(&mut response, None, 32_768, false, 4096)?;
         assert_eq!(
             response
                 .records
@@ -181,7 +181,7 @@ fn packet_budget_trims_presentation_before_removing_any_charged_focus_record() -
         interpretation: true,
     });
     let records = serde_json::to_vec(&response.records)?;
-    pack(&mut response, None, 32_768, false)?;
+    pack(&mut response, None, 32_768, false, 4096)?;
     assert_eq!(serde_json::to_vec(&response.records)?, records);
     assert!(response.paragraphs.is_empty());
     assert_eq!(response.stop, PartitionTermination::Budget);
@@ -194,7 +194,7 @@ fn insufficient_mandatory_receipt_budget_refuses_without_erasing_actual_focus_wo
     response.records.remove(1);
     response.candidate_count = 2;
     let records = serde_json::to_vec(&response.records)?;
-    assert!(pack(&mut response, None, 1024, false).is_err());
+    assert!(pack(&mut response, None, 1024, false, 4096).is_err());
     assert_eq!(serde_json::to_vec(&response.records)?, records);
     assert!(
         airk_core::arbiter::focus::observed_focus_work(&response.records, &Budget::default())?
@@ -224,9 +224,9 @@ fn combined_packet_keeps_fitting_off_bytes_and_requires_actual_focus_outer_headr
     let outer = crate::combined_reads::context_packet_focus_binding_bytes(&active)?;
     assert!(outer > 0);
     let mut fitting = active.clone();
-    pack(&mut fitting, None, active_bytes + outer, true)?;
+    pack(&mut fitting, None, active_bytes + outer, true, 4096)?;
     assert_eq!(serde_json::to_vec(&fitting.records)?, charged);
-    assert!(pack(&mut active, None, active_bytes + outer - 1, true).is_err());
+    assert!(pack(&mut active, None, active_bytes + outer - 1, true, 4096).is_err());
     assert_eq!(
         serde_json::to_vec(&active.records)?,
         charged,
@@ -247,11 +247,66 @@ fn combined_packet_keeps_fitting_off_bytes_and_requires_actual_focus_outer_headr
         crate::combined_reads::context_packet_focus_binding_bytes(&off)?,
         0
     );
-    pack(&mut off, None, off_bytes, true)?;
+    pack(&mut off, None, off_bytes, true, 4096)?;
     assert_eq!(
         serde_json::to_vec(&off)?,
         original,
         "off retains the exact fitting packet and budget"
     );
+    Ok(())
+}
+
+#[test]
+fn derived_verification_reserve_preserves_off_packet_and_trims_only_presentation() -> Result<()> {
+    use airk_core::verification::{VerificationBudget, VerificationMode, receipt_budget_for_reply};
+    fn projection(packet: &ContextResponseV2) -> Result<Value> {
+        let mut value = serde_json::to_value(packet)?;
+        value["request_id"] = json!("f".repeat(32));
+        airk_core::reply::ReplyDetail::annotate(
+            &mut value,
+            Some(airk_core::reply::ReplyDetail::Rich),
+        );
+        airk_core::guidance::annotate(&mut value);
+        Ok(value)
+    }
+    for unknown in [false, true] {
+        let mut packet = packet(unknown)?;
+        packet.records.remove(1);
+        packet.candidate_count = 2;
+        packet.paragraphs.push(GroundedParagraph {
+            text: "x".into(),
+            evidence: vec![digest(82)],
+            interpretation: true,
+        });
+        let current = serde_json::to_vec(&serde_json::to_string(&projection(&packet)?)?)?.len();
+        let target = airk_core::MAX_RESPONSE_BYTES - 4096;
+        packet.paragraphs[0].text = "x".repeat(1 + target - current);
+        assert_eq!(receipt_budget_for_reply(&projection(&packet)?)?, 1024);
+        let original = serde_json::to_vec(&packet)?;
+        let mandatory = serde_json::to_vec(&packet.records)?;
+        let mut off = packet.clone();
+        pack(&mut off, None, 262_144, false, 4096)?;
+        assert_eq!(
+            serde_json::to_vec(&off)?,
+            original,
+            "Off keeps the exact fitting packet"
+        );
+        for mode in [VerificationMode::Report, VerificationMode::Require] {
+            let budget = VerificationBudget {
+                mode,
+                max_sources: 25,
+                max_bytes: 16 * 1024 * 1024,
+                deadline_ms: 2000,
+            };
+            let floor = crate::verification::verification_reply_metadata_floor(budget)?;
+            assert!(floor > 1024);
+            let mut verified = packet.clone();
+            pack(&mut verified, None, 262_144, false, 2048 + 2 * floor)?;
+            assert_eq!(serde_json::to_vec(&verified.records)?, mandatory);
+            assert!(verified.paragraphs.is_empty());
+            assert_eq!(verified.omitted_count, 0);
+            assert!(receipt_budget_for_reply(&projection(&verified)?)? >= floor);
+        }
+    }
     Ok(())
 }

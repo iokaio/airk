@@ -240,7 +240,7 @@ fn packing_support_omission_invalidates_current_coverage_and_dependent_paragraph
     response.paragraphs.push(fact.clone());
     response.validate(&Budget::default())?;
     let size = serde_json::to_vec(&response)?.len();
-    pack(&mut response, None, size - 1, false)?;
+    pack(&mut response, None, size - 1, false, 4096)?;
     assert_eq!(response.records.len(), 1);
     assert_eq!(response.omitted_count, 1);
     assert_eq!(response.stop, PartitionTermination::Budget);

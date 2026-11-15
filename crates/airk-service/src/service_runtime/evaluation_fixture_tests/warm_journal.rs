@@ -56,6 +56,9 @@ impl Recorder {
                     last = record.sequence;
                     file.write_all(&raw)?;
                     file.flush()?;
+                    // Windows last-write notifications require the still-open file
+                    // to be flushed to storage. This writer is outside warm gates.
+                    file.sync_data()?;
                 }
                 ensure!(
                     observed.dropped() == 0,

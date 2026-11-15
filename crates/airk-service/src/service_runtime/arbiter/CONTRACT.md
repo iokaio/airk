@@ -364,3 +364,14 @@ assumptions are introduced. Prior failed attempts remain failed.
 The warm journal seam is compiled only for native unit-test fixtures with
 local-inference and test-support. Feature-enabled non-test libraries expose no
 observer attachment or lifecycle hook; no integration or product caller owns it.
+
+### Private same-owner evaluation restart
+
+The private ignored evaluation host may explicitly reopen its own previously closed CAL control root into a fresh metadata work directory. The pinned original Ready, genuine closed record and raw Status2 must name the same instance/control/catalog, unchanged three raw Profiles/input digest, no initialization placeholder and zero queued/running stage work. Native shutdown and lease-reacquisition proof is required; actual ServiceLease exclusion is acquired again and ordinary service startup owns the new incarnation. Existing activated catalog/index/cache/configuration stay in place: no catalog Genesis, seed transaction, database copy, source mutation or namespace remapping occurs. The factory accepts the exact saved Configuration only after native Owner loads the same installation/catalog and validates complete equality. Ordinary cached restore verifies current asset custody and enrollment and performs real hardware admission/warm; Ready does not assert that warm completed. Fresh Ready, observer IDs, journals, source bindings and canonical actual Status must be collected before reads. The public product/evaluation constructors retain their default refusal of configured isolated fixtures. Restart is test-only, opt-in through a SHA-pinned private descriptor, creates no public wire or persisted product format, and never transfers qualification or the old process's timing to the new process.
+
+The restart-only optional guard on the existing private evaluation OwnerFactory runs under the ACTUAL retained startup ServiceLease before endpoint/log/source-supervisor/project-supervisor/management startup. It checks all native pending/running work, paused queued jobs and unsettled configuration continuations, plus exact saved Configuration, before recovery can admit work. Constructor checks repeat under the same lease/gate; preflight observations never replace that startup fence. Default product and ordinary isolated evaluation startup attach no guard.
+
+On Windows the journal writer sync_data-flushes each complete record while its
+file remains open before callers rely on directory last-write notifications.
+Ordinary File::flush alone does not establish an observable write notification.
+This storage flush runs only in the separate writer, never the warm callback.

@@ -64,6 +64,23 @@ impl crate::Kernel {
         Ok(kernel)
     }
 
+    /// Closed native rendering capacity supplied by the canonical Answer owner.
+    /// It is metadata space, never a new work budget or caller authority.
+    pub fn with_context_reply_reserve(&self, reserve: usize) -> Result<Self> {
+        ensure!(
+            reserve <= airk_core::MAX_RESPONSE_BYTES,
+            "Answer metadata reserve exceeds native frame"
+        );
+        let Some(context) = &self.arbiter_context else {
+            return Ok(self.clone());
+        };
+        let mut context = context.as_ref().clone();
+        context.context_reply_reserve = reserve.max(4096);
+        let mut kernel = self.clone();
+        kernel.arbiter_context = Some(Arc::new(context));
+        Ok(kernel)
+    }
+
     pub fn with_optional_deadline(&self, deadline: Instant) -> Result<Self> {
         if let Some(context) = &self.arbiter_context {
             let mut held = state(context)?;
@@ -464,7 +481,15 @@ impl crate::Kernel {
             0
         };
         let frame = if nested {
+            // This frame is in receipt bytes; JSON string embedding may double
+            // them. Match the additional outer packet reserve before dispatch.
             frame
+                .saturating_sub(
+                    context
+                        .context_reply_reserve
+                        .saturating_sub(4096)
+                        .div_ceil(2),
+                )
                 .saturating_sub(mandatory)
                 .saturating_sub(outer_focus_bytes)
                 .min(

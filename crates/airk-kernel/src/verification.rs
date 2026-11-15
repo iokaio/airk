@@ -47,6 +47,52 @@ fn qualifications() -> Vec<VerificationQualification> {
     .collect()
 }
 
+/// Native metadata capacity required before a source-bearing reply is committed.
+/// This uses the same typed receipt/qualifications and existing postwork reserve
+/// as trim_metadata; it performs no index lookup, source read or source check.
+pub fn verification_reply_metadata_floor(budget: VerificationBudget) -> Result<usize> {
+    let mut limits: VerificationLimits = budget.into();
+    limits.effective_deadline_ms = u64::MAX;
+    limits.receipt_bytes_budget = MAX_RECEIPT_BYTES;
+    // The only hit which may be present before trim_metadata runs.
+    limits.hit = vec!["reference_inventory".into()];
+    let receipt = VerificationReceipt {
+        schema: "airk.saved-source-verification/1".into(),
+        method: "sha256-full-saved-source/1".into(),
+        mode: budget.mode,
+        status: "unverified".into(),
+        scope_digest: Sha256Digest::from_bytes([0; 32]),
+        selection_digest: Sha256Digest::from_bytes([0; 32]),
+        observed_from_unix_ms: u64::MAX,
+        observed_to_unix_ms: u64::MAX,
+        publication_fence: "current".into(),
+        inventory_complete: false,
+        all_references_accounted: false,
+        source_rows_omitted: usize::MAX,
+        requirements_satisfied: Some(false),
+        counts: VerificationCounts {
+            references: Some(usize::MAX),
+            references_lower_bound: usize::MAX,
+            requested_sources: Some(usize::MAX),
+            requested_sources_lower_bound: usize::MAX,
+            checked_sources: usize::MAX,
+            matched_sources: usize::MAX,
+            mismatched_sources: usize::MAX,
+            unchecked_sources: Some(usize::MAX),
+            bytes_read: u64::MAX,
+        },
+        limits,
+        origins: vec![],
+        sources: vec![],
+        references: vec![],
+        qualifications: qualifications(),
+        error: None,
+    };
+    let floor = serde_json::to_vec(&receipt)?.len().saturating_add(1024);
+    anyhow::ensure!(floor <= MAX_RECEIPT_BYTES, VerificationReplyBudget);
+    Ok(floor)
+}
+
 /// Identity of the exact native evidence selection covered by a dated receipt.
 /// External full-result validators reuse this owner recipe before rebinding
 /// documented transport identities; this function performs no source reads.
@@ -1309,6 +1355,35 @@ mod tests {
                 .downcast_ref::<VerificationReplyBudget>()
                 .is_some()
         );
+        Ok(())
+    }
+    #[test]
+    fn joint_legacy_frame_padding_can_leave_less_than_native_verification_metadata() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("data")))?;
+        // Closed metadata-only public verification path: no model/index/source read.
+        let mut value = json!({"status":"unavailable", "padding":""});
+        let target_quoted = airk_core::MAX_RESPONSE_BYTES - 4096;
+        let overhead = serde_json::to_vec(&serde_json::to_string(&value)?)?.len();
+        value["padding"] = json!("x".repeat(target_quoted - overhead));
+        let quoted = serde_json::to_vec(&serde_json::to_string(&value)?)?.len();
+        assert_eq!(quoted + 4096, airk_core::MAX_RESPONSE_BYTES);
+        assert_eq!(receipt_budget_for_reply(&value)?, 1024);
+        assert!(
+            kernel
+                .verify_returned_sources(&value, budget(VerificationMode::Report))
+                .unwrap_err()
+                .is::<VerificationReplyBudget>()
+        );
+        // A genuinely small projection succeeds under the same source budget.
+        let receipt = kernel.verify_returned_sources(
+            &json!({"status":"unavailable"}),
+            budget(VerificationMode::Report),
+        )?;
+        assert_eq!(receipt.counts.bytes_read, 0);
+        assert!(serde_json::to_vec(&receipt)?.len() > 1024);
         Ok(())
     }
 }

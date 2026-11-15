@@ -77,3 +77,12 @@ also compiles for tests so feature-independent Focus accounting regressions keep
 their assertions. A no-default-features production build omits these unused
 Context helpers; canonical Focus dispatch, authority and budget behavior do not
 change, and no local inference capability is added to the lightweight caller.
+
+Canonical Answer reserves its resolved Report/Require saved-source verification
+metadata before optional scoring and final packet packing. The reserve is
+derived from the native typed receipt, actual limits and its existing metadata
+growth allowance; it does not change the public request budget or native frame.
+Explicit Off retains the legacy 4096-byte closed-render reserve. Cumulative
+mandatory Focus custody and final post-application/deadline packing use the same
+additional reserve. Metadata-only refusal remains valid if mandatory custody
+cannot fit; no source verification or uncertain native work is replayed.

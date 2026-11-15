@@ -550,6 +550,7 @@ impl crate::Kernel {
                 .as_ref(),
             request.budget.max_bytes,
             context.partition.is_some(),
+            context.context_reply_reserve,
         )?;
         let focus_overrun =
             airk_core::arbiter::focus::observed_focus_work(&response.records, &request.budget)?
@@ -627,6 +628,18 @@ impl crate::Kernel {
         } else {
             response.applications = vec![latest];
         }
+        // Deadline/application observations above may change metadata after
+        // the first pack. Preserve the same original render/verification space.
+        pack(
+            &mut response,
+            self.scope_observation()
+                .map(serde_json::to_value)
+                .transpose()?
+                .as_ref(),
+            request.budget.max_bytes,
+            context.partition.is_some(),
+            context.context_reply_reserve,
+        )?;
         response.validate(&request.budget)?;
         Ok(response)
     }
@@ -755,6 +768,7 @@ fn pack(
     scope: Option<&Value>,
     maximum: usize,
     reserve_outer_focus: bool,
+    reply_reserve: usize,
 ) -> Result<()> {
     let maximum = if reserve_outer_focus {
         maximum
@@ -796,7 +810,7 @@ fn pack(
         if serde_json::to_vec(&value)?.len() <= maximum
             && serde_json::to_vec(&serde_json::to_string(&value)?)?
                 .len()
-                .saturating_add(4096)
+                .saturating_add(reply_reserve.max(4096))
                 <= airk_core::MAX_RESPONSE_BYTES
         {
             break;

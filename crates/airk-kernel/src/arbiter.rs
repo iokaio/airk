@@ -70,6 +70,7 @@ pub(crate) struct NativeContext {
     partition: Option<airk_core::combined_context::PartitionAllowance>,
     focus: Arc<std::sync::Mutex<focus::Attempt>>,
     focus_reply_budget: Option<FocusReplyBudget>,
+    context_reply_reserve: usize,
 }
 fn observed_application(
     context: &NativeContext,
@@ -138,6 +139,7 @@ impl crate::Kernel {
             partition: None,
             focus: Arc::new(std::sync::Mutex::new(focus::Attempt::default())),
             focus_reply_budget: None,
+            context_reply_reserve: 4096,
         }));
         Ok(kernel)
     }
