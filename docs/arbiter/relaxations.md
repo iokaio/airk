@@ -102,6 +102,9 @@ constants): `read_limits/tests.rs` (120_000), `arbiter/tests.rs`
 | `scripts/package-native.py`, `scripts/build-service-runtime.py`, `scripts/package-portable.py` version gate | `>= (1, 9, 0)` → `>= (1, 8, 201)` | The 1.8.201 candidate follows the current notice/legal and launch contracts instead of the historical ones (stricter, not looser) | Revert to 1.9.0 only if the series numbering changes |
 | `scripts/optional-publication.py` `current()` | unchanged at `(1, 9, 0)` | Publication custody stays a final-series check | none |
 | Workspace/extension version | 1.9.0 → 1.8.201 | 1.9.0 is reserved for the final release | Next local build increments to 1.8.202 and so on |
+| `crates/airk-retrieval/src/arbiter/runtime.rs` `release_qualification_gate` / `local_test_profile_for` | a compiled profile needed a qualified target row and a qualification digest → a profile whose `profile_id` starts with `unqualified-local-test` skips only those two checks, and only when the package version parses to below 1.9.0 | Lets the 1.8.x candidate admit the three selected models without qualification so they can be downloaded and tried; `cpu_fit`, asset, download, ABI and policy-digest checks still apply, and `publication.rs` `project()` stays strict | Remove the prefix path (or let it fail at 1.9.0, where it already refuses) once qualified profiles replace them |
+| `crates/airk-service/src/service_runtime/arbiter/lifecycle.rs` status reasons | "qualified" wording → local-test profiles report "Unqualified local test profile (not release-qualified)." | Honest labeling in Admin/Workbench status | none; keep |
+| same file, `user_failure_reason` | full error chain as the reason → fixed "Try again later." text for source-class and deadline download failures | The user sees a retry note; transport detail and signed URLs are never shown | none; keep |
 
 ## Restore order
 

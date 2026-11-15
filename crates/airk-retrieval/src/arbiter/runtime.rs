@@ -24,6 +24,8 @@ use std::{
 };
 
 mod input;
+#[cfg(test)]
+mod local_test_tests;
 #[cfg(feature = "test-support")]
 pub mod qualification;
 
@@ -74,6 +76,62 @@ pub fn current_target() -> &'static str {
     }
 }
 
+/// Prefix that marks a compiled profile as an unqualified local-test candidate.
+pub const LOCAL_TEST_PROFILE_PREFIX: &str = "unqualified-local-test";
+
+/// Fail closed: only an exact `major.minor.patch` below 1.9.0 is a local-test
+/// series. Anything else (1.9.0 and later, pre-release suffixes, garbage) is not.
+fn local_test_series(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let (Some(major), Some(minor), Some(patch), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let number = |part: &str| {
+        (!part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0')))
+        .then(|| part.parse::<u64>().ok())
+        .flatten()
+    };
+    let (Some(major), Some(minor), Some(_)) = (number(major), number(minor), number(patch)) else {
+        return false;
+    };
+    (major, minor) < (1, 9)
+}
+
+fn local_test_profile_for(profile: &Profile, version: &str) -> bool {
+    profile.profile_id.starts_with(LOCAL_TEST_PROFILE_PREFIX) && local_test_series(version)
+}
+
+/// Release admission: a qualified native target row, a qualification digest and
+/// a CPU fit. An unqualified local-test profile in a pre-1.9.0 series skips only
+/// the target row and the qualification digest, never the CPU fit.
+fn release_qualification_gate(profile: &Profile, version: &str) -> Result<()> {
+    let local_test = local_test_profile_for(profile, version);
+    if !local_test {
+        ensure!(
+            profile
+                .qualified_targets
+                .iter()
+                .any(|row| row.target == current_target()),
+            "Arbiter profile has no qualification on this native target"
+        );
+    }
+    ensure!(
+        (local_test || profile.qualification.is_some()) && profile.cpu_fit.is_some(),
+        "Arbiter release qualification missing"
+    );
+    Ok(())
+}
+
+/// True for a compiled unqualified local-test profile in a pre-1.9.0 build.
+/// Never true for release series, so a final build refuses these profiles.
+pub fn is_local_test_profile(profile: &Profile) -> bool {
+    local_test_profile_for(profile, env!("CARGO_PKG_VERSION"))
+}
+
 /// No Deserialize implementation: downloaded metadata cannot mint this proof.
 pub struct ExecutionProfile {
     description: Profile,
@@ -113,13 +171,7 @@ impl ExecutionProfile {
         description.validate()?;
         description.validate_release_downloads()?;
         validate_selected_policies(&description)?;
-        ensure!(
-            description
-                .qualified_targets
-                .iter()
-                .any(|row| row.target == current_target()),
-            "Arbiter profile has no qualification on this native target"
-        );
+        release_qualification_gate(&description, env!("CARGO_PKG_VERSION"))?;
         if description.tasks.contains(&Task::ContextNextRead) {
             ensure!(
                 description.task_policies.get(&Task::ContextNextRead)
@@ -141,10 +193,6 @@ impl ExecutionProfile {
                 "Arbiter Focus source policy differs from qualified profile"
             );
         }
-        ensure!(
-            description.qualification.is_some() && description.cpu_fit.is_some(),
-            "Arbiter release qualification missing"
-        );
         Ok(Self {
             description,
             release: true,

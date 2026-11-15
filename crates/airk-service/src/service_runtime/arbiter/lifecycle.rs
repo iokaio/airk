@@ -40,6 +40,10 @@ impl Default for State {
         }
     }
 }
+/// Availability reasons for a compiled unqualified local-test profile start with
+/// this note so no surface presents it as release-qualified.
+const LOCAL_TEST_NOTE: &str = "Unqualified local test profile (not release-qualified).";
+
 fn phase(shared: &Arc<Mutex<State>>, serial: u64, value: Availability, reason: &str) -> Result<()> {
     let mut state = shared
         .lock()
@@ -99,8 +103,22 @@ fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
             } else {
                 Availability::Failed
             };
-            state.reason = bounded_reason(format!("{error:#}"));
+            state.reason = bounded_reason(user_failure_reason(error));
         }
+    }
+}
+/// Final user-facing reason for a failed operation. A source-class download
+/// failure or an expired part deadline gets a fixed message with a retry note;
+/// the underlying chain (which may carry transport detail) is never shown.
+pub(super) fn user_failure_reason(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<super::download::Failure>() {
+        Some(super::download::Failure::Source(_)) => {
+            "The model download failed because the download source is unavailable or returned an unexpected response. Nothing was enabled. Try again later.".into()
+        }
+        Some(super::download::Failure::Deadline) => {
+            "The model download did not finish before its deadline. Nothing was enabled. Try again later.".into()
+        }
+        _ => format!("{error:#}"),
     }
 }
 fn cancel_current(state: &mut State) {
@@ -405,6 +423,7 @@ async fn warm(
         "Loading verified Arbiter bytes inside the existing native inference owner.",
     )?;
     admitted_current(configuration, expected, stage, cancel, admission)?;
+    let local_test = airk_retrieval::arbiter::runtime::is_local_test_profile(profile.description());
     let receiver = handle.warm(profile, source, reservation)?;
     #[cfg(all(test, feature = "test-support"))]
     if let Some(observation) = observation.as_mut() { observation.activation_path = super::warm_observer::ActivationPath::NativeWarmAdmitted; }
@@ -421,7 +440,7 @@ async fn warm(
         ensure!(observed.active_profile==Some(manifest)&&observed.configuration_revision==Some(expected.revision),"Arbiter native activation not observed");
         admitted_current(configuration,expected,stage,cancel,admission)?;
         ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
-        phase(shared,serial,Availability::Ready,"Qualified Arbiter profile is active in the owned native compute lane.")
+        phase(shared,serial,Availability::Ready,if local_test {"Unqualified local test profile (not release-qualified) is active in the owned native compute lane."} else {"Qualified Arbiter profile is active in the owned native compute lane."})
     }.await;
     if let Err(error) = result {
         phase(
@@ -559,7 +578,7 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                     &shared,
                     serial,
                     Availability::Downloading,
-                    "Downloading the exact compiled qualified Arbiter asset parts.",
+                    "Downloading the exact compiled Arbiter asset parts.",
                 )?;
                 let source_log = {
                     let state = shared.lock().map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
@@ -944,7 +963,13 @@ impl StageOwner {
                     model,
                     profile: Some(profile.manifest),
                     availability,
-                    reason: bounded_reason(format!("{reason} {fit_reason}")),
+                    reason: bounded_reason(
+                        if airk_retrieval::arbiter::runtime::is_local_test_profile(profile) {
+                            format!("{LOCAL_TEST_NOTE} {reason} {fit_reason}")
+                        } else {
+                            format!("{reason} {fit_reason}")
+                        },
+                    ),
                     tasks: profile.tasks.clone(),
                     download_bytes: Some(profile.assets.iter().try_fold(
                         0_u64,
@@ -1001,9 +1026,17 @@ impl StageOwner {
         {
             (Availability::Draining, state.reason.clone())
         } else if active == selected && selected.is_some() && native_revision_matches {
+            let local_test = profiles
+                .iter()
+                .find(|row| row.profile == selected)
+                .is_some_and(|row| row.reason.starts_with(LOCAL_TEST_NOTE));
             (
                 Availability::Ready,
-                "Selected qualified Arbiter profile is active.".into(),
+                if local_test {
+                    format!("{LOCAL_TEST_NOTE} Selected profile is active.")
+                } else {
+                    "Selected qualified Arbiter profile is active.".into()
+                },
             )
         } else {
             profiles

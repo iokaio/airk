@@ -40,6 +40,23 @@ check passed.
   stage the local parts, verify complete bytes through the native transport and
   bind the actual source maps into the final compiled catalog.
 
+## 2a. Unqualified local-test profiles (pre-1.9.0 only)
+
+- **What:** A compiled profile whose id starts with `unqualified-local-test` is
+  admitted without a qualified target row or qualification digest, so Focus,
+  Compact and Large can be downloaded and tried in this candidate. Status text
+  reads "Unqualified local test profile (not release-qualified)."
+- **Safety:** The rule is fail closed. It applies only when the package version
+  parses to below 1.9.0, so a 1.9.0 or later build refuses these profiles, and
+  release publication (`project()`) is unchanged and still demands qualification.
+  CPU fit, assets, downloads, ABI and source policy digests are still checked.
+- **Download failures:** A source-class failure or expired deadline now ends with
+  a fixed message saying the download failed, nothing was enabled and to try again
+  later. No URL or signed query string is shown. There is no automatic backup
+  source in this candidate unless the profile lists one.
+- **Why unqualified:** see section 1. Results from these models say nothing
+  about retrieval quality, latency or memory at the raised limits.
+
 ## 3. Packaging omits the qualified native publication capture
 
 - **What:** The VSIX packages without `fixtures/arbiter/publication_catalog.json`.
