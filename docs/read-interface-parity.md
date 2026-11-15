@@ -285,16 +285,31 @@ hex-token comparison does not establish strict v2 transport parity.
 Fresh Answer transport tests validate each complete raw ContextResponseV2 with
 its original Core budget before comparison. For unassessed native fallback,
 the existing pure Kernel Gathering owner first replays the complete retained
-fallback dispatch prefix and regenerates every canonical record digest. Omitted
-or learned/non-prefix packets are refused by this proof. Only then may tests
+fallback dispatch prefix and regenerates every canonical record digest. A
+disclosed omitted suffix additionally needs the separate prefix proof: the
+mandatory initial Search remains, candidate/omission/call counts agree, retained
+bytes remain charged, and the owning recipe has a next omitted dispatch.
+Omitted bodies are not reconstructed or declared equivalent. Learned or
+non-prefix packets are refused by this proof. Only then may tests
 normalize canonical-record primitive transport request IDs and typed clocks, then rebind that record's derived identifier by a
 validated positional bijection at records, grounded paragraph references and
-assessment basis source-unit references. Original records, stable source/model/
+assessment basis source-unit references and retained unavailable-advice evidence
+references. Typed source verification validates every top-level/per-source
+observation interval before normalizing only its two dated clock fields. Its
+actual selection digest is checked using the Kernel owner recipe before
+normalization, then recomputed over the normalized graph; it is never masked as
+an arbitrary hash. Original records, stable source/model/
 publication identities, native arguments, counters, allocations and unknown
 nested evidence fields remain retained. Raw replies are saved on differences.
 Learned selected/abstained assessments require their own decision/prompt parity
 proof; this fallback comparator refuses them rather than hiding a changed
-model input or decision. Tamper cases must detect changed evidence, authority,
+model input or decision. Whole-verification copies first validate against the
+complete original projection, then replay each duplicated member packet and
+recompute its authenticated derived selection digest. Only typed source
+intervals and bounded elapsed verification windows are normalized; original
+source/raw-byte caps, counts, work, locators, proof fields and unknown data stay
+literal. The original Answer arguments supply the expected verification budget.
+Tamper cases must detect changed evidence, authority,
 coverage and orphaned record references.
 
 The optional `check-service-clients.py --answer-validator <prebuilt-combined_reads-test-binary>`

@@ -258,3 +258,192 @@ fn emit_combined_context_semantic_cases() -> Result<()> {
     assert_eq!(retained, document, "combined native semantic fixture drift");
     Ok(())
 }
+
+#[test]
+fn combined_answer_counts_materialized_multi_hit_envelopes_without_changing_native_limits()
+-> Result<()> {
+    for representation in ["native", "text", "structured", "both"] {
+        let (request, mut inputs, mut summary) = context_fixture()?;
+        let mut originals = Vec::new();
+        for (input, report) in inputs.iter_mut().zip(&mut summary.members) {
+            let extra = input.result["records"][0]["canonical_result"]["hits"][0].clone();
+            input.result["records"][0]["canonical_result"]["hits"]
+                .as_array_mut()
+                .unwrap()
+                .push(extra);
+            let typed = airk_core::arbiter::context_action::ContextResponseV2::from_canonical(
+                &input.result,
+                &summary.budget,
+            )?;
+            if let PartitionOutcome::Known { used, .. } = &mut report.outcome {
+                let next = Resources::from_packet(&typed)?;
+                summary.known_used.bytes = summary.known_used.bytes - used.bytes + next.bytes;
+                *used = next;
+            }
+            let canonical = input.result.clone();
+            originals.push(canonical.clone());
+            input.result = match representation {
+                "text" => {
+                    json!({"isError":false,"content":[{"type":"text","text":canonical.to_string()}]})
+                }
+                "structured" => json!({"isError":false,"structuredContent":canonical}),
+                "both" => {
+                    json!({"isError":false,"content":[{"type":"text","text":canonical.to_string()}],"structuredContent":canonical})
+                }
+                _ => canonical,
+            };
+        }
+        let original_budget = request.budgets;
+        let expected_summary = serde_json::to_value(&summary)?;
+        let result = compose_context(&request, inputs, summary)?;
+        assert_eq!(result.ranking.len(), 4, "{representation}");
+        assert_eq!(
+            serde_json::to_value(result.context.as_ref().unwrap())?,
+            expected_summary
+        );
+        assert_eq!(request.budgets, original_budget);
+        for (offset, original) in originals.iter().enumerate() {
+            let retained = member_result(&result, index(u8::try_from(offset + 1)?))?;
+            assert_eq!(body(&retained).0, original, "{representation}");
+            assert_eq!(result.members[offset].allocation.limit, 2);
+            assert_eq!(
+                result.members[offset].allocation.max_bytes,
+                summary_bytes(&expected_summary, offset)?
+            );
+        }
+    }
+    Ok(())
+}
+fn summary_bytes(summary: &Value, offset: usize) -> Result<usize> {
+    Ok(usize::try_from(
+        summary["members"][offset]["allowance"]["resources"]["bytes"]
+            .as_u64()
+            .context("fixture byte allowance")?,
+    )?)
+}
+#[test]
+fn ordinary_multi_hit_count_refusals_are_identical_for_text_and_structured_envelopes() -> Result<()>
+{
+    for representation in ["text", "structured"] {
+        let request = request()?;
+        let mut member = input(
+            1,
+            vec![
+                hit("api/a.rs", "a"),
+                hit("api/b.rs", "b"),
+                hit("api/c.rs", "c"),
+            ],
+        )?;
+        let canonical = member.result.clone();
+        member.result = if representation == "text" {
+            json!({"isError":false,"content":[{"type":"text","text":canonical.to_string()}]})
+        } else {
+            json!({"isError":false,"structuredContent":canonical})
+        };
+        let error = compose(&request, vec![member]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("member result exceeded its count allocation"),
+            "{error:#}"
+        );
+    }
+    Ok(())
+}
+#[test]
+fn context_byte_admission_charges_closed_envelope_escaping_and_original_metadata() -> Result<()> {
+    let (request, inputs, summary) = context_fixture()?;
+    let allowances: Vec<_> = summary
+        .members
+        .iter()
+        .map(|m| m.allowance.clone())
+        .collect();
+    let payload = context_payload_admission(&request, &summary.budget, &allowances, 1024)?;
+    assert!(payload >= 2048 && payload < request.budgets.max_bytes / 3);
+    assert!(context_payload_admission(&request, &summary.budget, &allowances, usize::MAX).is_err());
+    let mut tiny = summary.budget.clone();
+    tiny.max_bytes = 1024;
+    assert_eq!(
+        context_payload_admission(&request, &tiny, &allowances, 1024)?,
+        0
+    );
+    for text in [
+        "plain".to_string(),
+        "\"\\\n\t\u{0001}".repeat(300),
+        "caf\u{e9}\u{6771}\u{4eac}".repeat(100),
+    ] {
+        let canonical = json!({"native_text":text});
+        let envelope = json!({"content":[{"type":"text","text":canonical.to_string()}],"structuredContent":canonical,"isError":false});
+        assert_eq!(
+            context_member_payload_bytes(&envelope)?,
+            serde_json::to_vec(&canonical)?.len()
+        );
+        let mut text_only = envelope.clone();
+        text_only
+            .as_object_mut()
+            .unwrap()
+            .remove("structuredContent");
+        assert_eq!(
+            context_member_payload_bytes(&text_only)?,
+            serde_json::to_vec(&canonical)?.len()
+        );
+        let mut materialized = text_only.clone();
+        canonicalize_envelope(&mut materialized)?;
+        assert_eq!(
+            context_member_payload_bytes(&text_only)?,
+            context_member_payload_bytes(&materialized)?
+        );
+        let mut structured_only = envelope.clone();
+        structured_only.as_object_mut().unwrap().remove("content");
+        assert_eq!(
+            context_member_payload_bytes(&structured_only)?,
+            serde_json::to_vec(&canonical)?.len()
+        );
+        let mut extended = envelope.clone();
+        extended["future_envelope"] = json!({"must_not_disappear":true});
+        assert!(context_member_payload_bytes(&extended).is_err());
+        let mut divergent = envelope.clone();
+        divergent["content"][0]["text"] = json!("{}");
+        assert!(context_member_payload_bytes(&divergent).is_err());
+    }
+    let opaque = json!({"isError":true,"content":[{"type":"text","text":"native failure is opaque; do not reinterpret"}]});
+    assert_eq!(
+        context_member_payload_bytes(&opaque)?,
+        serde_json::to_vec(&opaque)?.len()
+    );
+    let mut structured_failure = opaque.clone();
+    structured_failure["structuredContent"] =
+        json!({"error":{"code":"helper_unavailable","full_native_detail":[1,2,3]}});
+    assert_eq!(
+        context_member_payload_bytes(&structured_failure)?,
+        serde_json::to_vec(&structured_failure)?.len()
+    );
+    let mut contradictory = structured_failure.clone();
+    contradictory["content"][0]["text"] = json!("{\"error\":{\"code\":\"different\"}}");
+    assert!(context_member_payload_bytes(&contradictory).is_err());
+    let mut nominal = opaque.clone();
+    nominal["isError"] = json!(false);
+    assert!(context_member_payload_bytes(&nominal).is_err());
+    let complete = compose_context(&request, inputs.clone(), summary.clone())?;
+    let mut without = complete.clone();
+    without.ranking.clear();
+    without.truncated = true;
+    let lower = serde_json::to_vec(&without)?.len();
+    let mut bounded = request.clone();
+    bounded.budgets.max_bytes = lower + 1;
+    let fitted = compose_context(&bounded, inputs.clone(), summary.clone())?;
+    assert!(fitted.truncated && fitted.ranking.len() < complete.ranking.len());
+    for offset in 0..2 {
+        assert_eq!(
+            member_result(&fitted, index(offset + 1))?,
+            member_result(&complete, index(offset + 1))?
+        );
+    }
+    bounded.budgets.max_bytes = lower - 1;
+    assert!(
+        compose_context(&bounded, inputs, summary)
+            .unwrap_err()
+            .is::<ContextReplyBudget>()
+    );
+    Ok(())
+}

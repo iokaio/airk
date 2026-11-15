@@ -667,29 +667,37 @@ fn body_with_budgets(
             let members = value["members"]
                 .as_array()
                 .context("combined member allocations missing")?;
-            if let Some(context)=value.get("context") {
-                let summary:airk_core::combined_context::CombinedContextSummary=serde_json::from_value(context.clone())?;
-                let indexes=members.iter().map(|member|serde_json::from_value::<IndexId>(member["index_id"].clone())).collect::<std::result::Result<Vec<_>,_>>()?;
+            if let Some(context) = value.get("context") {
+                let summary: airk_core::combined_context::CombinedContextSummary =
+                    serde_json::from_value(context.clone())?;
+                let indexes = members
+                    .iter()
+                    .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
                 summary.validate(&indexes)?;
                 for member in members {
-                    let allocation:airk_core::combined_reads::MemberAllocation=serde_json::from_value(member["allocation"].clone())?;
-                    ensure!(allocation.deadline_ms<=summary.budget.deadline_ms,"context member exceeds its one shared original deadline");
+                    let allocation: airk_core::combined_reads::MemberAllocation =
+                        serde_json::from_value(member["allocation"].clone())?;
+                    ensure!(
+                        allocation.deadline_ms <= summary.budget.deadline_ms,
+                        "context member exceeds its one shared original deadline"
+                    );
                 }
             } else {
-            let deadline = members
-                .iter()
-                .try_fold(0u64, |total, member| -> Result<u64> {
-                    let part = member["allocation"]["deadline_ms"]
-                        .as_u64()
-                        .context("combined deadline allocation missing")?;
-                    total
-                        .checked_add(part)
-                        .context("combined deadline allocation overflow")
-                })?;
-            ensure!(
-                deadline <= 30_000,
-                "allocated member deadlines exceeded the configured 30000 ms request deadline"
-            );
+                let deadline = members
+                    .iter()
+                    .try_fold(0u64, |total, member| -> Result<u64> {
+                        let part = member["allocation"]["deadline_ms"]
+                            .as_u64()
+                            .context("combined deadline allocation missing")?;
+                        total
+                            .checked_add(part)
+                            .context("combined deadline allocation overflow")
+                    })?;
+                ensure!(
+                    deadline <= 30_000,
+                    "allocated member deadlines exceeded the configured 30000 ms request deadline"
+                );
             }
         }
     }
@@ -1042,7 +1050,7 @@ fn assert_parity(label: &str, left: &Value, right: &Value) -> Result<()> {
 
 struct McpSession {
     transport: http::HttpMcpSession,
-    negotiated_protocol:String,
+    negotiated_protocol: String,
 }
 impl McpSession {
     fn start(f: &Fixture) -> Result<Self> {
@@ -1070,14 +1078,17 @@ impl McpSession {
     ) -> Result<Self> {
         let mut session = Self {
             transport: http::HttpMcpSession::start(&f.control, selection)?,
-            negotiated_protocol:String::new(),
+            negotiated_protocol: String::new(),
         };
         let initialized = session.request(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
         ensure!(
             initialized.get("error").is_none(),
             "initialize failed: {initialized}"
         );
-        session.negotiated_protocol=initialized["result"]["protocolVersion"].as_str().context("actual negotiated MCP protocol")?.to_owned();
+        session.negotiated_protocol = initialized["result"]["protocolVersion"]
+            .as_str()
+            .context("actual negotiated MCP protocol")?
+            .to_owned();
         session
             .transport
             .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
@@ -4812,183 +4823,964 @@ fn project_text(f: &Fixture, n: usize) -> String {
     f.projects[n].to_string()
 }
 
-fn authenticated_fallback_case(header:u8)->Result<(airk_core::arbiter::Budget,Value)>{
-    let cases:Value=serde_json::from_str(include_str!("../../../fixtures/split/arbiter/context_action_cases.json"))?;
-    let case=cases["cases"].as_array().context("joint cases")?.iter().find(|case|case["name"]=="overrun_deadline_metadata_retained").context("native unassessed case")?;
-    let budget:airk_core::arbiter::Budget=serde_json::from_value(case["budget"].clone())?;
-    let mut packet=airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&case["input"],&budget)?;
-    ensure!(packet.records.len()==1,"pure seed must have one canonical result");
-    let prior=packet.records[0].id;let scope=packet.assessment.scope.clone();
-    let application=airk_core::arbiter::IndexApplication{scope:scope.clone(),profile:None,availability:airk_core::arbiter::Availability::Disabled,reason:"Pure native fallback replay; no model qualification claim".into()};
-    let mut canonical=packet.records[0].canonical_result.clone();
-    canonical["publication"]=serde_json::to_value(&scope.publication)?;
-    canonical["request_id"]=serde_json::to_value(Incarnation::from_bytes([header;16]))?;
-    let now=Instant::now();
-    let mut gathering=airk_kernel::arbiter::Gathering::new(airk_core::arbiter::ContextRequest{
-        schema:airk_core::arbiter::REQUEST_SCHEMA.into(),question:packet.question.clone(),budget:budget.clone()},scope,application.clone(),now)?;
-    gathering.next(now)?.context("initial native dispatch")?;gathering.observe(Ok(canonical),now)?;
-    packet.records[0]=gathering.records().first().context("owning native record")?.clone();
-    let actual=packet.records[0].id;
-    for paragraph in &mut packet.paragraphs {for id in &mut paragraph.evidence {if *id==prior{*id=actual;}}}
-    for event in &mut packet.assessment_history {for unit in &mut event.basis.source_units_presented {if unit.record==prior{unit.record=actual;}}}
-    packet.applications=vec![application];packet.validate(&budget)?;
-    Ok((budget,serde_json::to_value(packet)?))
+fn authenticated_fallback_case(header: u8) -> Result<(airk_core::arbiter::Budget, Value)> {
+    authenticated_fallback_case_in_index(header, None)
+}
+fn authenticated_fallback_case_in_index(
+    header: u8,
+    index: Option<IndexId>,
+) -> Result<(airk_core::arbiter::Budget, Value)> {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/split/arbiter/context_action_cases.json"
+    ))?;
+    let case = cases["cases"]
+        .as_array()
+        .context("joint cases")?
+        .iter()
+        .find(|case| case["name"] == "overrun_deadline_metadata_retained")
+        .context("native unassessed case")?;
+    let budget: airk_core::arbiter::Budget = serde_json::from_value(case["budget"].clone())?;
+    let mut packet = airk_core::arbiter::context_action::ContextResponseV2::from_canonical(
+        &case["input"],
+        &budget,
+    )?;
+    if let Some(index) = index {
+        packet.assessment.scope.index_id = index;
+        for record in &mut packet.records {
+            record.scope.index_id = index;
+        }
+        for event in &mut packet.assessment_history {
+            event.partition.index_id = index;
+            if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
+                advice: Some(advice),
+                ..
+            } = &mut event.result
+            {
+                advice.scope.index_id = index;
+            }
+        }
+    }
+    ensure!(
+        packet.records.len() == 1,
+        "pure seed must have one canonical result"
+    );
+    let prior = packet.records[0].id;
+    let scope = packet.assessment.scope.clone();
+    let application = airk_core::arbiter::IndexApplication {
+        scope: scope.clone(),
+        profile: None,
+        availability: airk_core::arbiter::Availability::Disabled,
+        reason: "Pure native fallback replay; no model qualification claim".into(),
+    };
+    let mut canonical = packet.records[0].canonical_result.clone();
+    canonical["publication"] = serde_json::to_value(&scope.publication)?;
+    canonical["request_id"] = serde_json::to_value(Incarnation::from_bytes([header; 16]))?;
+    let now = Instant::now();
+    let mut gathering = airk_kernel::arbiter::Gathering::new(
+        airk_core::arbiter::ContextRequest {
+            schema: airk_core::arbiter::REQUEST_SCHEMA.into(),
+            question: packet.question.clone(),
+            budget: budget.clone(),
+        },
+        scope,
+        application.clone(),
+        now,
+    )?;
+    gathering.next(now)?.context("initial native dispatch")?;
+    gathering.observe(Ok(canonical), now)?;
+    packet.records[0] = gathering
+        .records()
+        .first()
+        .context("owning native record")?
+        .clone();
+    let actual = packet.records[0].id;
+    for paragraph in &mut packet.paragraphs {
+        for id in &mut paragraph.evidence {
+            if *id == prior {
+                *id = actual;
+            }
+        }
+    }
+    for event in &mut packet.assessment_history {
+        for unit in &mut event.basis.source_units_presented {
+            if unit.record == prior {
+                unit.record = actual;
+            }
+        }
+        if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
+            advice: Some(advice),
+            ..
+        } = &mut event.result
+        {
+            for id in &mut advice.evidence {
+                if *id == prior {
+                    *id = actual;
+                }
+            }
+        }
+    }
+    packet.applications = vec![application];
+    packet.validate(&budget)?;
+    Ok((budget, serde_json::to_value(packet)?))
 }
 #[test]
-fn context_fallback_comparison_retains_evidence_and_rejects_orphaned_or_unearned_identity_changes()->Result<()> {
-    let (budget,raw)=authenticated_fallback_case(1)?;
-    let (_,later)=authenticated_fallback_case(2)?;
-    let (left,right)=common::parity::context::pair(&raw,&later,&budget)?;assert_eq!(left,right);
-    for pointer in ["/records/0/scope/authorization","/records/0/canonical_result/hits/0/text","/assessment/coverage/reason","/work/calls"] {
-        let mut changed=raw.clone();let value=changed.pointer_mut(pointer).with_context(||format!("native tamper case pointer {pointer}"))?;
-        *value=match value {Value::Number(_)=>json!(2),_=>json!("changed-native-evidence")};
-        if let Ok((left,right))=common::parity::context::pair(&raw,&changed,&budget){assert_ne!(left,right,"{pointer}");}
+fn context_fallback_comparison_retains_evidence_and_rejects_orphaned_or_unearned_identity_changes()
+-> Result<()> {
+    let (budget, raw) = authenticated_fallback_case(1)?;
+    let (_, later) = authenticated_fallback_case(2)?;
+    let (left, right) = common::parity::context::pair(&raw, &later, &budget)?;
+    assert_eq!(left, right);
+    for pointer in [
+        "/records/0/scope/authorization",
+        "/records/0/canonical_result/hits/0/text",
+        "/assessment/coverage/reason",
+        "/work/calls",
+    ] {
+        let mut changed = raw.clone();
+        let value = changed
+            .pointer_mut(pointer)
+            .with_context(|| format!("native tamper case pointer {pointer}"))?;
+        *value = match value {
+            Value::Number(_) => json!(2),
+            _ => json!("changed-native-evidence"),
+        };
+        if let Ok((left, right)) = common::parity::context::pair(&raw, &changed, &budget) {
+            assert_ne!(left, right, "{pointer}");
+        }
     }
-    let mut rebound=airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&later,&budget)?;
-    let prior=rebound.records[0].id;let replacement=Sha256Digest::from_bytes([0xee;32]);rebound.records[0].id=replacement;
-    for paragraph in &mut rebound.paragraphs {for id in &mut paragraph.evidence {if *id==prior{*id=replacement;}}}
-    for event in &mut rebound.assessment_history {for unit in &mut event.basis.source_units_presented {if unit.record==prior{unit.record=replacement;}}}
+    let mut rebound =
+        airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&later, &budget)?;
+    let prior = rebound.records[0].id;
+    let replacement = Sha256Digest::from_bytes([0xee; 32]);
+    rebound.records[0].id = replacement;
+    for paragraph in &mut rebound.paragraphs {
+        for id in &mut paragraph.evidence {
+            if *id == prior {
+                *id = replacement;
+            }
+        }
+    }
+    for event in &mut rebound.assessment_history {
+        for unit in &mut event.basis.source_units_presented {
+            if unit.record == prior {
+                unit.record = replacement;
+            }
+        }
+        if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
+            advice: Some(advice),
+            ..
+        } = &mut event.result
+        {
+            for id in &mut advice.evidence {
+                if *id == prior {
+                    *id = replacement;
+                }
+            }
+        }
+    }
     rebound.validate(&budget)?;
-    assert!(common::parity::context::pair(&raw,&serde_json::to_value(rebound)?,&budget).is_err(),
-        "changed allowed header plus arbitrary changed digest/consistent references must fail native hash replay");
-    let mut changed=raw.clone();changed["records"][0]["canonical_result"]["future"]=json!({"request_id":"changed-evidence-owned","elapsed_ms":17});
-    assert!(common::parity::context::pair(&raw,&changed,&budget).is_err(),"unknown future bytes must remain bound by native digest");
-    let mut wire=raw.clone();wire["future"]=json!({"request_id":"evidence-owned","elapsed_ms":17});
-    let mut changed=wire.clone();changed["future"]["request_id"]=json!("different-evidence-owned");
-    let (left,right)=common::parity::context::pair(&wire,&changed,&budget)?;assert_ne!(left,right,"unknown outer fields cannot disappear");
-    let native=json!({"resultType":"complete","content":[]});let legacy=json!({"content":[]});
-    let (left,right)=common::parity::context::negotiated_mcp_pair(&native,&legacy,"2025-11-25")?;assert_eq!(left,right);
-    assert!(common::parity::context::negotiated_mcp_pair(&json!({"resultType":"future"}),&legacy,"2025-11-25").is_err());
-    assert_ne!(common::parity::context::negotiated_mcp_pair(&native,&legacy,"2026-07-28")?.0,legacy);
+    assert!(
+        common::parity::context::pair(&raw, &serde_json::to_value(rebound)?, &budget).is_err(),
+        "changed allowed header plus arbitrary changed digest/consistent references must fail native hash replay"
+    );
+    let mut changed = raw.clone();
+    changed["records"][0]["canonical_result"]["future"] =
+        json!({"request_id":"changed-evidence-owned","elapsed_ms":17});
+    assert!(
+        common::parity::context::pair(&raw, &changed, &budget).is_err(),
+        "unknown future bytes must remain bound by native digest"
+    );
+    let mut wire = raw.clone();
+    wire["future"] = json!({"request_id":"evidence-owned","elapsed_ms":17});
+    let mut changed = wire.clone();
+    changed["future"]["request_id"] = json!("different-evidence-owned");
+    let (left, right) = common::parity::context::pair(&wire, &changed, &budget)?;
+    assert_ne!(left, right, "unknown outer fields cannot disappear");
+    let native = json!({"resultType":"complete","content":[]});
+    let legacy = json!({"content":[]});
+    let (left, right) =
+        common::parity::context::negotiated_mcp_pair(&native, &legacy, "2025-11-25")?;
+    assert_eq!(left, right);
+    assert!(
+        common::parity::context::negotiated_mcp_pair(
+            &json!({"resultType":"future"}),
+            &legacy,
+            "2025-11-25"
+        )
+        .is_err()
+    );
+    assert_ne!(
+        common::parity::context::negotiated_mcp_pair(&native, &legacy, "2026-07-28")?.0,
+        legacy
+    );
     Ok(())
 }
 
-fn current_answer_request()->Result<(airk_core::arbiter::Budget,Value)>{
-    let request=airk_core::arbiter::context_action::ContextRequestV2{
-        schema:airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),question:"boundaryneedle".into(),budget:Default::default()};
-    request.validate()?;let budget=request.budget.clone();let mut arguments=serde_json::to_value(request)?;
-    arguments["response_mode"]=json!("full");Ok((budget,arguments))
+fn current_answer_request() -> Result<(airk_core::arbiter::Budget, Value)> {
+    let request = airk_core::arbiter::context_action::ContextRequestV2 {
+        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+        question: "boundaryneedle".into(),
+        budget: Default::default(),
+    };
+    request.validate()?;
+    let budget = request.budget.clone();
+    let mut arguments = serde_json::to_value(request)?;
+    arguments["response_mode"] = json!("full");
+    Ok((budget, arguments))
 }
-async fn context_pipe_once(f:&Fixture,selection:airk_core::service::ToolSelection,arguments:&Value)->Result<Value>{
-    let response=airk_cli::service_runtime::request(&f.control,ControlMethod::ToolsCall{
-        tool:"airk_answer".into(),arguments:arguments.as_object().context("Answer arguments")?.clone(),selection,
-        response_mode:airk_core::service::ToolResponseMode::Full,usage_client:airk_core::usage::ClientFamily::Unknown,read_attempt:None}).await?;
-    let ControlResponse::ToolResult{result}=response else{anyhow::bail!("finite Answer refusal was not replayed: {}",serde_json::to_string(&response)?)};
-    ensure!(result["isError"]!=true,"finite Answer error was not replayed: {result}");Ok(result)
+
+fn whole_verification_comparison_fixture(
+    header: u8,
+) -> Result<(airk_core::arbiter::Budget, Value)> {
+    use airk_core::{combined_context::*, verification::*};
+    let ids = [
+        IndexId::from_identity(Incarnation::from_bytes([1; 16])),
+        IndexId::from_identity(Incarnation::from_bytes([2; 16])),
+    ];
+    let authority = Sha256Digest::from_bytes([8; 32]);
+    let (budget, _) = authenticated_fallback_case(header)?;
+    let allowances =
+        initial_allocations(Incarnation::from_bytes([9; 16]), authority, &ids, &budget)?;
+    let mut members = Vec::new();
+    let mut reports = Vec::new();
+    let mut proofs = Vec::new();
+    let mut publications = Vec::new();
+    let mut used = Resources::default();
+    let mut bindings = Vec::new();
+    for (position, index) in ids.iter().copied().enumerate() {
+        let (_, mut raw) =
+            authenticated_fallback_case_in_index(header + u8::try_from(position)?, Some(index))?;
+        raw["applications"][0]["availability"] = json!("failed");
+        raw["applications"][0]["profile"] =
+            raw["assessment_history"][0]["result"]["advice"]["profile"].clone();
+        if position == 1 {
+            raw["assessment_history"][0]["ordinal"] = json!(3);
+        }
+        let packet: airk_core::arbiter::context_action::ContextResponseV2 =
+            serde_json::from_value(raw.clone())?;
+        bindings.push(
+            ContextDeliveryBinding::from_packet(&packet)?.context("native known-work binding")?,
+        );
+        let work = Resources::from_packet(&packet)?;
+        used = used.checked_add(&work)?;
+        reports.push(PartitionReport {
+            index_id: index,
+            allowance: allowances[position].clone(),
+            outcome: PartitionOutcome::Known {
+                used: work,
+                assessment_ordinals: vec![1],
+                read_depth: 0,
+                peak_fanout: 0,
+            },
+        });
+        if position == 1
+            && let PartitionOutcome::Known {
+                assessment_ordinals,
+                ..
+            } = &mut reports[position].outcome
+        {
+            *assessment_ordinals = vec![3];
+        }
+        publications
+            .push(json!({"index_id":index,"publication":packet.assessment.scope.publication}));
+        members.push(json!({"index_id":index,"result":raw}));
+        let mut own = json!({"steps":[{"result":raw}],"future_owner":{"preserved":[1,2,3]}});
+        let receipt = VerificationReceipt {
+            schema: "airk.saved-source-verification/1".into(),
+            method: "sha256-full-saved-source/1".into(),
+            mode: VerificationMode::Report,
+            status: "unverified".into(),
+            scope_digest: authority,
+            selection_digest: airk_kernel::verification::selection_digest(&own)?,
+            observed_from_unix_ms: u64::from(header),
+            observed_to_unix_ms: u64::from(header) + 1,
+            publication_fence: "current".into(),
+            inventory_complete: true,
+            all_references_accounted: true,
+            source_rows_omitted: 1,
+            requirements_satisfied: Some(false),
+            counts: VerificationCounts {
+                references: Some(1),
+                references_lower_bound: 1,
+                requested_sources: Some(1),
+                requested_sources_lower_bound: 1,
+                unchecked_sources: Some(1),
+                ..Default::default()
+            },
+            limits: VerificationBudget {
+                mode: VerificationMode::Report,
+                max_sources: 4,
+                max_bytes: 8388608,
+                deadline_ms: 900,
+            }
+            .into(),
+            origins: Vec::new(),
+            sources: Vec::new(),
+            qualifications: Vec::new(),
+            error: None,
+            references: vec![VerifiedReference {
+                id: "retained-reference".into(),
+                source_id: authority,
+                result_pointer: "/steps/0/result/records/0/canonical_result/hits/0/citation".into(),
+                kind: "citation".into(),
+            }],
+        };
+        own["source_verification"] = serde_json::to_value(receipt)?;
+        proofs.push(json!({"index_id":index,"result":own,"allocation":VerificationAllocation {max_sources:4,max_bytes:8388608,deadline_ms:1000},
+            "reference_bindings":[{"member_pointer":"/steps/0/result","result_pointer":format!("/members/{position}/result")}]}));
+    }
+    let summary = CombinedContextSummary {
+        schema: SUMMARY_SCHEMA.into(),
+        attempt: Incarnation::from_bytes([9; 16]),
+        selection: authority,
+        budget: budget.clone(),
+        members: reports,
+        known_used: used,
+        unknown_held: Resources::default(),
+        termination: Termination::Complete,
+        delivery_bindings: bindings,
+    };
+    let projection = json!({"schema":"airk.combined-read/1","members":members,"context":summary,
+        "publication_vector":{"authority":authority,"observed_from_unix_ms":1,"observed_to_unix_ms":2,"members":publications},
+        "member_verification":{"schema":"airk.combined-verification/1","scope_identity":authority,"members":proofs,"partial":true,"error":null}});
+    airk_core::verification::validate_projection(&projection)?;
+    context_delivery_bindings(&projection)?;
+    Ok((budget, projection))
 }
-fn assert_context_envelopes(label:&str,left:&Value,right:&Value,budget:&airk_core::arbiter::Budget,mcp_protocol:Option<&str>)->Result<()>{
-    let projected=mcp_protocol.map(|protocol|common::parity::context::negotiated_mcp_pair(left,right,protocol)).transpose()?;
-    let (left,right)=projected.as_ref().map_or((left,right),|(left,right)|(left,right));
-    let left_body=body(left)?;let right_body=body(right)?;
-    let (a,b)=if left_body["schema"]=="airk.combined-read/1" || right_body["schema"]=="airk.combined-read/1" {
-        ensure!(left_body["schema"]==right_body["schema"],"Answer scope shape differs");
-        let mut a=current_body_copy(&left_body,false)?;let mut b=current_body_copy(&right_body,false)?;
-        let left_members=a["members"].as_array().context("Answer members")?.clone();
-        let right_members=b["members"].as_array().context("Answer members")?.clone();
-        ensure!(left_members.len()==right_members.len(),"Answer member counts differ");
-        let indexes=left_members.iter().map(|member|serde_json::from_value::<IndexId>(member["index_id"].clone())).collect::<std::result::Result<Vec<_>,_>>()?;
-        for value in [&mut a,&mut b] {
-            let summary:airk_core::combined_context::CombinedContextSummary=serde_json::from_value(value["context"].clone())?;
+
+#[test]
+fn whole_answer_verification_comparison_authenticates_duplicate_packets_and_keeps_native_proof_data()
+-> Result<()> {
+    let (budget, left) = whole_verification_comparison_fixture(1)?;
+    let (_, mut right) = whole_verification_comparison_fixture(3)?;
+    let mut missing = left.clone();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("member_verification");
+    for mode in [
+        airk_core::verification::VerificationMode::Report,
+        airk_core::verification::VerificationMode::Require,
+    ] {
+        let controls = airk_core::verification::VerificationControls {
+            verification: Some(mode),
+            ..Default::default()
+        };
+        assert!(
+            common::parity::context::whole_verification(&missing, &missing, &budget, controls)
+                .is_err()
+        );
+        let mut null = missing.clone();
+        null["member_verification"] = Value::Null;
+        assert!(
+            common::parity::context::whole_verification(&null, &null, &budget, controls).is_err()
+        );
+    }
+    let off = airk_core::verification::VerificationControls::off();
+    assert!(
+        common::parity::context::whole_verification(&missing, &missing, &budget, off)?.is_none()
+    );
+    assert!(common::parity::context::whole_verification(&left, &left, &budget, off).is_err());
+    for member in right["member_verification"]["members"]
+        .as_array_mut()
+        .unwrap()
+    {
+        member["allocation"]["deadline_ms"] = json!(800);
+        member["result"]["source_verification"]["limits"]["deadline_ms"] = json!(700);
+        member["result"]["source_verification"]["limits"]["effective_deadline_ms"] = json!(600);
+    }
+    let project = |raw: &Value| -> Result<Value> {
+        let mut normalized = raw.clone();
+        for position in 0..2 {
+            let summary: airk_core::combined_context::CombinedContextSummary =
+                serde_json::from_value(raw["context"].clone())?;
+            let allowance = summary.members[position].allowance.as_ref().unwrap();
+            let mut child = budget.clone();
+            child.calls = allowance.resources.calls;
+            child.input_tokens = allowance.resources.input_tokens.max(1);
+            child.candidates = allowance.resources.candidates;
+            child.max_bytes = allowance.resources.bytes;
+            normalized["members"][position]["result"] = common::parity::context::pair(
+                &raw["members"][position]["result"],
+                &raw["members"][position]["result"],
+                &child,
+            )?
+            .0;
+        }
+        normalized["member_verification"] = common::parity::context::whole_verification(
+            raw,
+            &normalized,
+            &budget,
+            Default::default(),
+        )?
+        .unwrap();
+        Ok(normalized)
+    };
+    let a = project(&left)?;
+    let b = project(&right)?;
+    assert_eq!(a, b);
+    assert_eq!(
+        left["member_verification"]["members"][0]["result"]["source_verification"]["source_rows_omitted"],
+        1
+    );
+    for pointer in [
+        "/member_verification/members/0/result/source_verification/scope_digest",
+        "/member_verification/members/0/result/source_verification/counts/bytes_read",
+        "/member_verification/members/0/result/future_owner",
+    ] {
+        let mut changed = right.clone();
+        if pointer.ends_with("scope_digest") {
+            *changed.pointer_mut(pointer).unwrap() = json!("ff".repeat(32));
+        } else if pointer.ends_with("future_owner") {
+            *changed.pointer_mut(pointer).unwrap() = json!({"changed":true});
+        } else {
+            changed["member_verification"]["members"][0]["result"]["source_verification"]["counts"]
+                ["bytes_read"] = json!(1);
+        }
+        if let Ok(value) = project(&changed) {
+            assert_ne!(a, value);
+        }
+    }
+    let mut future = right.clone();
+    future["member_verification"]["members"][0]["result"]["future_owner"] =
+        json!({"legitimate_new_data":true});
+    let own = &mut future["member_verification"]["members"][0]["result"];
+    own["source_verification"]["selection_digest"] =
+        serde_json::to_value(airk_kernel::verification::selection_digest(own)?)?;
+    assert_ne!(
+        a,
+        project(&future)?,
+        "validly bound unknown owner data must remain compared"
+    );
+    let mut changed = right.clone();
+    changed["member_verification"]["members"][0]["result"]["steps"][0]["result"]["question"] =
+        json!("changed duplicate");
+    assert!(project(&changed).is_err());
+    let mut changed = right.clone();
+    changed["member_verification"]["members"][0]["allocation"]["max_bytes"] = json!(8388609);
+    assert!(project(&changed).is_err());
+    let mut changed = right;
+    changed["member_verification"]["members"][0]["result"]["source_verification"]["limits"]["deadline_ms"] =
+        json!(801);
+    assert!(project(&changed).is_err());
+    Ok(())
+}
+
+#[test]
+fn disclosed_fallback_prefix_replay_keeps_omissions_and_refuses_fake_counts_or_nonprefix_records()
+-> Result<()> {
+    let (budget, raw) = authenticated_fallback_case(1)?;
+    let (_, later) = authenticated_fallback_case(2)?;
+    let disclose = |mut value: Value| -> Result<Value> {
+        value["omitted_count"] = json!(1);
+        value["candidate_count"] = json!(2);
+        value["work"]["calls"] = json!(2);
+        value["work"]["bytes"] =
+            json!(serde_json::to_vec(&value["records"][0]["canonical_result"])?.len());
+        Ok(value)
+    };
+    // Only the retained owner-generated initial record is supplied. No body
+    // or identity is invented for the explicitly disclosed omitted suffix.
+    let omitted = disclose(raw.clone())?;
+    let later_omitted = disclose(later)?;
+    let (left, right) = common::parity::context::pair(&omitted, &later_omitted, &budget)?;
+    assert_eq!(left, right);
+    assert_eq!(left["omitted_count"], 1);
+    assert_eq!(left["candidate_count"], 2);
+    for (pointer, value) in [
+        ("/candidate_count", json!(3)),
+        ("/work/calls", json!(1)),
+        ("/work/bytes", json!(0)),
+    ] {
+        let mut changed = omitted.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            common::parity::context::pair(&omitted, &changed, &budget).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut packet =
+        airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&raw, &budget)?;
+    let now = Instant::now();
+    let mut owner = airk_kernel::arbiter::Gathering::new(
+        airk_core::arbiter::ContextRequest {
+            schema: airk_core::arbiter::REQUEST_SCHEMA.into(),
+            question: packet.question.clone(),
+            budget: budget.clone(),
+        },
+        packet.assessment.scope.clone(),
+        packet.applications[0].clone(),
+        now,
+    )?;
+    let canonical = packet.records[0].canonical_result.clone();
+    owner.next(now)?.context("initial owning dispatch")?;
+    owner.observe(Ok(canonical.clone()), now)?;
+    owner.next(now)?.context("next owning dispatch")?;
+    owner.observe(Ok(canonical), now)?;
+    let native = owner.finish(now)?;
+    ensure!(
+        native.records.len() == 2,
+        "negative controls need two actual owner-generated records"
+    );
+    packet.records = native.records;
+    packet.paragraphs = native.paragraphs;
+    packet.work = native.work;
+    packet.candidate_count = 2;
+    packet.omitted_count = 0;
+    packet.assessment_history.clear();
+    packet.assessment.coverage =
+        airk_core::arbiter::context_action::PartitionCoverage::Unassessed {
+            reason: airk_core::arbiter::context_action::AssessmentUnavailable::Disabled,
+        };
+    packet.stop = airk_core::arbiter::context_action::PartitionTermination::NoProgress;
+    packet.assessment.termination = packet.stop;
+    packet.gaps = vec![airk_core::arbiter::Gap::Unsupported];
+    packet.validate(&budget)?;
+    let full = serde_json::to_value(&packet)?;
+    common::parity::context::pair(&full, &full, &budget)?;
+    let mut reordered = packet.clone();
+    reordered.records.swap(0, 1);
+    reordered.validate(&budget)?;
+    assert!(
+        common::parity::context::pair(&full, &serde_json::to_value(reordered)?, &budget).is_err()
+    );
+    packet.records.remove(0);
+    packet.paragraphs.clear();
+    packet.candidate_count = 2;
+    packet.omitted_count = 1;
+    packet.validate(&budget)?;
+    assert!(
+        common::parity::context::pair(&full, &serde_json::to_value(packet)?, &budget).is_err(),
+        "skipped initial must fail owning replay even with consistent disclosure"
+    );
+    Ok(())
+}
+async fn context_pipe_once(
+    f: &Fixture,
+    selection: airk_core::service::ToolSelection,
+    arguments: &Value,
+) -> Result<Value> {
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::ToolsCall {
+            tool: "airk_answer".into(),
+            arguments: arguments.as_object().context("Answer arguments")?.clone(),
+            selection,
+            response_mode: airk_core::service::ToolResponseMode::Full,
+            usage_client: airk_core::usage::ClientFamily::Unknown,
+            read_attempt: None,
+        },
+    )
+    .await?;
+    let ControlResponse::ToolResult { result } = response else {
+        anyhow::bail!(
+            "finite Answer refusal was not replayed: {}",
+            serde_json::to_string(&response)?
+        )
+    };
+    if result["isError"] == true {
+        let raw = airk_host::service_logs::export_raw(&f.control)
+            .map(|bytes| json!({"bytes":bytes}))
+            .unwrap_or_else(|error| json!({"unavailable":error.to_string()}));
+        let path = save_replies(
+            "finite Answer native diagnostic",
+            &json!({"result":result,"raw_service_logs":raw}),
+        )?;
+        anyhow::bail!(
+            "finite Answer error was not replayed: {result}; raw native diagnostic {}",
+            path.display()
+        );
+    }
+    Ok(result)
+}
+fn assert_context_envelopes(
+    label: &str,
+    left: &Value,
+    right: &Value,
+    arguments: &Value,
+    mcp_protocol: Option<&str>,
+) -> Result<()> {
+    // Capture the complete originals before any validator/projection executes;
+    // write only on failure, while the native fixture is still alive.
+    let originals =
+        json!({"left":left,"right":right,"arguments":arguments,"right_mcp_protocol":mcp_protocol});
+    match compare_context_envelopes(label, left, right, arguments, mcp_protocol) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let path = save_replies(label, &originals)?;
+            Err(error)
+                .with_context(|| format!("full raw Answer pair retained at {}", path.display()))
+        }
+    }
+}
+fn compare_context_envelopes(
+    label: &str,
+    left: &Value,
+    right: &Value,
+    arguments: &Value,
+    mcp_protocol: Option<&str>,
+) -> Result<()> {
+    let parsed: airk_mcp::AnswerArgs = serde_json::from_value(arguments.clone())?;
+    parsed.request.validate()?;
+    let budget = &parsed.request.budget;
+    let verification = parsed.verification.controls();
+    let projected = mcp_protocol
+        .map(|protocol| common::parity::context::negotiated_mcp_pair(left, right, protocol))
+        .transpose()?;
+    let (left, right) = projected
+        .as_ref()
+        .map_or((left, right), |(left, right)| (left, right));
+    let left_body = body(left)?;
+    let right_body = body(right)?;
+    let (a, b) = if left_body["schema"] == "airk.combined-read/1"
+        || right_body["schema"] == "airk.combined-read/1"
+    {
+        ensure!(
+            left_body["schema"] == right_body["schema"],
+            "Answer scope shape differs"
+        );
+        let mut a = current_body_copy(&left_body, false)?;
+        let mut b = current_body_copy(&right_body, false)?;
+        let left_members = a["members"].as_array().context("Answer members")?.clone();
+        let right_members = b["members"].as_array().context("Answer members")?.clone();
+        ensure!(
+            left_members.len() == right_members.len(),
+            "Answer member counts differ"
+        );
+        let indexes = left_members
+            .iter()
+            .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for value in [&mut a, &mut b] {
+            let summary: airk_core::combined_context::CombinedContextSummary =
+                serde_json::from_value(value["context"].clone())?;
             summary.validate(&indexes)?;
-            ensure!(serde_json::to_value(&summary.budget)?==serde_json::to_value(budget)?,"original Answer budget changed in summary");
-            value["context"]["attempt"]=json!("<original-context-attempt>");
-            for (position,member) in summary.members.iter().enumerate(){
-                if member.allowance.is_some(){value["context"]["members"][position]["allowance"]["attempt"]=json!("<original-context-attempt>");}
+            ensure!(
+                serde_json::to_value(&summary.budget)? == serde_json::to_value(budget)?,
+                "original Answer budget changed in summary"
+            );
+            value["context"]["attempt"] = json!("<original-context-attempt>");
+            for (position, member) in summary.members.iter().enumerate() {
+                if member.allowance.is_some() {
+                    value["context"]["members"][position]["allowance"]["attempt"] =
+                        json!("<original-context-attempt>");
+                }
             }
         }
-        for (position,(lhs,rhs)) in left_members.iter().zip(&right_members).enumerate(){
-            ensure!(lhs["index_id"]==rhs["index_id"],"Answer member order/identity differs");
-            let left_packet=member_body(&left_body,&left_body["members"][position])?;
-            let right_packet=member_body(&right_body,&right_body["members"][position])?;
-            let left_summary:airk_core::combined_context::CombinedContextSummary=serde_json::from_value(left_body["context"].clone())?;
-            let right_summary:airk_core::combined_context::CombinedContextSummary=serde_json::from_value(right_body["context"].clone())?;
-            let left_allowance=left_summary.members[position].allowance.as_ref().context("queried member allowance")?;
-            let right_allowance=right_summary.members[position].allowance.as_ref().context("queried member allowance")?;
-            ensure!(left_allowance.resources==right_allowance.resources,"Answer child reservations differ");
-            let mut child_budget=left_allowance.parent_budget.clone();
-            child_budget.calls=left_allowance.resources.calls;child_budget.input_tokens=left_allowance.resources.input_tokens.max(1);
-            child_budget.candidates=left_allowance.resources.candidates;child_budget.max_bytes=left_allowance.resources.bytes;
-            let (left_packet,right_packet)=common::parity::context::pair(&left_packet,&right_packet,&child_budget)?;
-            a["members"][position]["result"]=left_packet;b["members"][position]["result"]=right_packet;
+        for (position, (lhs, rhs)) in left_members.iter().zip(&right_members).enumerate() {
+            ensure!(
+                lhs["index_id"] == rhs["index_id"],
+                "Answer member order/identity differs"
+            );
+            let left_packet = member_body(&left_body, &left_body["members"][position])?;
+            let right_packet = member_body(&right_body, &right_body["members"][position])?;
+            let left_summary: airk_core::combined_context::CombinedContextSummary =
+                serde_json::from_value(left_body["context"].clone())?;
+            let right_summary: airk_core::combined_context::CombinedContextSummary =
+                serde_json::from_value(right_body["context"].clone())?;
+            let left_allowance = left_summary.members[position]
+                .allowance
+                .as_ref()
+                .context("queried member allowance")?;
+            let right_allowance = right_summary.members[position]
+                .allowance
+                .as_ref()
+                .context("queried member allowance")?;
+            ensure!(
+                left_allowance.resources == right_allowance.resources,
+                "Answer child reservations differ"
+            );
+            let mut child_budget = left_allowance.parent_budget.clone();
+            child_budget.calls = left_allowance.resources.calls;
+            child_budget.input_tokens = left_allowance.resources.input_tokens.max(1);
+            child_budget.candidates = left_allowance.resources.candidates;
+            child_budget.max_bytes = left_allowance.resources.bytes;
+            let (left_packet, right_packet) =
+                common::parity::context::pair(&left_packet, &right_packet, &child_budget)?;
+            a["members"][position]["result"] = left_packet;
+            b["members"][position]["result"] = right_packet;
         }
-        (common::parity::context::replace_body(left,a)?,common::parity::context::replace_body(right,b)?)
-    } else {common::parity::context::envelopes(left,right,budget)?};
-    if let Some(difference)=first_difference(&a,&b,""){
-        let path=save_replies(label,&json!({"left":left,"right":right}))?;
-        anyhow::bail!("{label}: {difference}; full raw replies: {}",path.display());
+        if let Some(proof) =
+            common::parity::context::whole_verification(&left_body, &a, budget, verification)?
+        {
+            a["member_verification"] = proof;
+        }
+        if let Some(proof) =
+            common::parity::context::whole_verification(&right_body, &b, budget, verification)?
+        {
+            b["member_verification"] = proof;
+        }
+        (
+            common::parity::context::replace_body(left, a)?,
+            common::parity::context::replace_body(right, b)?,
+        )
+    } else {
+        common::parity::context::envelopes(left, right, budget)?
+    };
+    if let Some(difference) = first_difference(&a, &b, "") {
+        anyhow::bail!("{label}: {difference}");
     }
     Ok(())
 }
 #[tokio::test]
-async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results()->Result<()>{
-    let f=Fixture::new(true)?;let _service=f.start().await?;
-    let selected=ScopedConnectRequest{schema:1,context_key:f.session.context_key,namespace:f.session.namespace,
-        expected_catalog_revision:f.session.expected_catalog_revision,grant_id:f.session.grant_id,expected_grant_revision:f.session.expected_grant_revision,
-        index_id:f.indexes[0],project_ids:vec![f.projects[0]]};
-    let (budget,arguments)=current_answer_request()?;
-    let reference=context_pipe_once(&f,airk_core::service::ToolSelection::Catalog{request:selected.clone()},&arguments).await?;
-    let session=serde_json::to_string(&selected)?;let text=arguments.to_string();
-    let (code,stdout,stderr)=airkctl_full(&f,&["--catalog-session",&session,"tools","call","airk_answer","--args",&text]).await?;
-    ensure!(code==0,"finite CLI Answer failed without replay: {stderr}");let cli:Value=serde_json::from_str(&stdout)?;
-    assert_context_envelopes("current Answer single CLI",&reference,&cli,&budget,None)?;
-    let mut mcp=McpSession::start_scoped(&f,&selected)?;
-    let reply=mcp.request(2,"tools/call",json!({"name":"answer","arguments":arguments}))?;
-    ensure!(reply.get("error").is_none(),"MCP Answer failed without replay: {reply}");
-    assert_context_envelopes("current Answer single HTTPS MCP",&reference,&reply["result"],&budget,Some(&mcp.negotiated_protocol))?;
+async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results()
+-> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let selected = ScopedConnectRequest {
+        schema: 1,
+        context_key: f.session.context_key,
+        namespace: f.session.namespace,
+        expected_catalog_revision: f.session.expected_catalog_revision,
+        grant_id: f.session.grant_id,
+        expected_grant_revision: f.session.expected_grant_revision,
+        index_id: f.indexes[0],
+        project_ids: vec![f.projects[0]],
+    };
+    let (_budget, arguments) = current_answer_request()?;
+    let reference = context_pipe_once(
+        &f,
+        airk_core::service::ToolSelection::Catalog {
+            request: selected.clone(),
+        },
+        &arguments,
+    )
+    .await?;
+    let session = serde_json::to_string(&selected)?;
+    let text = arguments.to_string();
+    let (code, stdout, stderr) = airkctl_full(
+        &f,
+        &[
+            "--catalog-session",
+            &session,
+            "tools",
+            "call",
+            "airk_answer",
+            "--args",
+            &text,
+        ],
+    )
+    .await?;
+    ensure!(
+        code == 0,
+        "finite CLI Answer failed without replay: {stderr}"
+    );
+    let cli: Value = serde_json::from_str(&stdout)?;
+    assert_context_envelopes(
+        "current Answer single CLI",
+        &reference,
+        &cli,
+        &arguments,
+        None,
+    )?;
+    let mut mcp = McpSession::start_scoped(&f, &selected)?;
+    let reply = mcp.request(
+        2,
+        "tools/call",
+        json!({"name":"answer","arguments":arguments}),
+    )?;
+    ensure!(
+        reply.get("error").is_none(),
+        "MCP Answer failed without replay: {reply}"
+    );
+    assert_context_envelopes(
+        "current Answer single HTTPS MCP",
+        &reference,
+        &reply["result"],
+        &arguments,
+        Some(&mcp.negotiated_protocol),
+    )?;
     f.assert_sources_unchanged()
 }
 
 #[tokio::test]
-async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets()->Result<()>{
-    let f=Fixture::new(true)?;let _service=f.start().await?;let (budget,arguments)=current_answer_request()?;
-    let reference=context_pipe_once(&f,airk_core::service::ToolSelection::Combined{request:f.session.clone(),project_ids:None,index_ids:None,member_availability:None},&arguments).await?;
-    let session=serde_json::to_string(&f.session)?;let text=arguments.to_string();
-    let (code,stdout,stderr)=airkctl_full(&f,&["--combined-session",&session,"tools","call","airk_answer","--args",&text]).await?;
-    ensure!(code==0,"many finite Answer failed without replay: {stderr}");
-    assert_context_envelopes("current Answer many CLI",&reference,&serde_json::from_str(&stdout)?,&budget,None)?;
-    let mut mcp=McpSession::start(&f)?;
-    let reply=mcp.request(2,"tools/call",json!({"name":"answer","arguments":arguments}))?;
-    ensure!(reply.get("error").is_none(),"many MCP Answer failed without replay: {reply}");
-    assert_context_envelopes("current Answer many HTTPS MCP",&reference,&reply["result"],&budget,Some(&mcp.negotiated_protocol))?;
-    let mut open=McpSession::start_selection(&f,airk_core::service_http::HttpSelection::Open{selection:airk_core::service_http::OpenHttpSelection{namespace:f.session.namespace}})?;
-    let connection=open.transport.connection.connection_id;
-    set_open_defaults(&f,connection,1,Some(vec![f.indexes[0],f.indexes[1]]),None).await?;
-    let reference=context_pipe_once(&f,open_selection(&[],&[],Some(connection)),&arguments).await?;
-    let connection=connection.to_string();
-    let (code,stdout,stderr)=airkctl_full(&f,&["tools","call","airk_answer","--connection",&connection,"--args",&text]).await?;
-    ensure!(code==0,"Open finite Answer failed without replay: {stderr}");
-    assert_context_envelopes("current Answer Open CLI",&reference,&serde_json::from_str(&stdout)?,&budget,None)?;
-    let reply=open.request(2,"tools/call",json!({"name":"answer","arguments":arguments}))?;
-    ensure!(reply.get("error").is_none(),"Open MCP Answer failed without replay: {reply}");
-    assert_context_envelopes("current Answer Open HTTPS MCP",&reference,&reply["result"],&budget,Some(&open.negotiated_protocol))?;
+async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let (_budget, arguments) = current_answer_request()?;
+    let reference = context_pipe_once(
+        &f,
+        airk_core::service::ToolSelection::Combined {
+            request: f.session.clone(),
+            project_ids: None,
+            index_ids: None,
+            member_availability: None,
+        },
+        &arguments,
+    )
+    .await?;
+    let session = serde_json::to_string(&f.session)?;
+    let text = arguments.to_string();
+    let (code, stdout, stderr) = airkctl_full(
+        &f,
+        &[
+            "--combined-session",
+            &session,
+            "tools",
+            "call",
+            "airk_answer",
+            "--args",
+            &text,
+        ],
+    )
+    .await?;
+    ensure!(
+        code == 0,
+        "many finite Answer failed without replay: {stderr}"
+    );
+    assert_context_envelopes(
+        "current Answer many CLI",
+        &reference,
+        &serde_json::from_str(&stdout)?,
+        &arguments,
+        None,
+    )?;
+    let mut mcp = McpSession::start(&f)?;
+    let reply = mcp.request(
+        2,
+        "tools/call",
+        json!({"name":"answer","arguments":arguments}),
+    )?;
+    ensure!(
+        reply.get("error").is_none(),
+        "many MCP Answer failed without replay: {reply}"
+    );
+    assert_context_envelopes(
+        "current Answer many HTTPS MCP",
+        &reference,
+        &reply["result"],
+        &arguments,
+        Some(&mcp.negotiated_protocol),
+    )?;
+    let mut open = McpSession::start_selection(
+        &f,
+        airk_core::service_http::HttpSelection::Open {
+            selection: airk_core::service_http::OpenHttpSelection {
+                namespace: f.session.namespace,
+            },
+        },
+    )?;
+    let connection = open.transport.connection.connection_id;
+    set_open_defaults(
+        &f,
+        connection,
+        1,
+        Some(vec![f.indexes[0], f.indexes[1]]),
+        None,
+    )
+    .await?;
+    let reference =
+        context_pipe_once(&f, open_selection(&[], &[], Some(connection)), &arguments).await?;
+    let connection = connection.to_string();
+    let (code, stdout, stderr) = airkctl_full(
+        &f,
+        &[
+            "tools",
+            "call",
+            "airk_answer",
+            "--connection",
+            &connection,
+            "--args",
+            &text,
+        ],
+    )
+    .await?;
+    ensure!(
+        code == 0,
+        "Open finite Answer failed without replay: {stderr}"
+    );
+    assert_context_envelopes(
+        "current Answer Open CLI",
+        &reference,
+        &serde_json::from_str(&stdout)?,
+        &arguments,
+        None,
+    )?;
+    let reply = open.request(
+        2,
+        "tools/call",
+        json!({"name":"answer","arguments":arguments}),
+    )?;
+    ensure!(
+        reply.get("error").is_none(),
+        "Open MCP Answer failed without replay: {reply}"
+    );
+    assert_context_envelopes(
+        "current Answer Open HTTPS MCP",
+        &reference,
+        &reply["result"],
+        &arguments,
+        Some(&open.negotiated_protocol),
+    )?;
     f.assert_sources_unchanged()
 }
 
 /// Pure validation of retained real transport outputs; never starts a service.
 #[test]
 #[ignore = "requires an explicitly retained current Answer transport pair"]
-fn retained_current_answer_pair_validates_full_transport_results()->Result<()>{
-    use sha2::{Digest,Sha256};
-    let path=std::env::var_os("AIRK_CONTEXT_PARITY_CAPTURE").context("retained Answer input path required")?;
-    let bytes=fs::read(path)?;let capture:Value=serde_json::from_slice(&bytes)?;
-    let arguments:airk_mcp::AnswerArgs=serde_json::from_value(capture["arguments"].clone())?;
+fn retained_current_answer_pair_validates_full_transport_results() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let path = std::env::var_os("AIRK_CONTEXT_PARITY_CAPTURE")
+        .context("retained Answer input path required")?;
+    let bytes = fs::read(path)?;
+    let capture: Value = serde_json::from_slice(&bytes)?;
+    let arguments: airk_mcp::AnswerArgs = serde_json::from_value(capture["arguments"].clone())?;
     arguments.request.validate()?;
-    ensure!(arguments.request.schema==airk_core::arbiter::context_action::REQUEST_SCHEMA_V2,"current /2 request required");
-    let protocol=capture.get("right_mcp_protocol").and_then(Value::as_str);
-    assert_context_envelopes("retained real Answer transport pair",&capture["left"],&capture["right"],&arguments.request.budget,protocol)?;
-    let owners:[(&str,&[u8]);8]=[
-        ("crates/airk-cli/tests/combined_reads.rs",include_bytes!("combined_reads.rs").as_slice()),
-        ("crates/airk-cli/tests/common/parity/context.rs",include_bytes!("common/parity/context.rs").as_slice()),
-        ("crates/airk-cli/tests/common/parity/strict.rs",include_bytes!("common/parity/strict.rs").as_slice()),
-        ("crates/airk-core/src/arbiter/context_action.rs",include_bytes!("../../airk-core/src/arbiter/context_action.rs").as_slice()),
-        ("crates/airk-core/src/combined_context.rs",include_bytes!("../../airk-core/src/combined_context.rs").as_slice()),
-        ("crates/airk-kernel/src/arbiter.rs",include_bytes!("../../airk-kernel/src/arbiter.rs").as_slice()),
-        ("crates/airk-mcp/src/lib.rs",include_bytes!("../../airk-mcp/src/lib.rs").as_slice()),
-        ("fixtures/split/arbiter/public_answer_cases.json",include_bytes!("../../../fixtures/split/arbiter/public_answer_cases.json").as_slice()),
+    ensure!(
+        arguments.request.schema == airk_core::arbiter::context_action::REQUEST_SCHEMA_V2,
+        "current /2 request required"
+    );
+    let protocol = capture.get("right_mcp_protocol").and_then(Value::as_str);
+    assert_context_envelopes(
+        "retained real Answer transport pair",
+        &capture["left"],
+        &capture["right"],
+        &capture["arguments"],
+        protocol,
+    )?;
+    let owners: [(&str, &[u8]); 8] = [
+        (
+            "crates/airk-cli/tests/combined_reads.rs",
+            include_bytes!("combined_reads.rs").as_slice(),
+        ),
+        (
+            "crates/airk-cli/tests/common/parity/context.rs",
+            include_bytes!("common/parity/context.rs").as_slice(),
+        ),
+        (
+            "crates/airk-cli/tests/common/parity/strict.rs",
+            include_bytes!("common/parity/strict.rs").as_slice(),
+        ),
+        (
+            "crates/airk-core/src/arbiter/context_action.rs",
+            include_bytes!("../../airk-core/src/arbiter/context_action.rs").as_slice(),
+        ),
+        (
+            "crates/airk-core/src/combined_context.rs",
+            include_bytes!("../../airk-core/src/combined_context.rs").as_slice(),
+        ),
+        (
+            "crates/airk-kernel/src/arbiter.rs",
+            include_bytes!("../../airk-kernel/src/arbiter.rs").as_slice(),
+        ),
+        (
+            "crates/airk-mcp/src/lib.rs",
+            include_bytes!("../../airk-mcp/src/lib.rs").as_slice(),
+        ),
+        (
+            "fixtures/split/arbiter/public_answer_cases.json",
+            include_bytes!("../../../fixtures/split/arbiter/public_answer_cases.json").as_slice(),
+        ),
     ];
-    let compiled_sources:std::collections::BTreeMap<_,_>=owners.into_iter().map(|(name,bytes)|(name,format!("{:x}",Sha256::digest(bytes)))).collect();
-    println!("AIRK_CONTEXT_PARITY_VALIDATED {}",json!({"schema":1,"input_sha256":format!("{:x}",Sha256::digest(&bytes)),
+    let compiled_sources: std::collections::BTreeMap<_, _> = owners
+        .into_iter()
+        .map(|(name, bytes)| (name, format!("{:x}", Sha256::digest(bytes))))
+        .collect();
+    println!(
+        "AIRK_CONTEXT_PARITY_VALIDATED {}",
+        json!({"schema":1,"input_sha256":format!("{:x}",Sha256::digest(&bytes)),
         "validator_sha256":airk_cli::runtime_pair::digest_file(&std::env::current_exe()?)?,"compiled_sources":compiled_sources,
-        "scope":"validated-unassessed-fallback-only","full_envelopes_equal":true}));
+        "scope":"validated-unassessed-fallback-only","full_envelopes_equal":true})
+    );
     Ok(())
 }

@@ -47,7 +47,10 @@ fn qualifications() -> Vec<VerificationQualification> {
     .collect()
 }
 
-fn selection_digest(value: &Value) -> Result<Sha256Digest> {
+/// Identity of the exact native evidence selection covered by a dated receipt.
+/// External full-result validators reuse this owner recipe before rebinding
+/// documented transport identities; this function performs no source reads.
+pub fn selection_digest(value: &Value) -> Result<Sha256Digest> {
     fn normalize(value: &mut Value) {
         let Some(fields) = value.as_object_mut() else {
             return;

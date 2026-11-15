@@ -1701,6 +1701,7 @@ impl<S: Session> Backend<S> {
         };
         let allocations = total.allocate(&before.resolved)?;
         let mut subsets = BTreeMap::<IndexId, MemberProjection>::new();
+        collect_member_projections(&projection, "", &mut subsets, 0)?;
         if let Some(steps) = projection.get("steps").and_then(Value::as_array) {
             ensure!(
                 steps.len() <= 72,

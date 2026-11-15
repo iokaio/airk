@@ -724,7 +724,15 @@ fn pack(response: &mut ContextResponseV2, scope: Option<&Value>, maximum: usize)
         if let Some(scope) = scope {
             value["scope_observation"] = scope.clone();
         }
-        if serde_json::to_vec(&*response)?.len() <= maximum
+        // Use the actual native annotators for the closed render projection.
+        // Usage request IDs are exactly sixteen bytes rendered as 32 hex chars.
+        value["request_id"] = json!("f".repeat(32));
+        airk_core::reply::ReplyDetail::annotate(
+            &mut value,
+            Some(airk_core::reply::ReplyDetail::Rich),
+        );
+        airk_core::guidance::annotate(&mut value);
+        if serde_json::to_vec(&value)?.len() <= maximum
             && serde_json::to_vec(&serde_json::to_string(&value)?)?
                 .len()
                 .saturating_add(4096)

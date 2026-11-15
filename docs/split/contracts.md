@@ -1951,3 +1951,153 @@ Negative controls change nested `future.request_id`, `future.cached`,
 `future.elapsed_ms`, stable digests/publication/revision and unknown interval
 children. Crossed/non-numeric intervals refuse. A field name alone never
 registers transport observation authority.
+
+
+### Windows pinned CMake compiler-process policy (2026-11-14)
+
+Windows pinned Ninja and static ORT configure commands require
+`-DCMAKE_POLICY_DEFAULT_CMP0141=NEW`,
+`-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=`,
+`-DCMAKE_POLICY_DEFAULT_CMP0137=NEW`, and
+`-DCMAKE_TRY_COMPILE_CONFIGURATION=Release`. These Release-only builds explicitly
+disable MSVC debug information in main objects and whole-project `try_compile`,
+including Ninja's enabled IPO check. Compiler probes use the production Release
+configuration so their linker does not request Debug PDB generation. An inert
+`/pdb` output filename alone is not a request to generate a PDB.
+The earlier Embedded setting emitted `/Z7` into every Release component: its
+natural complete build exceeded the unchanged two-GiB aggregate bound and does
+not qualify. Its artifacts and failed aggregate observation remain unchanged.
+The empty setting requires a fresh configure/build/aggregate chain; configure
+smokes alone do not qualify complete ORT production artifacts. IPO/LTO and
+compiler/SDK/runtime selection remain enabled and pinned. Actual argv, cache,
+bootstrap and static build receipts bind these choices; no receipt schema
+changes. Non-Windows argv is unchanged. The five-second owned-member cleanup
+bound, forced-cleanup refusal and two-GiB aggregate bound stay strict. Historical
+failed attempts remain failed evidence; corrected builds use fresh destinations.
+
+
+**Evidence tools hub (P6, 2026-11-14).** `search/tools` is an inert, addressable
+editor route under Search. Existing Code, Documents, Inspector, Checker, Indexed
+Changes, Review and Strategies/Planner routes and their command/deep-link owners
+survive unchanged. The hub opens those guided owners, never substitutes a generic
+tool runner, and does not acquire or broaden read authority. A shared display
+catalog exposes the same workflow names in the browser; browser-unavailable
+guided/editor operations are labeled with their limitation and an existing Help
+next step, rather than simulated as implemented.
+
+The existing editor webview UI state gains only `lastEvidenceRoute`, validated
+against the finite existing guided routes. It is a navigation preference, not an
+index, source, credential, result, request, grant or native persisted-state field.
+An in-memory return observation keeps the current panel's scroll/focus, and one
+last guided screen may remain mounted only while that same owner visits the hub.
+The hidden screen receives its frozen last props, so hub visits do not trigger
+background reads on new source observations. A project/selection-owner change
+unmounts it; returning uses current host state and the unchanged native fences.
+No native `airk-state/1`, I1/I2/I3 shape or indexed bytes change. Browser Search
+uses the secret-free `#search?view=tools` view route; its original query form and
+session scope remain distinct from the editor window and survive hub toggling.
+These routes and local retention do not qualify browser workflow migration,
+installed host parity or retirement of the older evidence drawer.
+
+
+### Guided Search presentation (P5/P6 UX04)
+
+`packages/admin/src/SearchScreen.tsx` survives the former `pages.tsx::Search`
+through its existing export. Browser and embedded shared presentation use the
+existing I3 catalog-page, scope-grant and canonical tool-call operations; no
+wire type or new authority is introduced. Named index sets and their nonempty
+memberships come from complete bounded catalog pages at one exact native
+namespace/revision. Incomplete, repeated, mismatched or foreign pages refuse
+selection. Names never become identifiers or grants. Publication/search readiness
+is explicitly unobserved until native reads report it. No sources are chosen
+implicitly. Choosing a set uses its current native membership; optional selected
+indexes only narrow it. Source scope is distinct from editor/agent authority.
+
+Pending, changed, failed, expired or replaced session/scope intent blocks local
+reads. Existing scope-grant calls settle in session order across page remounts;
+retired requests cannot mutate a replacement UI or license a new read. A returned
+read is associated with the selected scope only when its owning canonical
+`scope_observation.selection.scope_identity` and/or combined
+`publication_vector.authority` agrees exactly with the actual grant identity.
+Missing/conflicting evidence clears the local applied state, suppresses derived
+hit cards and retains the complete actual reply with an unverified-scope notice.
+It never causes an automatic retry/regrant. Error and readiness-unknown replies
+remain evidence, not proof that the requested scope was used.
+
+The ordinary form sends explicit query/mode/path/limit through canonical Search.
+Question mode uses the existing typed `/2` request and Workbench budget owner.
+The advanced view retains the generated complete tool/input schemas and sends
+arbitrary supported JSON objects without injected query/limit fields; guided
+fields have explicitly described precedence while all other parameters survive.
+Per-index limits, verification/status/budget inputs and opaque native cursor
+bytes remain intact. Cursor continuation is offered only for a generated tool
+schema supporting that input and uses the captured original request/scope.
+Complete native results/errors, unknown fields, source locations, warnings and
+truncation survive full JSON/Markdown copies/exports. Evidence is inert text.
+The generated manifest is reference data, never live readiness or authority.
+
+After returned-scope validation, browser WebCrypto materializes native metadata
+through the same pure codec used by the Node host. Original raw results remain
+immutable for copies/exports; derived cards use only validated logical bodies.
+The async proof rechecks current session/scope before and after each await and
+before publication. Proof custody is bound to the exact raw object and a full
+raw-graph snapshot, including inline and unknown fields. Sync reuse retains the
+original scope guard; another caller cannot rebind a stale or changed object.
+Repeated validation reuses that bounded original proof without callback chains. Unsupported metadata retains the raw response with an
+explicit notice, without guessed references or citations.
+
+Question results reuse the shared complete Answer presentation and navigation
+owners, including every combined member, assessments, advice, roles, gaps,
+work and original evidence. Citation DOM identities include original member
+position, so equal record hashes in different members remain distinct. Native
+member/publication/full-scope checks precede projection. Browser evidence
+buttons focus the complete retained record; they do not imply editor-open
+privileges. Failed/unqueried members and unsupported future packets remain
+visible with their complete original data rather than fabricated assessments.
+
+Scoped request-owner and synthetic-I3 Chromium tests establish presentation
+behavior only. The actual Search component consumes all three Rust-emitted
+combined Answer cases and a Rust-emitted context packet, preserving unknown
+fields and disambiguating equal record hashes by original member position.
+The direct-packet case adds an explicitly synthetic I3 scope observation; it
+does not establish native grant or transport qualification. Actual A2/native
+transport, packaged browser/editor, viewport and source-verification
+qualification remain separate.
+
+The existing Explorer catalog generation adds `search/tools` to the accepted
+inert suggestion-navigation route enum. `--write-mcp-catalog` derives that one
+catalog extension from the existing validators; tool names, request fields,
+result shapes, native authority and digest formats are unchanged. All retained
+guided route literals remain independently checked. Shared browser Search reuses
+the existing pure Workbench UI budget owner; its exact module and Search screen
+are allowlisted for that named bundled presentation, not host/session code.
+
+
+Static ORT compilation accepts `--parallel 2` (the unchanged default) or the
+explicit `--parallel 8` choice for hosts with measured CPU/RAM headroom. Pinned
+Ninja bootstrap remains at two workers. The existing build receipt records the
+exact worker count in its canonical argv; verification accepts only these two
+counts and compares the entire command, including targets/order, with no extra
+flags. This throughput choice does not change artifact-size, lifetime, cleanup,
+retry or qualification bounds and does not rehabilitate earlier failed runs.
+
+
+The single lossless native-metadata validator lives in
+`packages/ui/src/nativeMetadataCodec.ts`. Node injects standard SHA-256 while
+the browser suspends digest requests to native WebCrypto and reruns the same
+validator; no unverified intermediate graph is published. The Node API remains
+synchronous through generated runtime/declarations and thin existing facades.
+Native digest framing, canonical byte domains, strict unknown-codec refusals
+and all existing structural caps are unchanged. Source data is compared for
+proof custody without imposing metadata namespace or integer restrictions.
+The extension packager validates the captured runtime bytes against this exact
+source producer before staging; its two named host modules add no second
+browser validator. Complete original native replies remain copy/export authority.
+
+
+Windows owned-process receipts additionally retain bounded diagnostic PID/image
+observations (at most 128 identities and 1,024 image characters each), queried
+only on the same held handle after exact job-membership proof. Image lookup
+failure is diagnostic data. Names never exclude a member or alter waiting,
+cleanup, the original five-second bound or qualification. This additive
+observer does not turn earlier forced cleanup into natural settlement.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exactly-once local packets under one whole-selection native allowance.
 use super::*;
+mod verification;
 use airk_core::{
     arbiter::context_action::{AssessmentResult, ContextResponseV2},
     combined_context::{
@@ -8,6 +9,7 @@ use airk_core::{
         Termination, UnqueriedReason, initial_allocations,
     },
 };
+use verification::AnswerVerification;
 
 /// Bounded transient native-result custody; no Context or guard references.
 struct ContextResultCustody(std::sync::Mutex<(Vec<Value>, Option<Value>)>);
@@ -171,6 +173,26 @@ impl<S: Session> Backend<S> {
         let parsed: airk_mcp::AnswerArgs = serde_json::from_value(Value::Object(args.clone()))?;
         parsed.request.validate()?;
         let request = parsed.request;
+        let mut verification = AnswerVerification::parse(&args)?;
+        let delivery_reserve = airk_kernel::combined_reads::context_delivery_receipt_reserve()?;
+        if request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES) <= delivery_reserve {
+            return Ok(failure(
+                "context_delivery_admission_budget",
+                Some(false),
+                &self.selection.requested(),
+            ));
+        }
+        verification.reserve_delivery_bytes(delivery_reserve)?;
+        let attachment_reserve = verification.minimum_attachment_bytes()?;
+        if request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES)
+            <= delivery_reserve.saturating_add(attachment_reserve)
+        {
+            return Ok(failure(
+                "context_delivery_admission_budget",
+                Some(false),
+                &self.selection.requested(),
+            ));
+        }
         let ids: Vec<_> = before
             .members
             .iter()
@@ -185,9 +207,37 @@ impl<S: Session> Backend<S> {
         let context = context.capture_transport_attempt(captured)?;
         let mut allowances = initial_allocations(attempt, before.identity, &ids, &request.budget)?;
         let outer_bytes = request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES);
+        let byte_admission = CompositionRequest {
+            selection: before.resolved.clone(),
+            authority: before.identity,
+            budgets: SharedBudgets {
+                limit: 100,
+                max_bytes: outer_bytes
+                    .saturating_sub(delivery_reserve)
+                    .saturating_sub(attachment_reserve),
+                deadline_ms: request.budget.deadline_ms,
+                verification_max_sources: 0,
+                verification_max_bytes: 0,
+                verification_deadline_ms: 0,
+                limit_per_index: None,
+            },
+            observed_from_unix_ms: 0,
+            observed_to_unix_ms: 0,
+            index_names: before
+                .members
+                .iter()
+                .map(|member| (member.index.id, member.index.name.clone()))
+                .collect(),
+        };
+        let payload_bytes = airk_kernel::combined_reads::context_payload_admission(
+            &byte_admission,
+            &request.budget,
+            &allowances,
+            attachment_reserve,
+        )?;
         let admitted = allowances.iter().flatten().count();
         for (offset, allowance) in allowances.iter_mut().flatten().enumerate() {
-            let share = outer_bytes / admitted + usize::from(offset < outer_bytes % admitted);
+            let share = payload_bytes / admitted + usize::from(offset < payload_bytes % admitted);
             allowance.resources.bytes = allowance.resources.bytes.min(share);
             if allowance.resources.bytes < 1024 {
                 // No native dispatch may consume an invalid minimum allocation.
@@ -282,6 +332,7 @@ impl<S: Session> Backend<S> {
             let mut child_args = args.clone();
             child_args.insert("budget".into(), serde_json::to_value(&child_budget)?);
             child_args.insert("response_mode".into(), json!("full"));
+            verification.child_arguments(&mut child_args);
             let child = self.child(member)?;
             let started = Instant::now();
             let outcome = tokio::time::timeout_at(
@@ -327,6 +378,12 @@ impl<S: Session> Backend<S> {
                         );
                     }
                     let used = packet_work(&packet)?;
+                    let body_bytes =
+                        airk_kernel::combined_reads::context_member_payload_bytes(&value)?;
+                    ensure!(
+                        body_bytes <= allocation.resources.bytes,
+                        "unreserved native context body overhead"
+                    );
                     if let Some(binding) =
                         airk_core::combined_context::ContextDeliveryBinding::from_packet(&packet)?
                     {
@@ -361,6 +418,13 @@ impl<S: Session> Backend<S> {
                         PartitionOutcome::Unknown
                     } else {
                         reclaimed = unused(&allocation.resources, &used)?;
+                        // Native Work has its unchanged packet-accounting meaning.
+                        // Rendering metadata is separately consumed in the delivery
+                        // admission pool and cannot be reallocated to another body.
+                        reclaimed.bytes = allocation
+                            .resources
+                            .bytes
+                            .saturating_sub(used.bytes.max(body_bytes));
                         returned_ordinals.extend(
                             allocation
                                 .assessment_ordinals
@@ -473,11 +537,13 @@ impl<S: Session> Backend<S> {
         let after = self.selection.snapshot(&self.control, selected).await?;
         ensure!(before.identity == after.identity, ScopeReadRefused);
         let composition = CompositionRequest {
-            selection: before.resolved,
+            selection: before.resolved.clone(),
             authority: before.identity,
             budgets: SharedBudgets {
                 limit: 100,
-                max_bytes: outer_bytes,
+                max_bytes: outer_bytes
+                    .saturating_sub(delivery_reserve)
+                    .saturating_sub(attachment_reserve),
                 deadline_ms: request.budget.deadline_ms,
                 verification_max_sources: 0,
                 verification_max_bytes: 0,
@@ -498,7 +564,24 @@ impl<S: Session> Backend<S> {
                 if let Some(oversized) =
                     error.downcast_ref::<airk_kernel::combined_reads::ContextReplyBudget>()
                 {
-                    custody.wrapper(&serde_json::to_value(oversized.result.as_ref())?)?;
+                    let actual = serde_json::to_value(oversized.result.as_ref())?;
+                    custody.wrapper(&actual)?;
+                    let members: Vec<_> = oversized.result.members.iter().map(|member| {
+                        let body = canonical_body(&member.result);
+                        Ok(json!({"index_id":member.index_id,"body_bytes":serde_json::to_vec(&body)?.len(),
+                            "member_envelope_bytes":serde_json::to_vec(&member.result)?.len(),
+                            "allocation_bytes":member.allocation.max_bytes}))
+                    }).collect::<Result<_>>()?;
+                    let geometry = json!({"phase":"compose_context","canonical_bytes":serde_json::to_vec(&actual)?.len(),
+                        "public_envelope_bytes":serde_json::to_vec(&native_envelope(actual.clone()))?.len(),
+                        "canonical_cap":outer_bytes,"summary_bytes":serde_json::to_vec(&actual["context"])?.len(),
+                        "ranking_bytes":serde_json::to_vec(&actual["ranking"])?.len(),"members":members});
+                    let _ = airk_host::service_logs::record_service_error(
+                        &self.control,
+                        "combined_context",
+                        "context_delivery_budget",
+                        &anyhow::anyhow!(geometry.to_string()),
+                    );
                     return Ok(postexecution_failure("context_delivery_budget"));
                 }
                 return Err(error);
@@ -506,6 +589,9 @@ impl<S: Session> Backend<S> {
         };
         let value = serde_json::to_value(&response)?;
         let result = native_envelope(value);
+        let result = verification
+            .apply(self, result, selected, before.clone(), context.clone())
+            .await?;
         let bindings = response
             .context
             .as_ref()
@@ -526,6 +612,12 @@ impl<S: Session> Backend<S> {
         {
             Ok(value) => Ok(value),
             Err(error) if error.is::<airk_kernel::combined_reads::CombinedReplyBudget>() => {
+                let _ = airk_host::service_logs::record_service_error(
+                    &self.control,
+                    "combined_context",
+                    "context_delivery_budget_after_receipt",
+                    &error,
+                );
                 Ok(postexecution_failure("context_delivery_budget"))
             }
             Err(_) => Ok(postexecution_failure("context_delivery_refused")),

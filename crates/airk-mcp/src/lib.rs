@@ -43,12 +43,12 @@ mod optimization_tests;
 
 #[cfg(test)]
 mod arbiter_calibration_capture;
-#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
-mod context_action_capture_tests;
 #[cfg(test)]
 mod arbiter_handler_tests;
 #[cfg(test)]
 mod arbiter_public_tests;
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod context_action_capture_tests;
 #[cfg(test)]
 mod scoped_observation_tests;
 #[cfg(test)]
@@ -658,6 +658,7 @@ pub struct AirkServer {
     response_mode: response::ResponseMode,
     // Inner plan reads share the outer admitted lifetime and usage observation.
     plan_read: bool,
+    answer_read: bool,
     read_attempt: Option<read_attempt::ReadAttemptContext>,
 }
 
@@ -685,6 +686,7 @@ impl AirkServer {
             responses,
             response_mode: response::ResponseMode::from_environment(),
             plan_read: false,
+            answer_read: false,
             read_attempt: None,
         }
     }
@@ -738,6 +740,7 @@ impl AirkServer {
     async fn answer(&self, Parameters(args): Parameters<AnswerArgs>) -> CallToolResult {
         let mut reader = self.clone();
         reader.plan_read = true;
+        reader.answer_read = true;
         let handle = tokio::runtime::Handle::current();
         let deadline = std::time::Instant::now()
             .checked_add(std::time::Duration::from_millis(

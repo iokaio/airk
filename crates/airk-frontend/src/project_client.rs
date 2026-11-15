@@ -1167,9 +1167,11 @@ impl Backend {
                 return Ok(source_scope_superseded());
             }
             if state.connection.as_ref().is_none_or(|connection| {
-                (context.context_partition().is_some() && connection.authorized_until<context.deadline()) || !self
-                    .status
-                    .transport_reusable(&ticket, state.connection_scope, connection)
+                (context.context_partition().is_some()
+                    && connection.authorized_until < context.deadline())
+                    || !self
+                        .status
+                        .transport_reusable(&ticket, state.connection_scope, connection)
             }) {
                 state.connection = None;
                 state.connection_scope = None;

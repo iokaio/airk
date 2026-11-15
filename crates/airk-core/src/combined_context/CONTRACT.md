@@ -71,3 +71,49 @@ durable or retrievable recovery receipt.
 Fixtures: `fixtures/split/i1/combined_context_allowance.json`. Core selector:
 `test(combined_context::tests::)`. Host owns strict wire conformance. No generated
 consumer mirror or execution/model/transport qualification is claimed here.
+
+The Kernel compositor materializes each complete native envelope before deriving
+ContextAction ranking-count metadata. Text-only, structured-only and duplicated
+text/structured envelopes use the same canonical body and preserve all retained
+native receipts. The count describes ranked evidence already returned under the
+original calls/candidates/bytes allocation; it does not enlarge any read budget.
+Ordinary non-Context operation count refusals remain unchanged. A transport
+representation cannot turn a multi-hit context packet into a zero-hit count.
+
+Context delivery byte admission reserves the serialized native wrapper, worst-width
+closed scalar/publication/scope/summary metadata and exact final-delivery receipt
+syntax before dispatch. The remaining canonical body allowance is divided by
+three: escaped JSON text is at most twice the canonical UTF-8 JSON bytes, plus
+one complete structured representation and the measured empty envelope syntax.
+Current Context envelopes have one text content block and optional structured
+body/error flag; unreserved envelope extensions or disagreeing representations
+fail closed while full native custody remains private. Native response body
+metadata is included in the local packing limit, and cannot be reclaimed as
+unused body allowance by another partition. Work's existing accounting meaning
+and original public budgets stay unchanged.
+
+Context composition does not perform optional common-header factoring. Ranking
+retains a bounded prefix of references into the complete native members; when
+metadata would exceed the admitted canonical cap, only that prefix shrinks and
+truncated is set. Full member bodies, original initial receipts, source locations
+and native packet assessment/omission semantics are retained. Rank selection is
+final before the whole saved-source verification receipt is produced; verification
+never certifies an earlier projection that is later changed. The existing minimum
+verification receipt capacity plus exact attachment/failure syntax is reserved
+before dispatch; the actual remaining capacity is bounded by the existing receipt
+maximum. Report may disclose bounded proof coverage and Require refuses honestly.
+No result is replayed, no source is silently trimmed, and no cap is enlarged.
+
+A native failed envelope may intentionally pair an opaque human-readable text
+message with complete structured failure details. This existing error shape is
+retained unchanged and charged as the complete opaque envelope, rather than
+reinterpreting display text as JSON or ignoring its structured payload. Nominal
+success and parseable JSON representations still must agree; unreserved envelope
+fields continue to refuse. Opaque failure does not establish zero/known work or
+permit replay.
+
+The same native envelope byte owner accepts both pre-materialized text-only
+frontend results and materialized Kernel results. With no structuredContent,
+canonical body bytes come from parsing the native JSON text; the enclosing tool
+envelope is never compared to that body. When both representations exist they
+must agree exactly. Structured-only results use their own complete native body.

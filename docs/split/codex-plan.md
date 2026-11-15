@@ -52,7 +52,21 @@ Earlier planning sessions exposed no AIRK MCP tools and used scoped local search
 
 ### Current implementation checkpoint (14 November 2026)
 
-Current working-tree checkpoint: workspace Clippy and all 518 selected Core,
+Current working-tree checkpoint: all four TRAIN/CAL raw captures completed
+126/126 finite complete-readout rows with natural process exit. The actual
+CAL-only native fit retained all 19 outcomes per model and returned
+`unsupported_no_positive_safe_margin` for every model: no calibration asset or
+profile activation followed. Uncertified Read outcomes remain UNKNOWN, not
+semantic negatives. A1's retrieval-quality failure and the four unsupported
+Arbiter calibrations still block release/model promotion.
+
+Prior actual single-index and many/Open Answer comparisons passed across
+CLI/pipe/HTTPS MCP on their recorded R37 inputs. Fresh static ORT R5 is verified;
+R41 uses those libraries and current frozen source, with scoped Clippy passed
+and remaining tests running. No fresh matched debug pair exists: the earlier
+runtime-builder attempt failed before Cargo, and retained R23/R40 test images
+are not a matched pair. Admin/full transport, installed, platform and final
+qualification remain separate pending gates. Earlier workspace Clippy and all 518 selected Core,
 MCP and joint-runtime tests pass on the R23 frozen inputs. The combined Answer
 presentation passes 87 host tests and three actual Chromium DOM tests; current
 Admin assets are sealed. Fresh matched-pair/client journeys and final platform
@@ -73,9 +87,10 @@ follow-up 1/9, deterministic packets 3/9, small Intern 2/9, small Strands 2/9
 and large Intern 3/9. Large Kev completed eight turns before its ninth call
 exceeded the original I2 deadline with unknown inner work. Its poisoned session
 and fixture closed; that incomplete condition remains separate. The five
-completed conditions do not demonstrate the required turn reduction. The
-original-deadline consumer repair, joint context-action runtime, mixed-index
-Answer execution and final-100 acceptance remain outstanding.
+completed conditions do not demonstrate the required turn reduction. At that R8 checkpoint, the original-deadline consumer repair, joint
+context-action runtime and mixed-index Answer execution were outstanding; their
+later source/transport checks retain separate identities. Final-100 acceptance
+remains outstanding.
 
 The checkpoint preserves the mandatory initial Search receipt. Core's current
 /2 joint-action and whole-selection allocation contracts precede consumers;
@@ -741,7 +756,7 @@ Release gates:
 | Gate | Completion evidence |
 | --- | --- |
 | Review closure | R01–R27, §5.1, UX01–UX10 and the Admin screen/topic/tool plus Explorer preservation inventories have evidence and owners; all requested product requirements covered; no unresolved required blocker presented as an accepted omission. |
-| Compatibility | State/connection/digest goldens, selection authority, installation matrix, complete read parity and current input catalogs; approved contract changes identified. |
+| Current-contract integrity | Current state/connection/digest fixtures, selection authority, installation matrix, complete read parity and current input catalogs; approved contract changes identified. Previous-version compatibility is waived by the recorded user decision; index replacement/regeneration preserves original sources. |
 | Product experience | Shared VS Code/browser management and retained Explorer workflows pass §7.6, including low-scrolling first views, task-based Help, distinct scope, editor/startup behavior and complete exports. Duplicate UI retirement has surviving-owner evidence and milestone approval; Workbench/Arbiter obligations remain. CLI-only setup/search/recovery, exact silent flags, portable instructions and §8.5's explicit automated/manual/defer installation choices also pass on intended targets. |
 | Models and contextual answers | Bundled trained MiniLM qualification/regeneration; two smaller/two larger Arbiter choices prepared and qualified; bounded additional evidence gathering and useful Workbench answers demonstrated; fewer agent turns to the stated goal with quality floors preserved; per-profile task/platform/resource limitations honestly listed. |
 | Artifact integrity | Matched pair, UI/help/model seals, signatures/notarization, complete notices, checksums/attestations and no private/index/temp material; local and hosted inventories agree. |

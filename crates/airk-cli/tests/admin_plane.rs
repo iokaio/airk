@@ -44,6 +44,137 @@ impl Reply {
     }
 }
 
+fn settled_answer_publication(status: &Value) -> Result<bool> {
+    use airk_core::readiness::{SemanticReadiness, SemanticState};
+    let readiness: SemanticReadiness =
+        serde_json::from_value(status["semantic_readiness"].clone())?;
+    ensure!(readiness.version == 1, "unknown semantic readiness version");
+    let enabled = status["vectors_enabled"]
+        .as_bool()
+        .context("saved vector policy is unknown")?;
+    match readiness.state {
+        SemanticState::Ready => {
+            ensure!(
+                enabled && readiness.failure.is_none(),
+                "ready semantic state contradicts saved policy"
+            );
+            Ok(true)
+        }
+        SemanticState::Disabled => {
+            ensure!(
+                !enabled && readiness.failure.is_none(),
+                "disabled semantic state lacks declared disabled policy"
+            );
+            Ok(true)
+        }
+        SemanticState::Pending | SemanticState::Partial => Ok(false),
+        SemanticState::Unavailable | SemanticState::Failed => {
+            anyhow::bail!("native semantic publication unavailable: {readiness:?}")
+        }
+    }
+}
+fn retain_answer_comparison(
+    control: &Path,
+    request: &Value,
+    budget: &airk_core::arbiter::Budget,
+    browser: &Value,
+    native: &Value,
+    normalized: Option<(&Value, &Value)>,
+    reason: &str,
+) -> Result<std::path::PathBuf> {
+    let raw = match airk_host::service_logs::export_raw(control) {
+        Ok(bytes) => json!({"bytes":bytes}),
+        Err(error) => json!({"export_error":format!("{error:#}")}),
+    };
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .context("workspace root missing")?
+        .join("artifacts/testing/admin-plane");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!(
+        "{}.json",
+        airk_kernel::service_broker::new_instance_id()?
+    ));
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(&serde_json::to_vec_pretty(&json!({"label":"finite Admin Answer original diagnostic",
+        "original_request":request,"budget":budget,"browser_i3":browser,"native_i3":native,
+        "normalized":normalized.map(|(browser,native)|json!({"browser_i3":browser,"native_i3":native})),
+        "raw_service_logs":raw,"comparison_failure":reason,"replayed":false}))?)?;
+    Ok(path)
+}
+
+#[test]
+fn answer_publication_wait_requires_native_semantic_epoch_and_declared_policy() -> Result<()> {
+    use airk_core::readiness::*;
+    let mut readiness = SemanticReadiness {
+        version: 1,
+        state: SemanticState::Pending,
+        default_search_policy: DefaultSearchPolicy::PartialHybrid,
+        selected_artifacts: 1,
+        completed_artifacts: 0,
+        selected_units: Some(1),
+        completed_units: 0,
+        first_ready_unix_ms: None,
+        fully_ready_unix_ms: None,
+        selection_digest: None,
+        pipeline_digest: None,
+        failure: None,
+    };
+    let status = |readiness: &SemanticReadiness, enabled: bool| json!({"vectors_enabled":enabled,"semantic_readiness":readiness});
+    assert!(!settled_answer_publication(&status(&readiness, true))?);
+    readiness.state = SemanticState::Ready;
+    readiness.completed_artifacts = 1;
+    readiness.completed_units = 1;
+    assert!(settled_answer_publication(&status(&readiness, true))?);
+    assert!(settled_answer_publication(&status(&readiness, false)).is_err());
+    readiness.state = SemanticState::Disabled;
+    assert!(settled_answer_publication(&status(&readiness, false))?);
+    assert!(settled_answer_publication(&status(&readiness, true)).is_err());
+    let mut unknown = status(&readiness, false);
+    unknown.as_object_mut().unwrap().remove("vectors_enabled");
+    assert!(settled_answer_publication(&unknown).is_err());
+    readiness.state = SemanticState::Failed;
+    assert!(settled_answer_publication(&status(&readiness, true)).is_err());
+    readiness.state = SemanticState::Unavailable;
+    assert!(settled_answer_publication(&status(&readiness, true)).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_lightweight_status_is_not_a_complete_semantic_readiness_document() -> Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(
+        source.path().join("fixture.md"),
+        "# Native status fixture\nOriginal indexed text.\n",
+    )?;
+    let kernel = airk_kernel::Kernel::open(source.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let summary = kernel.status_summary()?;
+    assert!(summary["semantic_readiness"].get("version").is_none());
+    assert!(summary.get("vectors_enabled").is_none());
+    assert!(
+        serde_json::from_value::<airk_core::readiness::SemanticReadiness>(
+            summary["semantic_readiness"].clone()
+        )
+        .is_err()
+    );
+    assert!(settled_answer_publication(&summary).is_err());
+    let complete = serde_json::to_value(kernel.status()?)?;
+    let typed: airk_core::readiness::SemanticReadiness =
+        serde_json::from_value(complete["semantic_readiness"].clone())?;
+    assert_eq!(typed.version, 1);
+    assert_eq!(typed.state, airk_core::readiness::SemanticState::Disabled);
+    assert!(settled_answer_publication(&complete)?);
+    Ok(())
+}
+
 fn dechunk(mut bytes: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     loop {
@@ -71,6 +202,19 @@ fn dechunk(mut bytes: &[u8]) -> Result<Vec<u8>> {
 
 /// One request on a fresh TLS connection pinned to the service's issuer.
 fn exchange(port: u16, ca: &CertificateDer<'static>, request: String) -> Result<Reply> {
+    exchange_before(
+        port,
+        ca,
+        request,
+        std::time::Instant::now() + Duration::from_secs(60),
+    )
+}
+fn exchange_before(
+    port: u16,
+    ca: &CertificateDer<'static>,
+    request: String,
+    deadline: std::time::Instant,
+) -> Result<Reply> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -95,7 +239,7 @@ fn exchange(port: u16, ca: &CertificateDer<'static>, request: String) -> Result<
             (&mut tls).take(8 << 20).read_to_end(&mut bytes).await?;
             Ok::<_, anyhow::Error>(bytes)
         };
-        tokio::time::timeout(Duration::from_secs(60), exchange)
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), exchange)
             .await
             .context("admin request timed out")?
     })?;
@@ -425,36 +569,305 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         json!({"status": "failure", "code": "admin_scope_not_granted"})
     );
 
-    // The same A2 session and grant traverse real TLS and native I1 chunks.
-    // Neither finite Answer is retried, including after an unknown outcome.
-    let answer=airk_core::arbiter::context_action::ContextRequestV2{
-        schema:airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),question:"owned Admin fixture evidence".into(),budget:Default::default()};
-    answer.validate()?;let budget=answer.budget.clone();
-    let request=ControlMethod::ToolsCall{tool:"airk_answer".into(),arguments:serde_json::to_value(answer)?.as_object().context("Answer arguments")?.clone(),
-        selection:ToolSelection::Admin,response_mode:ToolResponseMode::Full,usage_client:ClientFamily::Unknown,read_attempt:None};
-    let request=serde_json::to_string(&request)?;
-    let browser=api("/admin/api/v1/call/search.call",&authenticated,&request)?;
-    ensure!(browser.status==200,"finite browser Answer refused without replay: {}",String::from_utf8_lossy(&browser.body));
-    let native_session=airk_core::native_admin::NativeAdminSessionSecret::new(
-        cookie.strip_prefix("__Host-airk_admin=").context("owned session cookie")?.to_owned(),csrf.clone())?;
-    let request_id=airk_core::identity::Incarnation::from_bytes([0x55;16]);
-    let mut response=service.request(ControlMethod::AdminNativeCall{session:native_session.clone(),request_id,
-        operation:"search.call".into(),body:serde_json::value::RawValue::from_string(request)?,
-        deadline_ns:airk_process::monotonic::now_ns()?.checked_add(30_000_000_000).context("Admin original deadline")?});
-    let mut assembly=airk_core::native_admin::NativeAdminAssembly::default();
-    let mut native=loop {
-        let ControlResponse::AdminNativeChunk{chunk}=response else{anyhow::bail!("finite native Admin Answer refused without replay: {}",serde_json::to_string(&response)?)};
-        let next=chunk.validate()?;
-        if let Some(result)=assembly.push(&chunk)?{break result}
-        response=service.request(ControlMethod::AdminNativeRead{session:native_session.clone(),request_id,offset:next});
-    };
-    ensure!(assembly.complete(),"native Admin Answer stream incomplete");
-    let mut browser=browser.json();
-    let browser_result=browser.pointer("/result/result").context("browser canonical ToolResult")?;
-    let native_result=native.pointer("/result/result").context("native canonical ToolResult")?;
-    let (browser_result,native_result)=common::parity::context::envelopes(browser_result,native_result,&budget)?;
-    browser["result"]["result"]=browser_result;native["result"]["result"]=native_result;
-    assert_eq!(browser,native,"complete I3 envelope/authority/canonical Answer result differs");
+    let fixture_text = "# Owned Admin fixture evidence\nThis indexed source retains the original publication and source locations.\n";
+    for (indexed, call_identity) in [(false, 0x55u8), (true, 0x56u8)] {
+        if indexed {
+            // One real I3 mutation creates the prerequisite publication. The
+            // previous unindexed refusal is not retried or treated as ready.
+            std::fs::write(source.path().join("fixture.md"), fixture_text)?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            let index_api = |target: &str, body: &str| -> Result<Reply> {
+                let mut headers = vec![
+                    ("Host", host.as_str()),
+                    ("Origin", origin.as_str()),
+                    ("Sec-Fetch-Site", "same-origin"),
+                    ("Content-Type", "application/json"),
+                ];
+                headers.extend_from_slice(&authenticated);
+                exchange_before(
+                    port,
+                    &ca,
+                    http_request("POST", target, &headers, body),
+                    deadline,
+                )
+            };
+            let enqueue =
+                json!({"enqueue":{"project":service.project.binding,"kind":"index"}}).to_string();
+            let accepted = index_api("/admin/api/v1/call/jobs.enqueue", &enqueue)?;
+            ensure!(
+                accepted.status == 200,
+                "I3 Index request refused without replay: {}",
+                String::from_utf8_lossy(&accepted.body)
+            );
+            let accepted = accepted.json();
+            ensure!(
+                accepted["result"]["status"] == "job",
+                "I3 Index was not accepted: {accepted}"
+            );
+            let id: airk_core::identity::Sha256Digest =
+                serde_json::from_value(accepted["result"]["job"]["id"].clone())?;
+            let observe = json!({"job":{"id":id}}).to_string();
+            loop {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "I3 original Index observation deadline expired; accepted job {id}"
+                );
+                let observed = index_api("/admin/api/v1/call/jobs.get", &observe)?;
+                ensure!(
+                    observed.status == 200,
+                    "I3 Index observation refused: {}",
+                    String::from_utf8_lossy(&observed.body)
+                );
+                let observed = observed.json();
+                let job: airk_core::service::JobRecord =
+                    serde_json::from_value(observed["result"]["job"].clone())?;
+                ensure!(
+                    job.id == id
+                        && job.project == service.project.binding
+                        && job.kind == airk_core::service::JobKind::Index,
+                    "I3 observation changed accepted Index identity: {observed}"
+                );
+                if job.state == airk_core::service::JobState::Succeeded {
+                    ensure!(
+                        matches!(
+                            job.outcome,
+                            Some(airk_core::service::JobOutcome::Succeeded { revision: Some(_) })
+                        ),
+                        "I3 successful Index lost actual publication: {observed}"
+                    );
+                    break;
+                }
+                ensure!(
+                    !matches!(
+                        job.state,
+                        airk_core::service::JobState::Failed
+                            | airk_core::service::JobState::Canceled
+                    ),
+                    "I3 Index failed: {observed}"
+                );
+                // Each iteration observes the same accepted job through real
+                // I3 I/O under the original deadline; no fixed sleep or replay.
+            }
+            // Text Index success can precede its scheduled semantic publication.
+            // Observe the native policy/readiness epoch before either positive
+            // Answer; do not normalize away a real generation transition.
+            let status_request = serde_json::to_string(&ControlMethod::ToolsCall {
+                tool: "airk_diagnostics".into(),
+                arguments: Default::default(),
+                selection: ToolSelection::Admin,
+                response_mode: ToolResponseMode::Full,
+                usage_client: ClientFamily::Unknown,
+                read_attempt: None,
+            })?;
+            loop {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "original I3 Index/readiness observation deadline expired"
+                );
+                let wire_response = index_api("/admin/api/v1/call/search.call", &status_request)?;
+                let response = wire_response.json();
+                let parsed = (|| -> Result<bool> {
+                    ensure!(
+                        wire_response.status == 200,
+                        "I3 readiness observation refused: {}",
+                        String::from_utf8_lossy(&wire_response.body)
+                    );
+                    let returned = &response["result"]["result"];
+                    ensure!(
+                        returned["isError"] != true,
+                        "native readiness read failed: {response}"
+                    );
+                    let status = match returned.get("structuredContent") {
+                        Some(value) => value.clone(),
+                        None => serde_json::from_str(
+                            returned
+                                .pointer("/content/0/text")
+                                .and_then(Value::as_str)
+                                .context("native readiness JSON missing")?,
+                        )?,
+                    };
+                    settled_answer_publication(&status)
+                })();
+                let settled = match parsed {
+                    Ok(settled) => settled,
+                    Err(error) => {
+                        let raw = match airk_host::service_logs::export_raw(&service.control) {
+                            Ok(bytes) => json!({"bytes":bytes}),
+                            Err(error) => json!({"export_error":format!("{error:#}")}),
+                        };
+                        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .parent()
+                            .and_then(Path::parent)
+                            .context("workspace root missing")?
+                            .join("artifacts/testing/admin-plane");
+                        std::fs::create_dir_all(&directory)?;
+                        let path = directory.join(format!(
+                            "{}.json",
+                            airk_kernel::service_broker::new_instance_id()?
+                        ));
+                        use std::io::Write;
+                        let mut file = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&path)?;
+                        file.write_all(&serde_json::to_vec_pretty(&json!({"label":"original I3 readiness observation failure",
+                            "request":serde_json::from_str::<Value>(&status_request)?,"reply":response,
+                            "http_status":wire_response.status,"raw_body_bytes":wire_response.body,"raw_service_logs":raw,
+                            "error":format!("{error:#}"),"original_index_observation_deadline_ms":30_000,"request_replayed":false}))?)?;
+                        return Err(error.context(format!(
+                            "original readiness response retained at {}",
+                            path.display()
+                        )));
+                    }
+                };
+                if settled {
+                    ensure!(
+                        std::time::Instant::now() < deadline,
+                        "semantic readiness was observed after original I3 Index deadline"
+                    );
+                    break;
+                }
+            }
+        }
+        // The same A2 session and grant traverse real TLS and native I1 chunks.
+        // Neither finite Answer is retried, including after an unknown outcome.
+        let answer = airk_core::arbiter::context_action::ContextRequestV2 {
+            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+            question: "owned Admin fixture evidence".into(),
+            budget: Default::default(),
+        };
+        answer.validate()?;
+        let budget = answer.budget.clone();
+        let request = ControlMethod::ToolsCall {
+            tool: "airk_answer".into(),
+            arguments: serde_json::to_value(answer)?
+                .as_object()
+                .context("Answer arguments")?
+                .clone(),
+            selection: ToolSelection::Admin,
+            response_mode: ToolResponseMode::Full,
+            usage_client: ClientFamily::Unknown,
+            read_attempt: None,
+        };
+        let request = serde_json::to_string(&request)?;
+        let original_answer_request: Value = serde_json::from_str(&request)?;
+        let browser = api("/admin/api/v1/call/search.call", &authenticated, &request)?;
+        ensure!(
+            browser.status == 200,
+            "finite browser Answer refused without replay: {}",
+            String::from_utf8_lossy(&browser.body)
+        );
+        let native_session = airk_core::native_admin::NativeAdminSessionSecret::new(
+            cookie
+                .strip_prefix("__Host-airk_admin=")
+                .context("owned session cookie")?
+                .to_owned(),
+            csrf.clone(),
+        )?;
+        let request_id = airk_core::identity::Incarnation::from_bytes([call_identity; 16]);
+        let mut response = service.request(ControlMethod::AdminNativeCall {
+            session: native_session.clone(),
+            request_id,
+            operation: "search.call".into(),
+            body: serde_json::value::RawValue::from_string(request)?,
+            deadline_ns: airk_process::monotonic::now_ns()?
+                .checked_add(30_000_000_000)
+                .context("Admin original deadline")?,
+        });
+        let mut assembly = airk_core::native_admin::NativeAdminAssembly::default();
+        let mut native = loop {
+            let ControlResponse::AdminNativeChunk { chunk } = response else {
+                anyhow::bail!(
+                    "finite native Admin Answer refused without replay: {}",
+                    serde_json::to_string(&response)?
+                )
+            };
+            let next = chunk.validate()?;
+            if let Some(result) = assembly.push(&chunk)? {
+                break result;
+            }
+            response = service.request(ControlMethod::AdminNativeRead {
+                session: native_session.clone(),
+                request_id,
+                offset: next,
+            });
+        };
+        ensure!(assembly.complete(), "native Admin Answer stream incomplete");
+        let mut browser = browser.json();
+        let browser_result = browser
+            .pointer("/result/result")
+            .context("browser canonical ToolResult")?;
+        let native_result = native
+            .pointer("/result/result")
+            .context("native canonical ToolResult")?;
+        if !indexed {
+            assert_eq!(
+                browser, native,
+                "unindexed I3 refusal must retain both complete original envelopes"
+            );
+            assert_eq!(browser_result["isError"], true);
+            let refused = &browser_result["structuredContent"];
+            assert_eq!(refused["error"]["code"], "read_failed");
+            assert_eq!(refused["error"]["retryable"], false);
+            assert!(
+                refused["error"]["message"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("workspace is not indexed"))
+            );
+            assert!(
+                refused.get("assessment_history").is_none() && refused.get("work").is_none(),
+                "unindexed refusal must not fabricate NN/work receipts"
+            );
+            assert!(
+                std::fs::read_dir(source.path())?.next().is_none(),
+                "unindexed read mutated the original source"
+            );
+            continue;
+        }
+        let original_browser_i3 = browser.clone();
+        let original_native_i3 = native.clone();
+        let (browser_result, native_result) =
+            match common::parity::context::envelopes(browser_result, native_result, &budget) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    let path = retain_answer_comparison(
+                        &service.control,
+                        &original_answer_request,
+                        &budget,
+                        &original_browser_i3,
+                        &original_native_i3,
+                        None,
+                        &format!("{error:#}"),
+                    )?;
+                    return Err(error.context(format!(
+                        "original Admin responses and private ring retained at {}",
+                        path.display()
+                    )));
+                }
+            };
+        browser["result"]["result"] = browser_result;
+        native["result"]["result"] = native_result;
+        if browser != native {
+            let path = retain_answer_comparison(
+                &service.control,
+                &original_answer_request,
+                &budget,
+                &original_browser_i3,
+                &original_native_i3,
+                Some((&browser, &native)),
+                "complete I3 envelope/authority/canonical Answer result differs",
+            )?;
+            anyhow::bail!(
+                "complete I3 envelope/authority/canonical Answer result differs; raw and normalized responses retained at {}",
+                path.display()
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(source.path().join("fixture.md"))?,
+            fixture_text,
+            "canonical reads changed indexed fixture source"
+        );
+    }
 
     // Logout ends the session.
     let logout = api("/admin/api/v1/session/logout", &authenticated, "{}")?;

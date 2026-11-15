@@ -30,6 +30,14 @@ impl AirkServer {
         if properties.contains_key("include_status") {
             arguments.insert("include_status".into(), json!(true));
         }
+        answer_verification_owner(
+            &mut arguments,
+            properties,
+            self.answer_read,
+            self.read_attempt
+                .as_ref()
+                .is_some_and(|context| context.context_partition().is_some()),
+        );
         if matches!(tool, "read_file" | "file_info" | "outline" | "context")
             && let Some(revision) = revision
         {
@@ -95,10 +103,51 @@ impl AirkServer {
     }
 }
 
+fn answer_verification_owner(
+    arguments: &mut Map<String, Value>,
+    properties: &Map<String, Value>,
+    answer: bool,
+    partition: bool,
+) {
+    if (answer || partition) && properties.contains_key("verification") {
+        // Standalone Answer and private combined partitions both have an outer
+        // verifier. Parse's independently explicit per-step controls stay live.
+        arguments.retain(|key, _| !key.starts_with("verification"));
+        arguments.insert("verification".into(), json!("off"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use anyhow::Context;
+
+    #[test]
+    fn answer_inner_reads_cannot_mint_verification_budgets_but_parse_keeps_explicit_controls() {
+        let catalog = crate::local::tools();
+        let properties = catalog
+            .iter()
+            .find(|entry| entry.name == "airk_search")
+            .unwrap()
+            .input_schema["properties"]
+            .as_object()
+            .unwrap();
+        let original=json!({"query":"exact evidence","verification":"require","verification_max_sources":1,"verification_max_bytes":7,"verification_deadline_ms":9,"future":{"kept":true}}).as_object().unwrap().clone();
+        for (answer, partition) in [(true, false), (false, true), (true, true)] {
+            let mut args = original.clone();
+            answer_verification_owner(&mut args, properties, answer, partition);
+            assert_eq!(
+                args,
+                json!({"query":"exact evidence","verification":"off","future":{"kept":true}})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            );
+        }
+        let mut parse = original.clone();
+        answer_verification_owner(&mut parse, properties, false, false);
+        assert_eq!(parse, original);
+    }
 
     fn payload(reply: CallToolResult) -> Result<Value> {
         ensure!(reply.is_error != Some(true), "{reply:?}");

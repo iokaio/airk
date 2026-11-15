@@ -507,6 +507,216 @@ pub fn compose_context(
     compose_inner(request, inputs, false, Some(summary))
 }
 
+/// Predispatch byte admission for the CURRENT closed Context tool-envelope.
+/// The bound owns metadata only; it grants neither reads nor source authority.
+/// A JSON string containing canonical JSON is at most twice its UTF-8 bytes;
+/// retaining both text and structuredContent therefore costs at most 3B plus
+/// the exact empty-envelope syntax below. Unexpected envelope fields refuse.
+pub fn context_payload_admission(
+    request: &CompositionRequest,
+    budget: &airk_core::arbiter::Budget,
+    allowances: &[Option<airk_core::combined_context::PartitionAllowance>],
+    attachment_reserve: usize,
+) -> Result<usize> {
+    use airk_core::{arbiter::ScopeBinding, combined_context::*, identity::Incarnation};
+    budget.validate()?;
+    request.selection.validate()?;
+    ensure!(
+        allowances.len() == request.selection.members.len(),
+        "context byte admission roster mismatch"
+    );
+    let max_resources = Resources {
+        calls: usize::MAX,
+        input_tokens: usize::MAX,
+        candidates: usize::MAX,
+        bytes: usize::MAX,
+    };
+    let token = RevisionToken {
+        incarnation: Incarnation::from_bytes([1; 16]),
+        generation: u64::MAX,
+        revision: Sha256Digest::from_bytes([1; 32]),
+    };
+    // Every legal collection byte costs at most six JSON bytes. These are
+    // serializer size sentinels, never observations or executable scope grants.
+    let publication = RevisionEnvelope::new("\0".repeat(128), token);
+    let mut reports = Vec::new();
+    let mut bindings = Vec::new();
+    let mut members = Vec::new();
+    let mut publications = Vec::new();
+    for (member, allowance) in request.selection.members.iter().zip(allowances) {
+        let scope = ScopeBinding {
+            installation: token.revision,
+            catalog: token.incarnation,
+            index_id: member.index_id,
+            authorization: token.revision,
+            configuration_revision: u64::MAX,
+            publication: publication.clone(),
+        };
+        bindings.push(ContextDeliveryBinding {
+            scope,
+            profile: Some(token.revision),
+        });
+        let mut allowance = allowance.clone();
+        if let Some(allowed) = &mut allowance {
+            allowed.resources = max_resources.clone();
+            allowed.assessment_ordinals = vec![u8::MAX; 3];
+        }
+        reports.push(PartitionReport {
+            index_id: member.index_id,
+            allowance,
+            outcome: PartitionOutcome::KnownViolation {
+                observed: max_resources.clone(),
+                assessment_ordinals: vec![u8::MAX; 3],
+                read_depth: usize::MAX,
+                peak_fanout: usize::MAX,
+            },
+        });
+        publications.push(MemberPublication {
+            index_id: member.index_id,
+            publication: Some(publication.clone()),
+        });
+        members.push(ComposedMember {index_id:member.index_id,index_name:request.index_names.get(&member.index_id).cloned(),
+            is_error:false,allocation:MemberAllocation{index_id:member.index_id,limit:usize::MAX,max_bytes:usize::MAX,deadline_ms:u64::MAX,
+                verification_max_sources:usize::MAX,verification_max_bytes:u64::MAX,verification_deadline_ms:u64::MAX},
+            outcome:MemberOutcome::Unqueried,result:json!({"content":[{"type":"text","text":""}],"structuredContent":null,"isError":false}),
+            cutoff:Some("native_source_projection_unavailable".into()),elapsed_ms:Some(u64::MAX)});
+    }
+    let skeleton = CombinedReadResult {
+        schema: COMBINED_READ_SCHEMA.into(),
+        selection: request.selection.observation()?,
+        publication_vector: PublicationVector {
+            authority: request.authority,
+            observed_from_unix_ms: u64::MAX,
+            observed_to_unix_ms: u64::MAX,
+            members: publications,
+        },
+        rank_policy: RANK_FUSION_POLICY.into(),
+        members,
+        ranking: vec![],
+        shared_values: None,
+        partial: false,
+        truncated: false,
+        read_retry: None,
+        context: Some(CombinedContextSummary {
+            schema: SUMMARY_SCHEMA.into(),
+            attempt: token.incarnation,
+            selection: request.authority,
+            budget: budget.clone(),
+            members: reports,
+            known_used: max_resources.clone(),
+            unknown_held: max_resources,
+            termination: Termination::AccountingViolation,
+            delivery_bindings: bindings,
+        }),
+        error: Some(CombinedReadFailure {
+            code: "budget_accounting_violation".into(),
+            retryable: false,
+            failed_members: request
+                .selection
+                .members
+                .iter()
+                .map(|m| m.index_id)
+                .collect(),
+        }),
+    };
+    let receipt_bytes = context_delivery_receipt_reserve()?;
+    let reserved = serde_json::to_vec(&skeleton)?
+        .len()
+        .checked_add(receipt_bytes)
+        .and_then(|bytes| bytes.checked_add(attachment_reserve))
+        .context("context admission byte overflow")?;
+    let maximum = budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES);
+    Ok(maximum.saturating_sub(reserved) / 3)
+}
+
+/// Exact worst-width current native final-delivery attachment, including key syntax.
+pub fn context_delivery_receipt_reserve() -> Result<usize> {
+    let identity = airk_core::identity::Incarnation::from_bytes([1; 16]);
+    let digest = Sha256Digest::from_bytes([1; 32]);
+    let receipt = airk_core::service::CombinedDeliveryReceipt {
+        schema: 1,
+        service_instance: identity,
+        namespace: identity,
+        catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(i64::MAX as u64)?,
+        scope_identity: digest,
+        result_digest: digest,
+    };
+    Ok(serde_json::to_vec(&json!({"delivery_observation":{"receipt":receipt,"digest_basis":"canonical_body_without_delivery_observation"}}))?.len()-1)
+}
+
+/// Charge the complete current native body and reject an unreserved extension.
+/// The complete failed value remains in the caller's private result custody.
+pub fn context_member_payload_bytes(value: &Value) -> Result<usize> {
+    if value.get("content").is_none() && value.get("structuredContent").is_none() {
+        return Ok(serde_json::to_vec(value)?.len());
+    }
+    let object = value
+        .as_object()
+        .context("native context envelope is not an object")?;
+    ensure!(
+        object
+            .keys()
+            .all(|key| matches!(key.as_str(), "content" | "structuredContent" | "isError")),
+        "unreserved native context envelope extension"
+    );
+    ensure!(
+        object.get("isError").is_none_or(Value::is_boolean),
+        "invalid native context error flag"
+    );
+    let mut decoded_text = None;
+    if let Some(content) = object.get("content") {
+        let rows = content.as_array().context("native context content shape")?;
+        ensure!(rows.len() == 1, "unreserved native context content count");
+        let row = rows[0]
+            .as_object()
+            .context("native context content object")?;
+        ensure!(
+            row.len() == 2 && row.get("type").and_then(Value::as_str) == Some("text"),
+            "unreserved native context content extension"
+        );
+        let text = row
+            .get("text")
+            .and_then(Value::as_str)
+            .context("native context JSON text missing")?;
+        let decoded: Value = match serde_json::from_str(text) {
+            Ok(decoded) => decoded,
+            Err(_) if object.get("isError") == Some(&Value::Bool(true)) => {
+                // This existing opaque native failure is not invented JSON.
+                // Charge and retain its complete original envelope unchanged.
+                return Ok(serde_json::to_vec(value)?.len());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(structured) = object.get("structuredContent") {
+            ensure!(
+                &decoded == structured,
+                "native context representations disagree"
+            );
+        }
+        decoded_text = Some(decoded);
+    }
+    // Both callers use this owner: before materialization in frontend and
+    // afterward in Kernel. A text-only envelope is not its own canonical body.
+    let canonical = object
+        .get("structuredContent")
+        .or(decoded_text.as_ref())
+        .context("native context canonical body missing")?;
+    let bytes = serde_json::to_vec(canonical)?.len();
+    let fixed = serde_json::to_vec(
+        &json!({"content":[{"type":"text","text":""}],"structuredContent":null,"isError":false}),
+    )?
+    .len();
+    ensure!(
+        serde_json::to_vec(value)?.len()
+            <= bytes
+                .checked_mul(3)
+                .and_then(|n| n.checked_add(fixed))
+                .context("context envelope byte overflow")?,
+        "native context envelope exceeds proved bound"
+    );
+    Ok(bytes)
+}
+
 /// The actual capabilities route may share exactly equal native field groups.
 /// Every other read keeps its ordinary complete inline member representation.
 pub fn compose_capabilities(
@@ -539,13 +749,6 @@ fn compose_inner(
         for (allocation, report) in allocations.iter_mut().zip(&summary.members) {
             match &report.allowance {
                 Some(allowance) => {
-                    let count = inputs
-                        .iter()
-                        .find(|input| input.index_id == report.index_id)
-                        .map(|input| records(body(&input.result).0).map(|rows| rows.len()))
-                        .transpose()?
-                        .unwrap_or(0);
-                    allocation.limit = count.max(1);
                     allocation.max_bytes = allowance.resources.bytes;
                     allocation.deadline_ms = summary.budget.deadline_ms;
                 }
@@ -575,6 +778,9 @@ fn compose_inner(
             "native member result must be an object"
         );
         canonicalize_envelope(&mut input.result)?;
+        if context.is_some() {
+            context_member_payload_bytes(&input.result)?;
+        }
         ensure!(
             !inputs_by_id.contains_key(&input.index_id),
             "duplicate member execution"
@@ -582,6 +788,21 @@ fn compose_inner(
         validate_sources(&input.sources)?;
         encoded_size(&input.result, airk_core::MAX_RESPONSE_BYTES)?;
         inputs_by_id.insert(input.index_id, input);
+    }
+    if let Some(summary) = &context {
+        // Native successful envelopes can retain JSON in text only. Count the
+        // SAME authenticated/materialized body that ranking consumes below;
+        // inspecting the pre-materialized envelope mistakes it for zero hits.
+        for (allocation, report) in allocations.iter_mut().zip(&summary.members) {
+            if report.allowance.is_some() {
+                allocation.limit = inputs_by_id
+                    .get(&report.index_id)
+                    .map(|input| records(body(&input.result).0).map(|rows| rows.len()))
+                    .transpose()?
+                    .unwrap_or(0)
+                    .max(1);
+            }
+        }
     }
     let mut members = Vec::with_capacity(allocations.len());
     let mut publications = Vec::with_capacity(allocations.len());
@@ -794,7 +1015,7 @@ fn compose_inner(
             share_capability_fields(&mut bodies)?.map(|table| SharedNativeValues::Capabilities {
                 values: table.values,
             });
-    } else {
+    } else if result.context.is_none() {
         for (offset, member) in result.members.iter_mut().enumerate() {
             if matches!(
                 member.outcome,
@@ -835,8 +1056,18 @@ fn compose_inner(
         .context
         .as_ref()
         .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| {
-            summary.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES)
+            summary
+                .budget
+                .max_bytes
+                .min(airk_core::MAX_RESPONSE_BYTES)
+                .min(request.budgets.max_bytes)
         });
+    if result.context.is_some() {
+        while !result.ranking.is_empty() && encoded_size(&result, maximum).is_err() {
+            result.ranking.pop();
+            result.truncated = true;
+        }
+    }
     if encoded_size(&result, maximum).is_err() {
         if result.context.is_some() {
             return Err(ContextReplyBudget {

@@ -18,8 +18,8 @@
 //! equality inside a text is kept while fresh identifiers compare equal.
 // Strict new transport comparisons live separately. The original U95 v1
 // captures retain their approved, explicitly limited legacy comparison.
-pub mod strict;
 pub mod context;
+pub mod strict;
 
 use serde::{Deserialize, Serialize};
 use std::{

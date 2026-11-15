@@ -3666,3 +3666,212 @@ when launched from base Python; six affected controls pass from both base and
 venv without weakening the exact two-process or cleanup assertions. Fresh-checkout
 private artifact directories are prepared explicitly. Historic TRAIN execution
 source/seals are unchanged. Receipt: `receipts/training-execution-portability-r2.json`.
+
+### 2026-11-14 — whole Answer allocation and raw task evidence
+
+R26 workspace all-target/all-feature Clippy passed in27.93s. The following
+semantic emitter failed on an opaque native error that also carried structured
+error data; the correction retains and charges that complete envelope.
+R27 then passed9/9 focused tests across Kernel, Frontend and MCP, including
+actual Rust fixture emission, count/materialization, byte escaping, failed
+representations and one whole saved-source verification allocation. Command
+58.009s, tests1.250s; consumed groups unchanged. Receipt:
+`receipts/native-context-r27/`. This is scoped evidence, not final qualification.
+
+R28 CLI Clippy command passed28.152s, but its broad frontend snapshot changed
+while the approved Workbench bundler allowlist was repaired; that receipt does
+not establish frozen combined inputs. R29 actual component CLI/pipe/HTTPS MCP/
+Admin selected4, passed2 and failed2 in62.571s, inputs unchanged. Many/Open and
+Admin still refuse; retained service diagnostics identify a text-only native
+representation comparison defect. Correction and qualification remain pending.
+Receipt: `receipts/current-context-component-corrections-r29/`.
+
+The actual SmallIntern TRAIN/CAL complete trained readout passed126/126 rows
+(107TRAIN/19CAL), finite scores and zero compiler refusals. One process exited
+naturally in607.87s; peak4,952,195,072bytes; all109 pins unchanged. Raw output
+SHA256 `822a474a9ea4f9997d6e584ec936f607a5f5a00c6efb028b13491014fbbd55ae`.
+Receipt: `models/context-action-smallintern-raw-r24/execution.json`. These are
+raw task scores under identified historical profiles, not calibrated advice,
+current transport qualification or release qualification. SmallStrands raw
+execution is in progress; neither large model has started this task run.
+
+TRAIN-only source conversion passed8.292s with all2,421 inputs unchanged:
+54 source files and1,789 parents, no native planning, model forwards or gradients.
+Manifest SHA256 `4eefba97d8212eec6fea34abe880180110904513c7efb8099e700a637dd20cae`.
+Receipt: `models/native-parent-bag-proposal-r1/source-execution-r1/`.
+The proposed native-unit parent bags still require actual planning, objective/
+mask/resource review and separate frozen training inputs. The failed candidate
+DEV result is unchanged; FINAL remains sealed and unconsumed.
+
+R30 workspace Clippy passed24.185s; its11-test batch passed10 and exposed
+Windows PathBuf normalization in the new test-only source census stimulus.
+The census now rejects explicit CurDir/ParentDir components and the regression
+constructs a raw traversal, independently proving the stimulus is an alias.
+R31 selected one real many/Open transport test and failed with a distinct dated
+verification authority mismatch; no replay or cap change was attempted.
+
+Core now validates whole combined proofs against the owning typed publication
+vector authority and exact member roster, retaining all reference/index checks.
+R32 workspace Clippy passed46.955s. Its14 tests passed but the broad native
+snapshot changed solely through the concurrent approved Admin reseal; retain
+that limitation. R33 repeats the14 focused tests after the asset freeze and
+passes14/14 in14.842s (tests1.188s), all consumed groups unchanged. Receipts:
+`receipts/native-context-r30/`, `current-context-component-corrections-r31/`,
+`native-context-r32/`, `native-context-r33/`. R34 real transports are running.
+
+The native TRAIN-only planning stage failed its original60s deadline, one owned
+process exited through forced cleanup, peak51,822,592bytes, all input identities
+unchanged. No units or model quality were established. Diagnostics retained at
+`models/native-parent-bag-proposal-r1/native-unit-execution-r1/`; do not retry
+unchanged inputs or call this a pass. Phase diagnosis is pending.
+
+Windows static tool provisioning now uses Release-mode try_compile alongside
+the approved Embedded flags, preserving IPO/LTO. Owner-context configure passed
+naturally3.597s;31policy tests pass with one existing skip. A fresh full chain
+`ort130-x64-owned-r3` passed actual Ninja configure/build naturally3.522/20.529s;
+ORT compilation is still running. Old forced-cleanup chain remains unqualified.
+
+### 2026-11-14 — live transports, shared presentation and native preparation
+
+Shared verification fix committed/pushed as `6b6c865d` with Tyler Jensen's DCO;
+no PR. R37 CLI all-target Clippy passes without inference71.241s and with local
+inference36.342s. Its three strict prefix/whole-proof/fallback controls pass3/3
+(54.925s command,0.294s tests), frozen inputs. Real current single-index and
+many/Open Answer comparisons pass6.844/16.019s across CLI/pipe/HTTPS MCP.
+The actual3-case batch is2PASS/1FAIL: Admin's two successful Answers straddled
+native gen3 pending and gen4 ready; the comparator correctly rejected different
+publications. Extracted normalized full bodies prove the cause without replay.
+Receipt: `receipts/current-context-r37/`, including
+`admin-normalized-text-extraction.json`. The fixture-only correction waits for
+actual declared semantic readiness inside the same30s indexing deadline and
+retains raw plus normalized pairs before any final mismatch. Not yet rerun.
+
+Mac R14 applied its identified source, then stopped before Clippy at formatting.
+Mac R15 applied source `7b16d65d...cd184`; Clippy failed94.525s on two newly
+introduced CLI test syntax lints, with unchanged inputs. Required cleanup removed
+4,218files/925.9MiB and compiler observation is empty. Those assertion-preserving
+fixes passed the R37 Windows Clippy above. R16 exact two-file delta source
+`78dc37a5...6fbf3` passed local frozen-snapshot formatting, applied successfully,
+and its13-crate Mac Clippy passed94.274s; unchanged baseline/delivery tests are
+running. Retained source/run/fetch receipts live in `mac-current-read-r14/`,
+`mac-current-read-r15/`, `mac-current-read-r16/`; no full platform claim yet.
+
+The Root-owned tiny native TRAIN setup passed1/1 in1.42s under an external5s
+bound, natural exit and no forwards. Both original full preparation attempts
+failed their unchanged60s bounds while publishing lexical objects; R2 phase
+markers pinpoint indexing, after fast census/open/policy setup. Partial state
+contained1,037files/13.4MB, not evidence of completed publication. Revised private
+preparation uses the EXACT Kernel-owned canonical extraction callback before
+Store persistence, honestly labeled unpublished, retaining original54files/
+1,789parents and payload/profile/source/tensor proofs. TXT/PY full parity tests
+against actual Kernel publication are prepared, not yet run. Source `ae41b7bc...`;
+prior timeout receipts remain failed. Native preparation/calibration checks are
+currently running in `receipts/native-preparation-r38/` with two Cargo jobs.
+
+SmallStrands raw126/126 passes1250.98s, natural1PID,110pins unchanged,
+peak10,139,348,992bytes, raw SHA256
+`e7dbe89dadb91d61c0c62459aa5ac2e7d9a32997d2c1da59662c58671a2ef49c`.
+LargeIntern raw126/126 passes2363.54s, natural1PID,110pins unchanged,
+peak17,967,656,960bytes, raw SHA256
+`20ce785a6b4f71a1a861daa4afb5f731aa5a72d2bd66a89d3a419879fb1c2ff4`.
+Kev's original24GiB/5400s raw packet is running sequentially. All remain raw,
+unqualified task/release evidence. Native CAL-only genericRead proxy fitting is
+prepared, not executed; no Sufficient/semantic-role qualification or final-goal
+benefit is inferred from complement certificates.
+
+Shared UI source now includes the addressable Evidence tools hub, all retained
+guided routes, named browser Search scope and full advanced request/export paths.
+Returned scope is checked before associating derived results with the selected
+sources. Actual guided Search entrypoint browser checks pass5/5 in1.758s using
+all3unchanged Rust combined variants plus a real Context packet; native I3 scope
+headers are explicitly synthetic in this DOM check. Browser exit/ack/profile
+cleanup proved. Scope/transport and installed journeys remain separate.
+Portable metadata extraction has one injected-digest owner, unchanged Node APIs,
+exact framing/Rust goldens and25AST-equal moved bodies. Independent review found
+and closed post-validation mutation, stale-owner and recursive callback growth;
+source and node/browser controls pass. Final Admin assets are sealed at inventory
+`5adc817c1351b70f03f66c60216234a32ec60641815487e9a82b2991fb6713b2`,
+bundle `a1995926a66a74393bcf50ae3f6fdb0837e2502b2961b2d309c53fdd109460b3`,
+JS `app.9957df64.js`. Receipts: `metadata-owner-final.json`,
+`guided-search-shared-answer-root-r2.log`, `evidence-hub-final.json`.
+Full extension staging correctly still refuses the missing qualified publication
+capture; no guard was weakened.
+
+Fresh static chain R3 configure/build settled naturally28.439/2083.515s, but
+aggregation FAILED the unchanged2GiB input bound: global Embedded added Release
+/Z7 debug data. Corrected Release policy explicitly disables compiler debug info
+and keeps Release try_compile/IPO and all ownership gates. R7's no-.debug-section
+assumption failed on minimal .debug$S metadata; R8 compared both real objects but
+its final console-string assertion failed because NMake uses response files.
+Read-only R9 inspection proves actual empty flags and738B/no.debug$T versus
+Embedded2810B/-Z7/.debug$T, leaving prior failures intact. Independent source
+review approves the correction. Explicit optional8 build jobs retain default2,
+Ninja bootstrap2, strict complete canonical argv and all size/lifetime gates;
+44policy tests pass with one existing skip. Measured host32cores/64logical/
+128GiB supports this throughput choice. Fresh `ort130-x64-owned-r4` is running
+with8jobs; no fresh qualified static environment or matched pair exists yet.
+
+### 2026-11-14 23:55 UTC — fresh static chain and model qualification outcomes
+
+Fresh Windows static ORT R5 completed naturally: configure31.306s/build518.902s,
+original2GiB aggregate bound preserved, no forced descendants. Independent
+producer review approved current SHA a1772271...c044; bounded image-observer
+failure now retains handles before allocation. Environment verification passes
+`ort130-x64-owned-r5/cargo-aggregate-env.json`; this supersedes the unqualified
+old chain for forthcoming builds, not historical receipt identities. Receipts:
+`artifacts/advanced-split/ort130-x64-owned-r5/{build-receipt,static-aggregate-receipt}.json`
+and `artifacts/advanced-split/receipts/static-r5-verify.log`. Model/static-link
+qualification remains distinct. R41 uses R5 with persistent p10-target,
+incremental1/jobs8; scoped Clippy passes21.20s, remaining tests running.
+
+Mac R16 completed:13-crate no-inference Clippy94.274s, baseline57/57 and
+current-delivery33/33, natural235.78s overall. Mandatory cleanup removed6,450files/
+3.7GiB; compiler descendants empty. Exact source78dc37a5...6fbf3 and all29fetched
+records retained under `artifacts/advanced-split/mac-current-read-r16/observed-final/`.
+This qualifies that scoped snapshot only, not full platform/inference/release.
+
+Kev raw126/126 completed naturally2087.49s, peak17,971,032,064B below24GiB,
+110pins unchanged; raw845f9c29...a8a89. All four raw model runs are complete.
+Actual native CAL-only fit passed one test with80pins unchanged and no neural
+forwards, but ALL FOUR models are `unsupported_no_positive_safe_margin`.
+Each has an uncertified UNKNOWN Read-top margin above its largest certified
+Read-top margin. No threshold relaxation, calibration asset, profile activation
+or task-quality claim. Exact report15ace10a...b1b7 under
+`artifacts/advanced-split/models/context-action-native-calibration-fit-r40/generated/`.
+Source score orientation/head-position review found no concrete implementation
+bug. Excerpt observability remains a hypothesis, not an established cause.
+
+Unpublished TRAIN seam parity against actual Kernel publication passes3/3
+under original5s external bounds (blank/TXT/Python). Full R3 preparation then
+failed naturally1.55s on20original zero-length QASPER parents, all absent from
+fixed315positive/negative IDs. All1789source span hashes were valid. Current
+aca59bb8...8442 retains those20 as EMPTY_ORIGINAL_NOT_EVALUABLE/no units/no
+coverage rather than dropping originals; focused independent controls included
+in R41. Original R1/R2 timeouts and R3 failure retained. No new training yet.
+
+ANN typed emitter passed1/.75s; full378self-query probe hit its original60s
+bound, yielding no ANN metrics. Same authenticated reader repeatedly verifies
+32-level graph proofs. A private immutable authenticated-record cache with
+unchanged owning decoder/search/distance/query population has independent source
+approval; tiny equivalence/revocation/missing/malformed controls precede any next
+full run. This is diagnostic caching, not production latency qualification.
+
+R41 completed on frozen native b393ec03...c98c47 using R5 static libraries:
+scoped all-target/all-feature Clippy22.069s;8pure regressions14.584s/.102stest;
+2Admin readiness controls28.469s/1.021stest; actualAdmin sign-in/read/cross-plane
+parity1/1 passes24.329s/22.447stest. Inputs unchanged throughout. Receipt directory
+`artifacts/advanced-split/receipts/native-integration-r41/`. Actual TRAIN R4 then
+passed with1,262units/1,789retained parents, including20explicit empty originals,
+peak312,635,392B/natural1PID/no forwards/no input drift. UnitsSHA256
+2365e2cac155eed949eaad71e273a077597c985f5d16ad366b05af4d7a630d5e.
+Source-master fixed315 remains; conservative train-admission masks are being
+computed before any training. Receipt `models/native-parent-bag-proposal-r1/native-unit-execution-r4/execution.json`.
+
+ANN mounting initially preserved older source mtimes; R42 incorrectly reused
+old Cargo image (`fresh:true`, new smoke selector absent). No diagnostic result
+was claimed. Root updated mtimes without changing source bytes. R43 actual
+Clippy27.440s and8pure18.374s/.103stest pass; new image captured16.553s and
+retained immutable as cdb2e9d...864e48. Full probe remains pending. Repository
+check passes3,268publicfiles; formatting passes; one docs-only EOF whitespace
+was corrected afterward. Source review of the whole Answer change found no
+concrete production defect; current qualification remains scoped, not release.
