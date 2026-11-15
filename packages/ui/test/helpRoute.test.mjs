@@ -20,3 +20,13 @@ test('Help routes refuse active selectors and bound text without interpreting it
   assert.equal(actual.parseHelpLocation(new URLSearchParams({ q: 'x'.repeat(300) })).query.length, 256);
   assert.deepEqual(actual.parseHelpLocation(undefined), { query: '', guide: null, tool: '' });
 });
+
+
+test('both Help hosts use the exact task landing labels and inert existing guide destinations',()=>{
+  assert.deepEqual(actual.HELP_STARTING_TASKS,[['indexing.library','Create an index'],['management.agents','Connect an agent'],['recovering-errors','Find missing results']]);
+  const native={id:'engine.indexing.library',body:'Preserved native guide'},local={id:'recovering-errors',body:'Preserved Explorer guide'};
+  assert.equal(actual.helpStartingTopic([native,local],'indexing.library'),native);
+  assert.equal(actual.helpStartingTopic([native,local],'recovering-errors'),local);
+  assert.equal(actual.helpStartingTopic([],'management.agents'),undefined);
+  assert.equal(actual.helpStartingTopic([native,native],'indexing.library'),undefined,'ambiguous catalog must not choose arbitrary guidance');
+});

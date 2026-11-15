@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import {SHARED_CAPABILITY_REFERENCE,shareableCapabilityField,materializeCapabilityMember,DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
+export {SHARED_CAPABILITY_REFERENCE,shareableCapabilityField,materializeCapabilityMember,DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
 import { answerEvidenceRows, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
 import { CapabilityFieldDisplay, Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
@@ -7,24 +9,6 @@ export function workbenchStepReportOmissions(envelope:Value):number {
     return Array.isArray(envelope.steps)?Math.max(0,envelope.steps.length-WORKBENCH_MAX_STEP_REPORTS):0;
 }
 const stepReports=(envelope:Value):unknown[]=>Array.isArray(envelope.steps)?envelope.steps.slice(0,WORKBENCH_MAX_STEP_REPORTS):[];
-
-export const SHARED_CAPABILITY_REFERENCE='$airk_shared_capability_fields';
-const INLINE_CAPABILITY_FIELDS=new Set(['request_admission','runtime','work','scope_observation','publication','freshness','collection','generation','observed_unix_ms','cache_age_ms','cached','status_observation','request_id','query_concurrency','source_verification','error','requested_scope']);
-export function shareableCapabilityField(key:string):boolean {
-    return key.length>0&&key.length<=128&&/^[\x00-\x7f]+$/.test(key)&&!['__proto__','constructor','prototype'].includes(key)
-        &&!INLINE_CAPABILITY_FIELDS.has(key)&&!key.startsWith('runtime')&&!key.endsWith('_observation')&&key!==SHARED_CAPABILITY_REFERENCE;
-}
-/** This merge is display-only and accepts only a separately host-verified table.
- * No reference grants read authority or replaces the complete original result. */
-export function materializeCapabilityMember(raw:unknown,display?:CapabilityFieldDisplay):Value {
-    const body=readResultBody(raw);if(!Object.hasOwn(body,SHARED_CAPABILITY_REFERENCE))return body;
-    if(display?.state!=='verified')throw new Error(display?.state==='unavailable'?display.error:'Shared capability data has not been validated.');
-    const reference=body[SHARED_CAPABILITY_REFERENCE];
-    if(typeof reference!=='string'||!/^[0-9a-f]{64}$/.test(reference)||!Object.hasOwn(display.values,reference))throw new Error('Shared capability reference is unavailable.');
-    const fields=display.values[reference],inline={...body};delete inline[SHARED_CAPABILITY_REFERENCE];
-    if(Object.keys(fields).some(key=>!shareableCapabilityField(key)||Object.hasOwn(inline,key)))throw new Error('Shared capability fields conflict with native member fields.');
-    return {...fields,...inline};
-}
 
 export function continuationCursor(raw:unknown):string|undefined {
     const result=object(raw),content=object(result.content),evidence=object(result.evidence);
@@ -259,7 +243,7 @@ export function evidenceCards(envelope: Value): EvidenceCard[] {
 /** A display-only cache owned by one view, bounded to its current transcript.
  * Completed native envelopes are replaced, never mutated by WorkbenchView.
  * No export, continuation admission, citation validation or history read uses it. */
-export const DISPLAY_PROJECTION_TURNS=200;
+
 export class CurrentTurnProjections {
     private readonly retained=new Map<WorkbenchTurn,{envelope:Value|undefined;cards:EvidenceCard[];continuations:Continuation[]}>();
     project(turns:WorkbenchTurn[],resolve:(turn:WorkbenchTurn)=>Value|undefined=turn=>turn.envelope):{cards:Record<string,EvidenceCard[]>;continuations:Record<string,Continuation[]>} {

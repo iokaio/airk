@@ -40,7 +40,7 @@ LOCK = "packages/vscode/package-lock.json"
 # that resolves outside this list.
 MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serviceExtension.js",
            "serviceDashboard.js", "serviceClient.js", "serviceHttp.js", "serviceConsoleView.js",
-           "nativeGate.js", "nativeMetadata.js", "nativeOutcome.js", "readRetry.js", "model.js",
+           "nativeGate.js", "nativeMetadata.js", "nativeMetadataCodec.js", "nativeMetadataOwner.js", "nativeOutcome.js", "readRetry.js", "model.js",
            "privateDirectory.js", "mcpStdioSession.js", "sourceVerification.js", "publications.js",
            "agentConfig.js", "agentConfigHealth.js", "agentMigration.js", "agentReconnect.js", "agentToml.js",
            "unifiedAgentConfig.js",
@@ -265,6 +265,8 @@ def stage_runtime_modules(compiled, destination):
             raise ValueError("Oversized runtime module: " + name)
         if name == "uiPilotRuntime.js":
             verify_pilot_runtime(data)
+        if name == "nativeMetadataCodec.js":
+            verify_metadata_runtime(data)
         if name == "airkctl/bootstrap/provenance.js":
             verify_bootstrap_runtime(data)
         if name == "airkctl/bootstrap/release.js":
@@ -299,6 +301,17 @@ def verify_pilot_runtime(data, root=ROOT):
     text = data.decode("utf-8")
     if re.search(r'''\b(?:require|import)\s*\(''', text):
         raise ValueError("UI pilot runtime must not load external modules")
+
+
+def verify_metadata_runtime(data, root=ROOT):
+    """Authenticate the exact captured pure codec bytes against the single source producer."""
+    try:
+        result = subprocess.run(["node", str(root / "packages/vscode/scripts/build-metadata-codec.cjs"), "--verify-stdin"],
+                                input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("Metadata codec owner verification unavailable") from error
+    if result.returncode != 0 or result.stdout != b"verified\n":
+        raise ValueError("Metadata codec bundle failed owner verification; compile the extension")
 
 
 def verify_bootstrap_runtime(data, root=ROOT):

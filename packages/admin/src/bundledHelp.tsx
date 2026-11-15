@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import manifest from '../../ui/generated/help-manifest.json';
 import { helpExcerpt, helpScore } from '../../ui/src/helpSearch';
 import { helpToolPresentation, renderHelpNode } from '../../ui/src/helpToolPresentation';
-import { formatHelpLocation, parseHelpLocation } from '../../ui/src/helpRoute';
+import { HELP_STARTING_TASKS, formatHelpLocation, parseHelpLocation } from '../../ui/src/helpRoute';
 import { Markdown } from './help';
 import { Text } from './render';
 
@@ -38,9 +38,7 @@ export function BundledHelp(props: BundledHelpProps): JSX.Element {
   return <section class="panel bundled-help" aria-label="Offline Help">
     <h2>Find a guide</h2>
     <p>Installation, portable use, trust, indexes and recovery. Bundled AIRK {manifest.productVersion} guidance is available without a service connection.</p>
-    <div class="actions" aria-label="Help starting tasks">{[
-      ['indexing.library', 'Create an index'], ['management.agents', 'Connect an agent'], ['recovering-errors', 'Find missing results'],
-    ].map(([id, label]) => <button type="button" class="secondary" key={id} onClick={() => navigate({ guide: id! })}>{label}</button>)}</div>
+    <div class="actions" aria-label="Help starting tasks">{HELP_STARTING_TASKS.map(([id, label]) => <button type="button" class="secondary" key={id} onClick={() => navigate({ guide: id! })}>{label}</button>)}</div>
     <label>Search complete guides<input ref={search} type="search" value={query} maxLength={256} onInput={event => navigate({ query: event.currentTarget.value }, true)} /></label>
     <p role="status">{matches.length} matching guides</p>
     {matches.length === 0 ? <p>No guide matches. Your selected article and query remain available.</p> : null}

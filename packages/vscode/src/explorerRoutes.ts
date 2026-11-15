@@ -20,7 +20,7 @@ export const ROUTE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
 
 export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'overview', title: 'Overview', placement: 'main', tabs: [] },
-    { id: 'search', title: 'Search', placement: 'main', tabs: [{ id: 'query', title: 'Query' }, { id: 'recipes', title: 'Saved Searches' }] },
+    { id: 'search', title: 'Search', placement: 'main', tabs: [{ id: 'query', title: 'Query' }, { id: 'recipes', title: 'Saved Searches' }, { id: 'tools', title: 'Evidence tools' }] },
     { id: 'code', title: 'Code', placement: 'main', tabs: [{ id: 'symbols', title: 'Symbols' }, { id: 'references', title: 'References' }, { id: 'outline', title: 'Outline' }] },
     { id: 'docs', title: 'Documents', placement: 'main', tabs: [{ id: 'facts', title: 'Facts' }] },
     { id: 'evidence', title: 'Evidence', placement: 'main', tabs: [{ id: 'inspector', title: 'Inspector' }, { id: 'checker', title: 'Checker' }, { id: 'changes', title: 'Changes' }] },

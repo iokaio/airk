@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host projection of existing native receipts. It grants no live read authority.
+import type {NativeMetadataCodec} from './nativeMetadataCodec';
 import type { ContextResponseV2, NativeRead } from './generated/arbiter';
 import { object, type Value } from './workbenchContracts';
 import { nativeVerification, readResultBody } from './sourceVerification';
@@ -110,4 +111,10 @@ export function answerEvidenceRows(envelope: Value): Value[] {
             return [{ ...row, origin, publication: publication.token, step: record.id, result_pointer: `/hits/${hit}` }];
         });
     });
+}
+
+/** Browser/host callers may inject the same verified metadata owner before any navigation projection. */
+export function createAnswerNavigation(codec?:Pick<NativeMetadataCodec,'hasNativeMetadataReferences'|'materializeNativeMetadata'>) {
+    const logical=(raw:Value)=>codec?codec.materializeNativeMetadata(raw):raw;
+    return {answerPartitions:(raw:Value)=>answerPartitions(logical(raw)),answerEvidenceRows:(raw:Value)=>answerEvidenceRows(logical(raw))};
 }

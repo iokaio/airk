@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const manifest = JSON.parse(await readFile(new URL('../generated/help-manifest.json', import.meta.url), 'utf8'));
 let browser;
 before(async () => { if (browserAvailable) browser = await browserHarness(); });
-after(async () => { await browser?.close(); });
+after(async t => { try { await browser?.close(); } finally { t.diagnostic(JSON.stringify({browser_ownership:browser?.observation})); } });
 
 for (const host of ['browser', 'editor']) {
   test(`shared Help ${host}: real full-text selection, article focus and complete native tool definition at390px`,
@@ -49,6 +49,13 @@ for (const host of ['browser', 'editor']) {
       await browser.observed(`document.activeElement?.tagName==='ARTICLE'`);
       assert.equal(await browser.evaluate(`document.activeElement.textContent.includes(${JSON.stringify(title)})`), true);
       assert.ok(await browser.evaluate('document.activeElement.getBoundingClientRect().top<100'), 'selected article is first in the compact viewport');
+      for(const [label,guide]of [['Create an index','indexing.library'],['Connect an agent','management.agents'],['Find missing results','recovering-errors']]){
+        const topic=manifest.topics.find(topic=>topic.id===guide);assert.ok(topic,'reviewed existing guide is bundled');
+        await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.trim()===${JSON.stringify(label)}).click()`);
+        await browser.observed(`document.activeElement?.tagName==='ARTICLE'`);
+        assert.equal(await browser.evaluate(`document.activeElement.textContent.includes(${JSON.stringify(topic.title)})`),true,`${label} selects the preserved guide`);
+        assert.ok(await browser.evaluate('document.activeElement.getBoundingClientRect().top<100'),'task selection brings article ahead of the long catalog');
+      }
       await browser.evaluate(`{const details=[...document.querySelectorAll('details')].find(details=>details.querySelector('summary')?.textContent==='Bundled public tool reference');details.open=true;const select=details.querySelector('select');select.value='help';select.dispatchEvent(new Event('change',{bubbles:true}));}`);
       await browser.observed(`document.body.textContent.includes('Complete native tool definition (JSON)')`);
       const tool = manifest.tools.find(tool => tool.name === 'help');

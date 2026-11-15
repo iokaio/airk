@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { JSX } from 'preact';
+import { h, type ComponentChildren, type JSX } from 'preact';
+import {useRef} from 'preact/hooks';
 import { ExplorerViewState } from '../explorerContracts';
 import type { SearchRecipe } from '../explorerStrategies';
 import type { NavigationFilters } from '../explorerDrafts';
@@ -16,11 +17,12 @@ import { LibraryScreen, StudioScreen } from './strategies';
 import { IndexingScreen } from './indexing';
 import { ActivityScreen, UsageScreen } from './manageViews';
 import { AgentsScreen } from './agents';
-import { editorDestination, MAIN_DESTINATIONS } from '../../../ui/src/navigation';
+import { editorDestination, MAIN_DESTINATIONS, evidenceToolsPresentation, isEvidenceToolRoute, type EvidenceToolsNode } from '../../../ui/src/navigation';
 import { SharedManagement } from './sharedManagement';
 
 export interface ScreenProps {
     manageEmbedded?: boolean;
+    lastEvidenceRoute?: string;
     route: Route;
     state: ExplorerViewState;
     go(route: Route): void;
@@ -43,6 +45,7 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'manage/overview': AdminHandoffScreen,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
+    'search/tools': EvidenceToolsScreen,
     // U103: activity and usage are read here; U104: agents are connected here; the other Management tabs open AIRK Admin.
     'manage/activity': ActivityScreen,
     'manage/repair': AdminHandoffScreen,
@@ -67,21 +70,36 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'help': HelpScreen,
 };
 
+function EvidenceToolsScreen(props:ScreenProps):JSX.Element {
+    const show=(value:EvidenceToolsNode|string):ComponentChildren=>typeof value==='string'?value:h(value.tag,
+        {...(value.href?{href:value.href}:{}),...(value.route?{type:'button',onClick:()=>{const route=parseRoute(value.route!);if(route)props.go(route);}}:{})},...value.children.map(show));
+    return <div class="evidence-tools" aria-label="Evidence tools hub">{show(evidenceToolsPresentation('editor',props.lastEvidenceRoute))}</div>;
+}
+
 export function WorkspaceView(props: ScreenProps) {
     const workspace = WORKSPACES.find(entry => entry.id === props.route.workspace)!;
     const key = routeKey(props.route);
+    const activeEvidence=isEvidenceToolRoute(key),hub=key==='search/tools';
+    const held=useRef<ScreenProps>();
+    const sameOwner=(prior:ScreenProps)=>prior.state.selectedProject===props.state.selectedProject&&prior.state.selectionEpoch===props.state.selectionEpoch
+        &&prior.state.trusted===props.state.trusted&&prior.state.nativeExecutionEnabled===props.state.nativeExecutionEnabled;
+    if(held.current&&!sameOwner(held.current))held.current=undefined;
+    if(activeEvidence)held.current=props;else if(!hub)held.current=undefined;
+    const retained=activeEvidence?props:hub?held.current:undefined;
+    const RetainedScreen=retained&&props.state.features[routeKey(retained.route)]==='implemented'?SCREENS[routeKey(retained.route)]:undefined;
     const Screen = props.state.features[key] === 'implemented' ? SCREENS[key] : undefined;
     const management = workspace.id === 'manage';
     const tabs = workspace.tabs;
     const activeTab = props.route.tab;
     const destination = editorDestination(key);
-    const title = MAIN_DESTINATIONS.find(entry => entry.id === destination)?.title ?? workspace.title;
+    const title = activeEvidence?workspace.title:MAIN_DESTINATIONS.find(entry => entry.id === destination)?.title ?? workspace.title;
     const sharedPage = ({ 'manage/activity': 'activity', 'manage/repair': 'recovery', 'manage/storage': 'storage',
         'manage/service': 'service', 'manage/agents': 'agents', 'manage/usage': 'usage', 'manage/logs': 'logs',
         'indexing/library': 'index-library' } as const)[key as 'manage/activity'];
     return (
         <section class="workspace">
-            <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>{title}</h1></div>
+            <div class="workspace-heading"><div><p class="eyebrow">{activeEvidence?'Search → Evidence tools':'AIRK workspace'}</p><h1 tabIndex={-1}>{title}</h1></div>
+                {activeEvidence&&<button type="button" class="ghost" onClick={()=>props.go({workspace:'search',tab:'tools'})}>Back to Evidence tools</button>}
             </div>
             <div>
             {tabs.length > 0 && !(management && sharedPage && props.state.adminManagement) && (
@@ -112,8 +130,9 @@ export function WorkspaceView(props: ScreenProps) {
                     const destination = parseRoute(routes[page]); if (destination) props.go(destination);
                 }} />
             </section> : null}
-            {sharedPage && props.state.adminManagement ? <details><summary>Retained editor workflows</summary>{Screen ? <Screen {...props} /> : null}</details>
-                : Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            {retained&&RetainedScreen?<section hidden={hub} data-retained-evidence-view={routeKey(retained.route)}><RetainedScreen key={`${routeKey(retained.route)}:${retained.state.selectedProject}:${retained.state.selectionEpoch}:${retained.navigation?.route===routeKey(retained.route)?retained.navigation.serial:''}`} {...retained}/></section>:null}
+            {!activeEvidence&&(sharedPage && props.state.adminManagement ? <details><summary>Retained editor workflows</summary>{Screen ? <Screen {...props} /> : null}</details>
+                : Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />)}</div>
             </div>
         </section>
     );

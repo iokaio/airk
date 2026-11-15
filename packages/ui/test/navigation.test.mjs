@@ -38,5 +38,39 @@ test('retained editor evidence workflows and management links still parse withou
     'review/changes', 'review/impact', 'review/tests', 'strategies/library', 'strategies/studio', 'strategies/planner',
     'indexing/window', 'indexing/projects', 'manage/overview', 'manage/storage', 'manage/repair', 'manage/usage', 'manage/logs']) assert.ok(actual.editorRoute(route), route);
   assert.equal(actual.editorDestination('manage/logs'), 'activity'); assert.equal(actual.editorDestination('manage/repair'), 'service');
-  assert.equal(actual.editorDestination('review/tests'), null);
+  assert.equal(actual.editorDestination('review/tests'), 'search');
+  assert.equal(actual.editorRoute('search/tools').tab,'tools');
+});
+
+
+test('Evidence tools retains every guided route and browser limitations without inventing a generic runner',()=>{
+  assert.deepEqual(actual.EVIDENCE_TOOLS.flatMap(group=>group.entries.map(([route])=>route)),[
+    'code/symbols','code/references','code/outline','docs/facts','evidence/inspector','evidence/checker','evidence/changes',
+    'review/changes','review/impact','review/tests','strategies/library','strategies/studio','strategies/planner']);
+  for(const route of ['code/symbols','docs/facts','evidence/checker','review/tests','strategies/planner']){
+    assert.ok(actual.editorRoute(route));assert.equal(actual.editorDestination(route),'search');assert.equal(actual.isEvidenceToolRoute(route),true);
+  }
+  assert.equal(actual.isEvidenceToolRoute('code/arbitrary'),false);assert.equal(actual.isEvidenceToolRoute('command:execute'),false);
+  const flatten=node=>typeof node==='string'?[node]:[node,...node.children.flatMap(flatten)];
+  assert.equal(flatten(actual.evidenceToolsPresentation('editor','code/symbols')).filter(node=>typeof node!=='string'&&node.route==='code/symbols').length,2);
+  const browser=flatten(actual.evidenceToolsPresentation('browser','code/symbols'));
+  assert.ok(browser.some(node=>typeof node==='string'&&node.includes('migration is not complete')));
+  assert.equal(browser.some(node=>typeof node!=='string'&&node.route!==undefined),false,'browser never pretends to execute editor guided operations');
+});
+
+
+test('browser Evidence tools Help next steps resolve actual complete bundled topics',async()=>{
+  const manifest=JSON.parse(await readFile(new URL('../generated/help-manifest.json',import.meta.url),'utf8'));
+  for(const group of actual.EVIDENCE_TOOLS)assert.equal(manifest.topics.filter(topic=>topic.id===group.guide).length,1,group.title);
+});
+
+
+test('owning native Explorer catalog includes the inert hub while retaining every literal old navigation target',async()=>{
+  const catalog=JSON.parse(await readFile(new URL('../../../crates/airk-mcp/src/unified_explorer.json',import.meta.url),'utf8'));
+  const tool=catalog.find(tool=>tool.name==='airk_explorer_suggest_navigation');assert.ok(tool);
+  assert.deepEqual(tool.inputSchema.properties.route.enum,[
+    'overview','search/query','search/recipes','search/tools','code/symbols','code/references','code/outline','docs/facts',
+    'evidence/inspector','evidence/checker','evidence/changes','review/changes','review/impact','review/tests',
+    'strategies/library','strategies/studio','strategies/planner','indexing/window','indexing/library','indexing/projects',
+    'manage/overview','manage/activity','manage/storage','manage/repair','manage/service','manage/agents','manage/usage','manage/logs','help']);
 });

@@ -139,6 +139,7 @@ test('Explorer webview sources import only Preact, their own files and contracts
                 || specifier === 'airk-shared-admin-css');
             const shared = target(file, specifier) === '../../ui/src/pilotPresentation'
                 || target(file, specifier) === '../../ui/src/helpSearch'
+                || target(file, specifier) === '../../ui/src/helpRoute'
                 || target(file, specifier) === '../../ui/src/helpMarkdown'
                 || target(file, specifier) === '../../ui/src/helpToolPresentation'
                 || target(file, specifier) === '../../ui/src/navigation'

@@ -5,7 +5,7 @@ import type { JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { IndexSelect, useIndexes } from './activity';
 import { isUnknownOutcome, reviewedCall } from './api';
-import { body, isDigest, isIncarnation, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
+import { body, isDigest, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
   bindingsIn,
   Command,
@@ -19,8 +19,6 @@ import {
   useCall,
 } from './render';
 import { ProgressPanel } from './progress';
-import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
-import { concurrencyNote, typedScopeCount } from './scopeConcurrency';
 import { generatedAction } from './generatedActions';
 import { currentSession } from './session';
 import type { CallResult } from './api';
@@ -366,124 +364,4 @@ export function Logs(): JSX.Element {
   );
 }
 
-export function Search(): JSX.Element {
-  const [catalog, runCatalog] = useCall();
-  const [scope, runScope] = useCall();
-  const [search, runSearch] = useCall();
-  const [namespace, setNamespace] = useState('');
-  const [revision, setRevision] = useState('');
-  const [indexIds, setIndexIds] = useState('');
-  const [projectIds, setProjectIds] = useState('');
-  const [tool, setTool] = useState('airk_search');
-  const [query, setQuery] = useState('');
-  const [limit, setLimit] = useState(10);
-  const [extra, setExtra] = useState('');
-  const [mode, setMode] = useState<'terse' | 'full'>('full');
-  const revisionNumber = /^\d+$/.test(revision) ? Number.parseInt(revision, 10) : null;
-  const scopeValid =
-    isIncarnation(namespace) && revisionNumber !== null && list(indexIds).length + list(projectIds).length > 0;
-  // (U108) Informational only: the selection can be used whatever the note says.
-  const concurrency = useQueryConcurrency();
-  const typed = typedScopeCount(list(indexIds), list(projectIds));
-  const scopeNote = concurrencyNote({ indexes: typed.count, atLeast: !typed.exact, concurrency, subject: 'scope' });
-  let extraArgs: Record<string, unknown> | null = {};
-  if (extra.trim() !== '') {
-    try {
-      const parsed: unknown = JSON.parse(extra);
-      extraArgs =
-        typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : null;
-    } catch {
-      extraArgs = null;
-    }
-  }
-  const args = (): Record<string, unknown> => ({ ...(extraArgs ?? {}), ...(query !== '' ? { query } : {}), limit });
-  return (
-    <>
-      <Panel title="1. Choose indexes">
-        <p>
-          This selection belongs to this management session only. It does not change any editor window's scope
-          or any agent connection's grant.
-        </p>
-        <button
-          type="button"
-          class="secondary"
-          onClick={() => void runCatalog(OPS.catalogPage, body.catalogIndexes(null))}
-        >
-          List catalog indexes
-        </button>
-        <Outcome state={catalog} />
-        <div class="row">
-          <Field
-            label="Namespace"
-            value={namespace}
-            invalid={namespace !== '' && !isIncarnation(namespace)}
-            onInput={setNamespace}
-          />
-          <Field
-            label="Expected catalog revision"
-            value={revision}
-            invalid={revision !== '' && revisionNumber === null}
-            onInput={setRevision}
-          />
-        </div>
-        <div class="row">
-          <Field label="Index ids" wide value={indexIds} placeholder="idx_…" onInput={setIndexIds} />
-          <Field label="Project ids" wide value={projectIds} placeholder="prj_…" onInput={setProjectIds} />
-        </div>
-        <button
-          type="button"
-          disabled={!scopeValid}
-          onClick={() =>
-            void runScope(
-              OPS.searchSelectScope,
-              body.searchSelectScope(namespace, revisionNumber ?? 0, list(indexIds), list(projectIds)),
-            )
-          }
-        >
-          Use this selection
-        </button>
-        <ConcurrencyNote text={scopeNote} />
-        <Outcome state={scope} />
-      </Panel>
-      <Panel title="2. Search">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (extraArgs === null || tool === '') return;
-            void runSearch(OPS.searchCall, body.searchCall(tool, args(), mode));
-          }}
-        >
-          <div class="row">
-            <Field label="Tool" value={tool} onInput={setTool} />
-            <Field label="Query" wide value={query} onInput={setQuery} />
-            <NumberField label="Limit" value={limit} min={1} max={MAX_PAGE_LIMIT} onInput={setLimit} />
-            <label class="field narrow">
-              Response
-              <select value={mode} onChange={(event) => setMode(event.currentTarget.value === 'terse' ? 'terse' : 'full')}>
-                <option value="full">full</option>
-                <option value="terse">terse</option>
-              </select>
-            </label>
-          </div>
-          <label class="field wide">
-            Other arguments (JSON object, optional)
-            <textarea
-              rows={3}
-              spellcheck={false}
-              class={extraArgs === null ? 'invalid' : ''}
-              value={extra}
-              onInput={(event) => setExtra(event.currentTarget.value)}
-            />
-          </label>
-          <button type="submit" disabled={extraArgs === null || tool === ''}>
-            Search
-          </button>
-        </form>
-        <p class="muted">Results are indexed evidence and are shown as plain text.</p>
-        <Outcome state={search} />
-      </Panel>
-    </>
-  );
-}
+export { Search } from './SearchScreen';

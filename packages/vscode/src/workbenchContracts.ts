@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Pure host/webview contract. Evidence content is always inert text. */
 import type { PublicationRelation } from './publications';
+import type {CapabilityFieldDisplay} from './nativeMetadataCodec';
 import type { Budget } from './generated/arbiter';
 export const WORKBENCH_CONTEXT_BUDGET: Readonly<Budget> = Object.freeze({ calls: 8, rounds: 3, fanout: 8, input_tokens: 2048, candidates: 32, max_bytes: 262144, deadline_ms: 30000 });
 export type Value = Record<string, unknown>;
 /** Core workbench::MAX_STEP_REPORTS: twelve calls with six bound report slots. */
-export const WORKBENCH_MAX_STEP_REPORTS=72;
+export {WORKBENCH_MAX_STEP_REPORTS} from './nativeMetadataCodec';
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
 export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string;
     /** Full original native error reply, never a fabricated successful result. */
@@ -79,7 +80,7 @@ export interface EvidenceCard { id: string; path: string; start: number; end: nu
 export interface Continuation { id:string; tool:string; callsRemaining:number;requiredRecordBytes?:number }
 export interface WorkbenchSessionSummary { id: string; title: string; updatedAt: number; turns: number }
 /** Verified by the host for presentation only; native envelopes remain unchanged. */
-export type CapabilityFieldDisplay={state:'verified';values:Record<string,Value>}|{state:'unavailable';error:string};
+export type {CapabilityFieldDisplay} from './nativeMetadataCodec';
 export interface WorkbenchState {
     referenceRefresh?:Value[];
     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;

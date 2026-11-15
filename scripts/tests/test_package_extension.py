@@ -395,9 +395,10 @@ class VsixContracts(unittest.TestCase):
             self.assertIn(image, {"images/" + name for name in package.ILLUSTRATIONS})
             self.assertTrue((package.ROOT / "docs" / image).is_file())
 
+    @mock.patch.object(package, "verify_metadata_runtime")
     @mock.patch.object(package, "verify_bootstrap_runtime")
     @mock.patch.object(package, "verify_bootstrap_release_runtime")
-    def test_runtime_import_closure_includes_controls_without_test_extras(self, verify_release, verify_bootstrap):
+    def test_runtime_import_closure_includes_controls_without_test_extras(self, verify_release, verify_bootstrap, verify_metadata):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"
             for name in package.MODULES:
@@ -418,6 +419,7 @@ class VsixContracts(unittest.TestCase):
             (compiled / "generated" / "i2.js").write_text("not runtime", encoding="utf-8")
             stage = Path(directory) / "stage"
             package.stage_runtime_modules(compiled, stage)
+            verify_metadata.assert_called_once_with((compiled / "nativeMetadataCodec.js").read_bytes())
             verify_bootstrap.assert_called_once_with((compiled / "airkctl/bootstrap/provenance.js").read_bytes())
             verify_release.assert_called_once_with((compiled / "airkctl/bootstrap/release.js").read_bytes())
             self.assertEqual({p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}, set(package.MODULES))
@@ -461,9 +463,10 @@ class VsixContracts(unittest.TestCase):
                     package.verify_pilot_runtime(runtime, root)
                 target.write_bytes(original)
 
+    @mock.patch.object(package, "verify_metadata_runtime")
     @mock.patch.object(package, "verify_bootstrap_runtime")
     @mock.patch.object(package, "verify_bootstrap_release_runtime")
-    def test_ui_pilot_runtime_missing_refuses_before_any_staging(self, _verify_release, _verify_bootstrap):
+    def test_ui_pilot_runtime_missing_refuses_before_any_staging(self, _verify_release, _verify_bootstrap, _verify_metadata):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"
             for name in package.MODULES:
@@ -476,6 +479,22 @@ class VsixContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid or oversized runtime module: uiPilotRuntime.js"):
                 package.stage_runtime_modules(compiled, destination)
             self.assertFalse(destination.exists())
+
+    def test_metadata_runtime_uses_owner_on_exact_captured_bytes(self):
+        captured = b"// captured pure metadata runtime, not a mutable reread\n"
+        self.assertIn("nativeMetadataCodec.js", package.MODULES)
+        self.assertIn("nativeMetadataOwner.js", package.MODULES)
+        with mock.patch.object(package.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"verified\n", b"")) as run:
+            package.verify_metadata_runtime(captured)
+            self.assertEqual(run.call_args.args[0], ["node", str(package.ROOT / "packages/vscode/scripts/build-metadata-codec.cjs"), "--verify-stdin"])
+            self.assertEqual(run.call_args.kwargs["input"], captured)
+        for result in (subprocess.CompletedProcess([], 1, b"", b"changed source"), subprocess.CompletedProcess([], 0, b"verified\nextra\n", b"")):
+            with self.subTest(result=result), mock.patch.object(package.subprocess, "run", return_value=result):
+                with self.assertRaisesRegex(ValueError, "failed owner verification"):
+                    package.verify_metadata_runtime(captured)
+        with mock.patch.object(package.subprocess, "run", side_effect=subprocess.TimeoutExpired("node", 30)):
+            with self.assertRaisesRegex(ValueError, "verification unavailable"):
+                package.verify_metadata_runtime(captured)
 
     def test_bootstrap_runtime_uses_owning_node_verifier_on_exact_captured_bytes(self):
         captured = b"// exact captured bundle, not a reread\n"

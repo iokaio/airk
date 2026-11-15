@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { RECIPE_SCHEMA, type SearchRecipe } from '../explorerStrategies';
 import { formatRoute, parseRoute, Route, routeKey, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
@@ -18,14 +18,16 @@ import { acceptSearchSession, selectSearchProject } from './searchStore';
 import { Notice, NoticeContext, noticeKey } from './notices';
 import { AgentConfigAlert } from './projectStatus';
 import { openAdmin } from './adminLinks';
-import { editorDestination, MAIN_DESTINATIONS } from '../../../ui/src/navigation';
+import { editorDestination, MAIN_DESTINATIONS, isEvidenceToolRoute } from '../../../ui/src/navigation';
 
-interface Persisted { route?: string; lens?: string; themed?: boolean }
+interface Persisted { route?: string; lens?: string; themed?: boolean; lastEvidenceRoute?:string }
 
 export function App() {
     const persisted = savedState<Persisted>() ?? {};
     const [state, setState] = useState<ExplorerViewState | undefined>();
     const [route, setRoute] = useState<Route>(parseRoute(persisted.route ?? '#overview') ?? { workspace: 'overview' });
+    const [lastEvidenceRoute,setLastEvidenceRoute]=useState<string|undefined>(isEvidenceToolRoute(persisted.lastEvidenceRoute)?persisted.lastEvidenceRoute:undefined);
+    const main=useRef<HTMLElement>(null),hubReturn=useRef<{route:string;owner:string;scroll:number;focus?:HTMLElement}>(),restoreHub=useRef(false);
     const [palette, setPalette] = useState(false);
     const [pill, setPill] = useState(false);
     const [themed, setThemed] = useState(persisted.themed !== false);
@@ -65,7 +67,8 @@ export function App() {
         return () => { stop(); window.removeEventListener('keydown', keys); };
     }, []);
 
-    useEffect(() => { saveState({ ...savedState<Persisted>(), route: formatRoute(route) }); }, [route]);
+    useEffect(() => { const key=routeKey(route);if(isEvidenceToolRoute(key))setLastEvidenceRoute(key);saveState({ ...savedState<Persisted>(), route: formatRoute(route),lastEvidenceRoute:isEvidenceToolRoute(key)?key:lastEvidenceRoute }); }, [route,lastEvidenceRoute]);
+    useLayoutEffect(()=>{if(restoreHub.current&&hubReturn.current){restoreHub.current=false;const prior=hubReturn.current;if(prior.owner===`${state?.selectedProject}:${state?.selectionEpoch}:${state?.trusted}:${state?.nativeExecutionEnabled}`&&prior.route===routeKey(route)){if(main.current)main.current.scrollTop=prior.scroll;if(prior.focus?.isConnected)prior.focus.focus({preventScroll:true});}}},[route,state?.selectedProject,state?.selectionEpoch]);
     // Nested project views share this observer; child unmounts cannot turn it off.
     // A failed host request is shown, never swallowed.
     const surface = (failure: unknown) => setSourceError(failure instanceof Error ? failure.message : String(failure));
@@ -75,7 +78,12 @@ export function App() {
         return () => { if (open) { void request('manage.observe', { open: false }).catch(surface); } };
     }, [route.workspace]);
 
-    const go = (next: Route) => { setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) }); };
+    const go = (next: Route) => {
+        const current=routeKey(route),destination=routeKey(next);
+        if(destination==='search/tools'&&isEvidenceToolRoute(current))hubReturn.current={route:current,owner:`${state?.selectedProject}:${state?.selectionEpoch}:${state?.trusted}:${state?.nativeExecutionEnabled}`,scroll:main.current?.scrollTop??0,focus:document.activeElement instanceof HTMLElement?document.activeElement:undefined};
+        restoreHub.current=current==='search/tools'&&hubReturn.current?.route===destination;
+        setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) });
+    };
     const chooseSource = async () => {
         setChoosingSource(true); setSourceError(undefined);
         try { await request('source.choose', {}); }
@@ -143,7 +151,7 @@ export function App() {
                 goStudio={() => go({ workspace: 'strategies', tab: 'studio' })} goPlanner={() => go({ workspace: 'strategies', tab: 'planner' })} go={go} />}
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
-                <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
+                <main ref={main} class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
                     {route.workspace === 'overview' && <div class="project-context">
                         <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} onError={surface} />
                     </div>}
@@ -156,7 +164,7 @@ export function App() {
                         <button type="button" onClick={() => { void request('extension.reload', {}).catch(surface); }}>Reload to finish update</button>
                     </Notice>}
                     {route.workspace === 'overview' ? <Overview state={state} project={project} go={go} /> : null}
-                    <div hidden={route.workspace === 'overview'}><WorkspaceView route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
+                    <div hidden={route.workspace === 'overview'}><WorkspaceView lastEvidenceRoute={lastEvidenceRoute} route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
                             inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
                             runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} /></div>
                 </main>

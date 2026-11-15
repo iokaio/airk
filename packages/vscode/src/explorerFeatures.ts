@@ -9,7 +9,7 @@ import { ROUTE_KEYS } from './explorerRoutes';
 export type Availability = 'implemented' | 'prototype_only' | 'unsupported' | 'disabled';
 
 /** Change an entry only in the commit that ships the route, together with its help topic. */
-const IMPLEMENTED: ReadonlySet<string> = new Set<string>(['overview', 'search/query', 'search/recipes', 'manage/overview', 'manage/activity', 'manage/repair', 'manage/storage', 'manage/service', 'manage/agents', 'manage/usage', 'manage/logs', 'code/symbols', 'code/references', 'code/outline', 'docs/facts', 'evidence/inspector', 'evidence/checker', 'evidence/changes', 'review/changes', 'review/impact', 'review/tests', 'strategies/library', 'strategies/studio', 'strategies/planner', 'help']);
+const IMPLEMENTED: ReadonlySet<string> = new Set<string>(['overview', 'search/query', 'search/recipes', 'search/tools', 'manage/overview', 'manage/activity', 'manage/repair', 'manage/storage', 'manage/service', 'manage/agents', 'manage/usage', 'manage/logs', 'code/symbols', 'code/references', 'code/outline', 'docs/facts', 'evidence/inspector', 'evidence/checker', 'evidence/changes', 'review/changes', 'review/impact', 'review/tests', 'strategies/library', 'strategies/studio', 'strategies/planner', 'help']);
 
 const CATALOG_SCREENS = new Set(['indexing/window', 'indexing/library', 'indexing/projects']);
 export const FEATURES: Readonly<Record<string, Availability>> = Object.freeze(Object.fromEntries(

@@ -18,10 +18,12 @@ const SHARED_MANAGEMENT_INPUTS = [
     ...['activity.tsx', 'activityRequests.ts', 'agents.tsx', 'api.ts', 'app.tsx', 'arbiter.tsx', 'bundledHelp.tsx',
         'catalogRequests.ts', 'concurrencyNote.tsx', 'envelope.ts', 'folderPicker.tsx', 'generatedActions.ts', 'help.tsx',
         'indexLibrary.tsx', 'operations.ts', 'pages.tsx', 'pageVisibility.ts', 'pilotPane.tsx', 'preparedActions.tsx', 'preparedMutations.ts',
-        'progress.tsx', 'render.tsx', 'scopeConcurrency.ts', 'session.ts', 'usage.tsx'].map(file => `../admin/src/${file}`),
+        'progress.tsx', 'render.tsx', 'SearchScreen.tsx', 'scopeConcurrency.ts', 'session.ts', 'usage.tsx'].map(file => `../admin/src/${file}`),
     ...['browserPilot.ts', 'helpMarkdown.ts', 'helpRoute.ts', 'helpSchema.ts', 'helpSearch.ts', 'helpToolPresentation.ts',
-        'management.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts']
+        'management.ts', 'nativeMetadataCodec.ts', 'answerPresentation.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts']
         .map(file => `../ui/src/${file}`), '../ui/generated/help-manifest.json',
+    // Shared Search reuses the existing pure UI budget/validation owner, never a host/session controller.
+    'src/workbenchContracts.ts', 'src/workbenchAnswerNavigation.ts', 'src/sourceVerification.ts',
 ];
 function pilotRuntimeSourceSeal(repository = path.resolve(root, '../..')) {
     const hash = crypto.createHash('sha256').update('AIRK-UI-PILOT-RUNTIME-1\0');
@@ -191,7 +193,7 @@ async function build() {
     checkInputs('Webview', webview.metafile, [/^src\/explorerWebview\//, ...CONTRACTS, ...SHARED_MANAGEMENT_INPUTS, /^node_modules\/preact\//, /^airk-explorer-help:/, /^airk-shared-admin-css:/]);
     const workbench = await esbuild.build({ ...common, entryPoints: ['src/workbenchWebview/main.tsx'], outfile: 'out/workbenchWebview.js',
         format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', banner: { js: preactBanner() } });
-    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, '../ui/src/answerPresentation.ts', 'src/workbenchContracts.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
+    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, '../ui/src/answerPresentation.ts', '../ui/src/nativeMetadataCodec.ts', 'src/workbenchAnswerNavigation.ts', 'src/workbenchContracts.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
     const assistance = await esbuild.build({
         ...common,
         entryPoints: ['src/explorerAssistance/main.ts'],

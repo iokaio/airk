@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import {readResultBody} from './nativeMetadataCodec';
+export {readResultBody} from './nativeMetadataCodec';
 /** Dated native observations remain inert evidence; viewing/exporting never checks a file. */
 import {EvidenceCard,object,Value,WORKBENCH_MAX_STEP_REPORTS} from './workbenchContracts';
 
@@ -53,17 +55,6 @@ export function nativeSavedSourceState(raw:unknown,expectedHash:string,publicati
 }
 
 /** Unwrap actual native structured responses; parse text only in error envelopes. */
-export function readResultBody(raw:unknown):Value {
-    const value=object(raw);
-    if(Array.isArray(value.content)&&Object.keys(object(value.structuredContent)).length)return object(value.structuredContent);
-    if(value.isError===true&&Array.isArray(value.content)){
-        if(Object.keys(object(value.structuredContent)).length)return object(value.structuredContent);
-        const text=object(value.content[0]).text;
-        if(typeof text==='string'&&text.length<=524288){try{return object(JSON.parse(text));}catch{/* Original wrapper remains in Complete response. */}}
-    }
-    return value;
-}
-
 export interface SelectedVerification {requested:boolean;observations:Value[];accounting:Value}
 
 function jsonPointer(root:unknown,path:unknown):unknown {

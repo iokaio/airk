@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // The admin shell: session gate, navigation and the end-of-session screens.
-import type { ComponentChildren, JSX } from 'preact';
+import { h, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ParsedResponse } from './envelope';
 import { IndexLibrary } from './indexLibrary';
@@ -12,7 +12,7 @@ import { Text } from './render';
 import { currentSession, logout, onSessionChange, takeInitialRoute, type Session } from './session';
 import { Usage } from './usage';
 import { BundledHelp } from './bundledHelp';
-import { browserDestination, MAIN_DESTINATIONS } from '../../ui/src/navigation';
+import { browserDestination, MAIN_DESTINATIONS, evidenceToolsPresentation, type EvidenceToolsNode } from '../../ui/src/navigation';
 import { PreparedActions } from './preparedActions';
 import { Arbiter } from './arbiter';
 import { onPreparationChange } from './api';
@@ -41,6 +41,17 @@ export type PageId = (typeof PAGES)[number][0];
  * a page can apply the same prefill again.
  */
 export type Route = { page: PageId; params: URLSearchParams; seq: number };
+/** Browser hub is inert: unavailable guided editor operations stay explicitly limited. */
+export function SearchWorkspace(props:{route:Route;onView(tools:boolean):void}):JSX.Element {
+  const tools=props.route.params.get('view')==='tools',queryMounted=useRef(false);
+  if(!tools)queryMounted.current=true;
+  const show=(value:EvidenceToolsNode|string):ComponentChildren=>typeof value==='string'?value:h(value.tag,value.href?{href:value.href}:{},...value.children.map(show));
+  return <section aria-label="Search workspace"><div class="actions" aria-label="Search views">
+    <button type="button" class={tools?'secondary':''} aria-current={!tools?'page':undefined} onClick={()=>props.onView(false)}>Query</button>
+    <button type="button" class={tools?'':'secondary'} aria-current={tools?'page':undefined} onClick={()=>props.onView(true)}>Evidence tools</button>
+    </div>{queryMounted.current?<section hidden={tools}><Search/></section>:null}{tools?<section class="evidence-tools" aria-label="Evidence tools hub">{show(evidenceToolsPresentation('browser'))}</section>:null}</section>;
+}
+
 
 function parseRoute(text: string, seq: number): Route | null {
   const fragment = text.startsWith('#') ? text.slice(1) : text;
@@ -171,6 +182,11 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
     // Keeps a same-tab reload on this page; replaceState fires no hashchange.
     if (!props.embedded) window.history.replaceState(null, '', `#${id}`);
   };
+  const navigateSearch = (tools:boolean):void => {
+    const params=new URLSearchParams(tools?{view:'tools'}:{});
+    setRoute(current=>({page:'search',params,seq:current.seq+1}));
+    if(!props.embedded)window.history.pushState(null,'',`#search${tools?'?view=tools':''}`);
+  };
   const navigateHelp = (params: URLSearchParams, replace: boolean): void => {
     setRoute(current => ({ page: 'help', params, seq: current.seq + 1 }));
     const destination = `#help${params.size ? `?${params}` : ''}`;
@@ -266,7 +282,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
             <details class="panel"><summary>Optional local Arbiter</summary><Arbiter /></details></>)}
         {view('logs', <Logs />)}
         {view('usage', <Usage />)}
-        {view('search', <Search />)}
+        {view('search', <SearchWorkspace route={pageRoute('search')} onView={navigateSearch} />)}
         {view('help', <Help params={pageRoute('help').params} seq={pageRoute('help').seq} onNavigate={navigateHelp} />)}
       </main>
     </div>

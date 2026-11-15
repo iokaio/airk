@@ -952,3 +952,6 @@ button.au-tab:focus-visible {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Preserve the first article glyph across fractional scroll positioning. */
+.bundled-help article { scroll-margin-top: 1px; }

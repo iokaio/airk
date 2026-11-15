@@ -17,8 +17,8 @@ export type { AirkctlState } from './states';
 
 /** Download page and release list (U59); the "not installed" state, the
  * Download command and the Marketplace README use these exact links. The
- * site's downloads section is the `#downloads` anchor of its home page. */
-export const DOWNLOAD_URL = 'https://airk.ioka.io/#downloads';
+ * official download entry point is the explicit index.html page. */
+export const DOWNLOAD_URL = 'https://airk.ioka.io/index.html';
 export const RELEASES_URL = 'https://github.com/iokaio/airk/releases';
 
 /** Commands the session refuses (contracts §3.8): one-shots only. */

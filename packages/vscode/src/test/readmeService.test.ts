@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { DOWNLOAD_URL, RELEASES_URL } from '../airkctl';
 
 const README = fs.readFileSync(path.resolve(__dirname, '..', '..', 'README.md'), 'utf8');
-const REVIEWED = { heading: '## Requires AIRK Service', download: 'https://airk.ioka.io/#downloads', releases: 'https://github.com/iokaio/airk/releases' };
+const REVIEWED = { heading: '## Requires AIRK Service', download: 'https://airk.ioka.io/index.html', releases: 'https://github.com/iokaio/airk/releases' };
 
 test('the README opens with the Requires AIRK Service section', () => {
     const lines = README.split(/\r?\n/).filter(line => line.trim());
@@ -26,4 +26,7 @@ test('the README opens with the Requires AIRK Service section', () => {
 test('the Download action and the not-installed state use the reviewed links', () => {
     assert.equal(DOWNLOAD_URL, REVIEWED.download);
     assert.equal(RELEASES_URL, REVIEWED.releases);
+    const manifest=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../package.json'),'utf8'));
+    assert.ok(manifest.description.includes(REVIEWED.download),'current Marketplace description uses the exact reviewed page');
+    assert.equal(manifest.description.includes('#downloads'),false);
 });

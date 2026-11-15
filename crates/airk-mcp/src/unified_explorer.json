@@ -1005,6 +1005,7 @@
             "overview",
             "search/query",
             "search/recipes",
+            "search/tools",
             "code/symbols",
             "code/references",
             "code/outline",

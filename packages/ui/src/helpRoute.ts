@@ -12,3 +12,15 @@ export function formatHelpLocation(location: HelpLocation): URLSearchParams {
   if (id(location.tool)) params.set('tool', location.tool);
   return params;
 }
+
+/** Shared task labels and inert guide destinations; selecting one never starts an operation. */
+export const HELP_STARTING_TASKS = [
+  ['indexing.library', 'Create an index'], ['management.agents', 'Connect an agent'], ['recovering-errors', 'Find missing results'],
+] as const;
+/** Explorer's native guide namespace is retained; exact local guidance takes precedence. */
+export function helpStartingTopic<T extends {id:string}>(topics:readonly T[], guide:typeof HELP_STARTING_TASKS[number][0]):T|undefined {
+  const local=topics.filter(topic=>topic.id===guide);
+  if(local.length)return local.length===1?local[0]:undefined;
+  const engine=topics.filter(topic=>topic.id===`engine.${guide}`);
+  return engine.length===1?engine[0]:undefined;
+}

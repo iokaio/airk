@@ -272,6 +272,28 @@
       "body": "# Inspect a citation\n\nEvidence › Inspector shows the selected source file's indexed record and compares the saved bytes with the indexed content hash. Choose a file in the header to load it automatically when no citation is selected. **Inspect selected file** loads or refreshes that file, including after inspecting a citation.\n\nTo inspect a specific citation, go to Search and choose **Inspect** on a result, or use **Inspect** on a fact or checked citation. Selecting a source file does not replace an explicitly selected citation; use **Inspect selected file** to switch back. Files absent from the published index report an error.\n\n## Results\n\n- **matches index**: the saved file is byte-identical to what was indexed.\n- **changed since index**: the file changed; cited lines may have moved.\n- **not saved**: the editor holds unsaved edits.\n- **missing**: no file exists at the indexed location.\n\n## Limits\n\nA matching hash shows the file is unchanged since indexing. It does not verify what the code does."
     },
     {
+      "id": "explorer.evidence.tools",
+      "title": "Choose evidence tools",
+      "route": "search/tools",
+      "area": "explorer",
+      "applicability": "implemented",
+      "aliases": [
+        "evidence tools",
+        "inspect citation",
+        "check citation",
+        "code outline",
+        "document facts",
+        "review tests",
+        "strategy planner"
+      ],
+      "relatedAirkHelp": [
+        "freshness",
+        "limits"
+      ],
+      "source": "packages/vscode/src/explorerHelp/evidence-tools.md",
+      "body": "# Choose evidence tools\n\nOpen **Search → Evidence tools** to choose a guided Code, Documents, Evidence,\nReview or Strategies view. These are the existing workflows, not a generic tool\nrunner. The older Explore evidence drawer, command entries and deep links remain.\n\n- **Code:** symbols, textual references and selected-source outline. Written\n  references are not resolved cross-file bindings.\n- **Documents:** facts with extraction limits and original page/slide/sheet locations.\n- **Evidence:** Inspector, Check citations and Indexed changes. Preserve saved-source\n  checks, publication/baseline identity, coverage and bounded continuation.\n- **Review:** Git staged/worktree changes, bounded impact and test candidates.\n  Candidate tests are not executed tests; semantic impact is not complete.\n- **Strategies:** Library, Studio and Planner keep their source checks, manual\n  handoffs, complete exports and explicit save/import/overwrite safeguards.\n\nUse **Back to Evidence tools**, then **Continue** to return to the last guided\nview. In the same window and authority, a direct hub visit retains that view's\ninputs and complete result. Changing project/selection/trust invalidates retained\nview custody. A reload can remember the inert route, not restore read authority.\n\nThe browser hub lists the same workflow names and Help next steps. Guided browser\nmigration is incomplete; editor-only Git, source opening and local save actions\nare not simulated. The browser native read form remains available separately and\ndoes not adopt a VS Code window's scope. Choosing a hub entry only navigates; it\nnever creates/indexes/deletes, executes a query or authorizes an operation."
+    },
+    {
       "id": "explorer.help",
       "title": "Using Explorer help",
       "route": "help",

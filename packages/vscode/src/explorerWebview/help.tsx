@@ -8,6 +8,7 @@ import { parseRoute } from '../explorerRoutes';
 import { request } from './api';
 import type { ScreenProps } from './workspaces';
 import { SharedPilotPane } from './pilotPane';
+import { HELP_STARTING_TASKS, helpStartingTopic } from '../../../ui/src/helpRoute';
 import { helpExcerpt, helpScore } from '../../../ui/src/helpSearch';
 import { blocks, type Block } from '../../../ui/src/helpMarkdown';
 import { helpToolPresentation, renderHelpNode } from '../../../ui/src/helpToolPresentation';
@@ -49,7 +50,7 @@ export function HelpScreen(props: ScreenProps) {
     const [lastQuery, setLastQuery] = useState<{ topic?: string; command?: string; tool?: string }>({});
     const [linkError, setLinkError] = useState<string>();
     const [selected, setSelected] = useState<(typeof catalog.topics)[number]>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.route === 'help') ?? catalog.topics[0]);
-    const article = useRef<HTMLElement>(null), previousTopic = useRef(selected.id);
+    const search = useRef<HTMLInputElement>(null), article = useRef<HTMLElement>(null), previousTopic = useRef(selected.id);
     useLayoutEffect(() => {
         if (previousTopic.current === selected.id) return;
         previousTopic.current = selected.id;
@@ -82,7 +83,13 @@ export function HelpScreen(props: ScreenProps) {
     return (
         <div class="help">
             <aside class="help-index">
-                <input value={query} maxLength={256} aria-label="Search help" placeholder="Search Explorer and engine help (e.g. tester PDF)" onInput={event => setQuery((event.target as HTMLInputElement).value)} />
+                <h2>Find a guide</h2>
+                <p>Bundled guidance for index setup, agent connections and missing results. Available without a service connection.</p>
+                <div class="chips" aria-label="Help starting tasks">{HELP_STARTING_TASKS.map(([id,label])=>{
+                    const topic=helpStartingTopic(catalog.topics,id);
+                    return <button type="button" class="chip" disabled={!topic} key={id} onClick={()=>{if(topic){setSelected(topic);setQuery('');setArea('');closeReference();}}}>{label}</button>;
+                })}</div>
+                <input ref={search} value={query} maxLength={256} aria-label="Search help" placeholder="Search Explorer and engine help (e.g. tester PDF)" onInput={event => setQuery((event.target as HTMLInputElement).value)} />
                 <label>Area <select value={area} onChange={event => setArea((event.target as HTMLSelectElement).value)}><option value="">All topics</option>
                     {[...new Set(catalog.topics.map(topic => topic.area))].sort().map(value => <option key={value} value={value}>{value}</option>)}</select></label>
                 <p class="muted" role="status">{topics.length} matching topic(s)</p>
@@ -134,6 +141,7 @@ export function HelpScreen(props: ScreenProps) {
                     <section>
                         <p class="muted">{selected.area} · bundled {catalog.extensionVersion} · {selected.applicability === 'implemented' ? 'available in this version' : 'planned; not built in this version'}</p>
                         <Markdown text={selected.body} />
+                        <button type="button" class="ghost" onClick={()=>{search.current?.focus();search.current?.scrollIntoView({block:'start'});}}>Back to guides</button>
                         {selected.id === 'about-airk' && <nav class="actions" aria-label="AIRK public links">{Object.entries(ABOUT_LINKS).map(([destination, link]) =>
                             <button type="button" class="ghost" key={destination} onClick={() => { void openLink(destination); }}>{link.title} ↗</button>)}</nav>}
                         {linkError && <p role="alert">{linkError}</p>}
