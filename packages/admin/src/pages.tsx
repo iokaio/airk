@@ -328,13 +328,15 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
       <LoginStartup />
       </div>
       <div hidden={view !== 'lifecycle'}>
-      <Panel title="Restart or stop">
+      <Panel title="Stop or prepare to restart">
         <p>
-          A restart or stop ends this admin session. After a stop, start the service again with{' '}
-          <code>airk</code> or <code>airkctl service start</code>, then run <code>airkctl admin open</code>.
+          Both actions stop the service and end this management session. Stop for restart records the restart
+          request; this page does not start a replacement service. After it stops, run{' '}
+          <code>airkctl service start</code> locally. Then run <code>airkctl admin open</code> for a new browser
+          session, or reopen management in the editor after verifying the service connection.
         </p>
         <div class="actions">
-          <Confirm phrase="restart service" action="Restart" danger disabled={blocked} onConfirm={() => void lifecycleCall('restart')} />
+          <Confirm phrase="restart service" action="Stop for restart" danger disabled={blocked} onConfirm={() => void lifecycleCall('restart')} />
           <Confirm phrase="stop service" action="Stop" danger disabled={blocked} onConfirm={() => void lifecycleCall('stop')} />
         </div>
         {retained?.unknown ? <p class="error" role="alert">The original lifecycle outcome is unresolved. Another Stop or Restart is blocked. Inspect service status and Activity; the received outcome is retained below.</p>

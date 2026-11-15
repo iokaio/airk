@@ -142,7 +142,7 @@ function finish(request: Request, payload: Value, container: Value, items: FactI
 
 /** Keep the opaque canonical composite cursor, never an arbitrary child cursor.
  * The native owner binds its exact arguments and every selected publication. */
-function registerCursor(request: Request, payload: Value, publication: string | undefined, project: string, handles: FactHandles): string | undefined {
+export function registerCursor(request: Request, payload: Value, publication: string | undefined, project: string, handles: FactHandles): string | undefined {
     if (request.continuation === false) { return undefined; }
     const top = payload.cursor, page = obj(payload.page).cursor;
     if (top != null && page != null) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'The native response contains ambiguous continuation fields.')); }
@@ -184,7 +184,8 @@ export async function runFacts(session: EvidenceReadPort, handles: FactHandles, 
     }
 }
 
-export async function continueFacts(session: EvidenceReadPort, handles: FactHandles, project: string, more: string): Promise<FactListView> {
+/** Read an exact retained native continuation without interpreting its operation's rows. */
+export async function continueNativePage(session: EvidenceReadPort, handles: FactHandles, project: string, more: string) {
     const handle = handles.cursors.get(more, project);
     const result = await session.call(handle.tool, { ...handle.args, cursor: handle.cursor }, { timeout: 30000 });
     if (handle.publicationVector && (result.payload.schema !== 'airk.combined-read/1'
@@ -194,6 +195,11 @@ export async function continueFacts(session: EvidenceReadPort, handles: FactHand
     if (handle.publication && handle.publication !== result.publication) {
         throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'The index was republished; run the query again instead of continuing.'));
     }
+    return { handle, result };
+}
+
+export async function continueFacts(session: EvidenceReadPort, handles: FactHandles, project: string, more: string): Promise<FactListView> {
+    const { handle, result } = await continueNativePage(session, handles, project, more);
     return factList(handle, result.payload, result.publication, project, handles, result.rawPayload);
 }
 

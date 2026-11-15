@@ -4114,3 +4114,110 @@ query packet seal for the equivalent accessor correction and bind R54 artifacts
 before its zero-forward preflight/ALL64DEV run. Fresh runtime/package/installed
 and final/model/release qualification remain required. No additional user-owned
 scope decision is being introduced by this pause.
+
+### 2026-11-15 — restart resumed, actual Search DOM and corrected-graph DEV
+
+Resumed at `776764ac` using the retained R54 source/image rather than rebuilding
+or regenerating the graph. The initial tree has an unrelated deletion of
+`docs/architecture/airk-architecture-landscape.docx`; it remains preserved.
+AIRK tools were absent from the primary tool catalog; a parallel reviewer later
+observed status for the AIRK project (version 1.8.35, publication 4127), with
+freshness unavailable, and used live files. Git uses a process-local safe-directory
+override under the restricted Windows account, without global configuration edits.
+
+The owner-context actual I3 packet adoption/Chromium Search DOM batch passes
+26/26 (1.493s test duration). Exact result copy and Web Crypto restoration pass;
+browser PID 69392 exited naturally with code 0 and the isolated profile was
+removed. Receipt: `artifacts/advanced-split/receipts/resume-browser-r55/receipt.json`.
+These callbacks replay the original successful TLS capture R4 unchanged; this
+is real DOM adoption, not a newly captured transport or installed-product pass.
+
+Private query packet r4 refreshes only the expected `ann_self.rs` correction
+and binds actual R54 compiler/dep-info/linked artifacts. Bound SHA256
+`18080dc9a1ba7b681e133430a1c6a0d624a0ebc070b0b0098748fc5b560a8118`.
+Independent review confirms those relationships and fresh SID1012-only anchor.
+Geometry native passes 1/1 naturally in 1.871s, 80,359,424 peak committed bytes,
+zero drift and zero remaining processes. Its original wrapper result remains
+incomplete: libtest prefixed the JSON proof with the test name. The retained log
+and closure fields support a separate parser-corrected receipt; six pure parser
+controls and independent review pass. No geometry rerun or altered cleanup proof.
+
+ALL64 original DEV queries then completed naturally in 83.386s, one owned PID,
+306,126,848 peak committed bytes, zero drift/forced termination/remaining members.
+Capture SHA256 `15c65ff7d82cb029547d70a57299d71f3b3c9ea39c264b807daeaa75ab00907f`.
+Unchanged grading completed 2.067s/35,856,384 bytes: same U8 weights and requests,
+evidence recall 59/120 (49.17%) before versus 11/12 (91.67%) after; complete
+coverage 6/20 versus 17/20. All64 are native ready; all44 alignment refusals remain
+NOT_EVALUABLE. Evidence under `artifacts/advanced-split/models/`:
+`ann-regenerated-dev-query-preparation-r1/` (bound/r4, original geometry failure,
+corrected receipt, runner2 and query execution),
+`ann-regenerated-dev-query-private-anchor-sid1012-r1/` (complete capture), and
+`ann-regenerated-dev-query-grading-sid1012-r1/` (full unchanged grading).
+This single-U8 graph-before/after DEV diagnostic is not a full-model baseline,
+FINAL result or promotion. Original205FAIL, four unsupported CAL models, final
+turn reduction, installed/platform/package/workspace and release gates remain.
+No training, FINAL query, model promotion or publication occurred.
+
+Guided Changes pagination and browser Help wording are being integrated with the
+existing cursor owner and full-publication refusal rules. Focused source controls
+pass; an existing native portable-Help angle-bracket placeholder fails the
+plain-Markdown Help assertion and needs correction through its Rust generator.
+The extension bundler also needs exact pure guided-screen input closure before
+fresh asset sealing. These are current repairs, not completed artifact evidence.
+
+### 2026-11-15 — guided UI integration and frozen source checks
+
+Primary reviewed the combined Changes continuation, shared exact input allowlist,
+restart guidance, Help and test-fixture changes independently of their delegated
+implementers; management punctuation correction received primary self-review.
+Changes preserves original arguments/opaque cursor/full publication vector and
+all native pages, refusing changed scope/publications and hidden views. Browser
+Stop for restart explains local start and a fresh session before confirmation
+and after acceptance; the native action and typed phrase remain unchanged.
+
+Broader checks found real harness drift: missing session subscriptions, old
+bearer-bound Answer packets used as Admin fixtures, missing shared CSS plugin,
+four unclassified host bridge messages, and current-v2 input used for the retained
+legacy-v1 installer controls. Repairs preserve the original Rust packets and
+assertions. Explicit synthetic Admin observations now surround unchanged Answer
+context data; original bearer packets remain refused. Actual I3 packet adoption
+is separate. Legacy model controls use retained native v1 bytes and additionally
+refuse v2 before installation. Corrupted management export punctuation is repaired.
+All three native Help placeholders are plain Markdown; owning Rust generation
+and I2/I3 projections were run sequentially, without regenerating unchanged Usage.
+
+Original failed runs remain in `artifacts/advanced-split/receipts/resume-ui-r57/`.
+The first full extension receipt also observes an unrelated parallel Admin-test
+edit, so it is neither a frozen-input nor suite pass. Revised diagnosis and cheap
+controller/async-codec controls preceded the second DOM attempt; no timeout or
+assertion was relaxed. Frozen receipts `resume-ui-r59/` pass Admin209/209,
+Search DOM6/6, extension1,116/1,118 with two explicitly skipped native-fixture
+controls, extension compile15.096s, and Admin build2.924s. Help consumer cases
+pass27/27; static Help-site12/12 has receipt `resume-ui-r57/help-site.json`.
+R58 scoped all-target/all-feature MCP Clippy passes3.708s; native Help/CLI/I3
+drift controls pass23/23 (.921s test/26.732s command). The existing isolated
+Cargo target and incremental=1 were retained throughout; no Cargo clean.
+
+Current Admin assets are regenerated and checked: JS
+`af082ab28c60a5a4003fe396db7c52cfc40073925b643001d152ba890ce7b7ad`,
+inventory `add44a8ca40ae55ca55ef94b6969cab3d5e575d6108348e30f3782c542828bde`,
+bundle `2272a4d1fac97c4da7d126a802bf621f99612bcb2c66cdf277321b95f5b41591`.
+Seal: `artifacts/advanced-split/admin-source-r59/admin-assets.json`.
+Earlier9957/R2 artifacts retain their original identities. Fresh matched runtime,
+actual clients, installed/platform/package/full-workspace/model gates remain.
+
+User explicitly requested keeping the Word guide deletion. Its active link was
+replaced with optional-regeneration guidance; historical receipts remain.
+Format check passes. Repository check passes3,329public files after this change;
+Git whitespace check passes. Current1.9.0 candidate version is unchanged. This
+source milestone does not claim release or publication completion.
+
+The primary reviewed and launched the separately frozen corrected-graph matched
+DEV packet `9a9ca8025414f11af51bb49b979824978575bd64daf39e28d0a93a6d30daf5f4`,
+retaining the prior R54 U8 capture and unchanged descriptors/64questions/20+44mask.
+Five fresh native stages run sequentially with original1,800s/8GiB/two-slot caps,
+stopping on the first failure. The S8 candidate completed naturally168.183s,
+308,920,320peak bytes, no drift or remaining process; subsequent controls are
+in progress. Private preparations,20pure refusal controls and65pins/stage are in
+`artifacts/advanced-split/models/corrected-graph-matched-dev-r54-sid1012-r1/`.
+No gradients or FINAL execution is released by this DEV comparison.

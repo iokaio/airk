@@ -27,8 +27,15 @@ view. In the same window and authority, a direct hub visit retains that view's
 inputs and complete result. Changing project/selection/trust invalidates retained
 view custody. A reload can remember the inert route, not restore read authority.
 
-The browser hub lists the same workflow names and Help next steps. Guided browser
-migration is incomplete; editor-only Git, source opening and local save actions
-are not simulated. The browser native read form remains available separately and
-does not adopt a VS Code window's scope. Choosing a hub entry only navigates; it
-never creates/indexes/deletes, executes a query or authorizes an operation.
+The browser hub offers guided Code, Documents, Evidence, Review and Strategies
+views using the named sources applied in that browser session. Browser Review
+uses explicitly supplied paths or a pasted diff; it cannot observe the editor's
+Git worktree. Browser Planner supports file import and complete exports, with
+explicit replacement confirmation. Editor-only source opening and local saves
+are not simulated. Indexed changes retain the original baseline, filters and
+publication across **Load more indexed changes** pages; keep reading while more
+pages remain. A changed publication requires a new comparison.
+
+The browser native read form remains available separately and does not adopt a
+VS Code window's scope. Choosing a hub entry only navigates; it never
+creates/indexes/deletes, executes a query or authorizes an operation.

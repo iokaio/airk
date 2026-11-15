@@ -60,3 +60,11 @@ test('management messages never stay in the editor',()=>{
         if(entry.type.startsWith('indexing.')&&!entry.type.startsWith('indexing.scope.'))assert.equal(entry.side,'admin',entry.type);
     }
 });
+
+test('native management and read-pilot postMessage bridges belong only to the editor adapter',()=>{
+    // Browser consumers use I3 directly. These exact four messages are host
+    // transport adapters, not shared UI events or replacements for native admission.
+    for(const type of ['admin.session','admin.call','admin.close','pilot.read']){
+        assert.deepEqual(split.messages.find(entry=>entry.type===type),{type,side:'editor',capability:null});
+    }
+});

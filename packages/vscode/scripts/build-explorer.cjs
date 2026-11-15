@@ -18,12 +18,18 @@ const SHARED_MANAGEMENT_INPUTS = [
     ...['activity.tsx', 'activityRequests.ts', 'agents.tsx', 'api.ts', 'app.tsx', 'arbiter.tsx', 'bundledHelp.tsx',
         'catalogRequests.ts', 'concurrencyNote.tsx', 'envelope.ts', 'folderPicker.tsx', 'generatedActions.ts', 'help.tsx',
         'indexLibrary.tsx', 'operations.ts', 'pages.tsx', 'pageVisibility.ts', 'pilotPane.tsx', 'preparedActions.tsx', 'preparedMutations.ts',
-        'progress.tsx', 'render.tsx', 'SearchScreen.tsx', 'scopeConcurrency.ts', 'session.ts', 'usage.tsx'].map(file => `../admin/src/${file}`),
+        'progress.tsx', 'render.tsx', 'SearchScreen.tsx', 'scopeConcurrency.ts', 'session.ts', 'usage.tsx',
+        'EvidenceToolsScreen.tsx', 'ReviewScreen.tsx', 'StrategiesScreen.tsx', 'browserEvidenceRoutes.ts', 'browserReview.ts',
+        'evidenceExports.ts', 'guidedEvidence.ts', 'strategyRunner.ts', 'strategyWorkspace.ts', 'workflowLifetime.ts'].map(file => `../admin/src/${file}`),
     ...['browserPilot.ts', 'helpMarkdown.ts', 'helpRoute.ts', 'helpSchema.ts', 'helpSearch.ts', 'helpToolPresentation.ts',
-        'management.ts', 'nativeMetadataCodec.ts', 'answerPresentation.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts']
+        'management.ts', 'nativeMetadataCodec.ts', 'answerPresentation.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts',
+        'evidenceCore.ts', 'review.ts', 'strategies.ts']
         .map(file => `../ui/src/${file}`), '../ui/generated/help-manifest.json',
     // Shared Search reuses the existing pure UI budget/validation owner, never a host/session controller.
     'src/workbenchContracts.ts', 'src/workbenchAnswerNavigation.ts', 'src/sourceVerification.ts',
+    // Credential-free evidence algorithms and inert Plan imports reused by browser adapters.
+    'src/explorerEvidenceCore.ts', 'src/explorerSearch.ts', 'src/explorerFacts.ts', 'src/workbenchRender.ts',
+    'src/nativeMessageLimits.ts', 'src/explorerReviewCore.ts', 'src/explorerStrategyRunnerCore.ts', 'src/explorerPlanFiles.ts',
 ];
 function pilotRuntimeSourceSeal(repository = path.resolve(root, '../..')) {
     const hash = crypto.createHash('sha256').update('AIRK-UI-PILOT-RUNTIME-1\0');
@@ -216,7 +222,8 @@ async function build() {
     fs.writeFileSync(path.join(root, 'out/help-manifest.json'), sharedBytes);
 }
 
-module.exports = { helpCatalog, engineTopics, engineGuides, nativeHelpContent, sharedHelpManifest, pilotRuntimeSourceSeal, sharedAdminStylePlugin, JAVASCRIPT_SUPPORTED };
+module.exports = { helpCatalog, engineTopics, engineGuides, nativeHelpContent, sharedHelpManifest, pilotRuntimeSourceSeal, sharedAdminStylePlugin, JAVASCRIPT_SUPPORTED,
+    checkInputs, CONTRACTS, SHARED_MANAGEMENT_INPUTS };
 if (require.main === module) {
     build().catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
 }

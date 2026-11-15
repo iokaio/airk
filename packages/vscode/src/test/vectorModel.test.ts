@@ -6,8 +6,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { modelProfileFromCatalog, prepareVectorModel } from '../vectorModel';
 
-async function catalogReport() {
-    const catalog = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../../../crates/airk-retrieval/src/model_catalog.json'), 'utf8'));
+// This uncalled legacy installer keeps its original v1 refusal/recovery controls.
+// Current setup belongs to the service; the native catalog contract retains these exact v1 bytes.
+async function catalogReport(catalogName = 'model_catalog_v1.json') {
+    const catalog = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../../../crates/airk-retrieval/src', catalogName), 'utf8'));
     return { schema: 1, automatic_int8: true, catalog,
         bundled_model: { manifest: structuredClone(catalog.profiles[0].manifest) },
         capabilities: { runtime: catalog.profiles[0].runtime }, selection: { profile_id: catalog.default_profile } };
@@ -33,6 +35,18 @@ test('native catalog selection binds hashes, precision and inventory', async () 
         const invalid = structuredClone(report); mutate(invalid);
         assert.throws(() => modelProfileFromCatalog(invalid), /unsupported|invalid/);
     }
+});
+
+test('legacy vector setup refuses the current trained catalog before installation', async () => {
+    const report = await catalogReport('model_catalog.json');
+    assert.equal(report.catalog.schema, 2);
+    assert.throws(() => modelProfileFromCatalog(report), /unsupported model catalog/);
+    const directory = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'airk-model-v2-refused-'));
+    try {
+        await assert.rejects(prepareVectorModel(directory, () => assert.fail('must not install'),
+            async () => assert.fail('must not install'), async () => report), /unsupported model catalog.*Retry Index now/);
+        assert.deepEqual(await fs.readdir(directory), []);
+    } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
 test('setup preserves custom models and rejects incomplete models without installing', async () => {

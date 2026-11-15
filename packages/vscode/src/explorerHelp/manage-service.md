@@ -8,7 +8,7 @@ related_airk_help: service, upgrades, resources
 ---
 # Service and runtime
 
-Stopping and restarting the AIRK Service and reviewing its runtime are in AIRK Admin, Service. Start stays in VS Code (AIRK: Start AIRK Service) because a stopped service cannot serve the admin pages.
+Stopping the AIRK Service and reviewing its runtime are in AIRK Admin, Service. **Stop for restart** records a restart request and stops the service; the management page does not start a replacement. After it stops, run `airkctl service start` locally or use AIRK: Start AIRK Service in VS Code. Then run `airkctl admin open` for a new browser session or reopen management in the editor after verifying the service connection.
 
 Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
 

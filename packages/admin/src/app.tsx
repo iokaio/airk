@@ -113,10 +113,10 @@ function Signed(props: { gate: Gate }): JSX.Element {
     case 'restarted':
       return (
         <>
-          <p>The service is restarting. A restart ends every admin session.</p>
+          <p>The service accepted stop for restart. This ends every admin session.</p>
           <p>
-            When it is back, run <code>airkctl admin open</code>. If it does not come back, start it with{' '}
-            <code>airk</code> or <code>airkctl service start</code>.
+            After it stops, run <code>airkctl service start</code> locally, then run{' '}
+            <code>airkctl admin open</code> for a new session. This page does not start a replacement service.
           </p>
         </>
       );

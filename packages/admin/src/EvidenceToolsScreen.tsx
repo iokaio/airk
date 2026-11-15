@@ -5,7 +5,7 @@ import type {JSX} from 'preact';
 import {Field,NumberField,Text} from './render';
 import type {ScopedReadCapture,ScopedReadObservation} from './SearchScreen';
 import {guidedEvidenceRequest,guidedIndexedFiles,type GuidedEvidenceRoute,type GuidedFields} from './guidedEvidence';
-import {FactHandles,factList,continueFacts} from '../../vscode/src/explorerFacts';
+import {FactHandles,factList,continueFacts,registerCursor,continueNativePage} from '../../vscode/src/explorerFacts';
 import {RefRegistry,originArgs} from '../../vscode/src/explorerSearch';
 import type {FactListView} from '../../vscode/src/explorerContracts';
 import {parseCitations} from '../../vscode/src/explorerContracts';
@@ -20,7 +20,7 @@ const names:Record<GuidedEvidenceRoute,string>={'code/symbols':'Symbols','code/r
 const kinds=['any','requirement','decision','design','architecture','feature','acceptance','date','section','table_row','table_cell'];
 export const guidedEvidenceTitle=(route:GuidedEvidenceRoute)=>names[route];
 export interface GuidedInputSnapshot {route:GuidedEvidenceRoute;fields:GuidedFields;additionalArguments:Rec}
-export interface GuidedToolReport {inputs:GuidedInputSnapshot;scope:string;reads:ScopedReadObservation[];facts?:FactListView;related?:FactListView[];checks?:{citation:string;state:string;message:string}[];error?:string;historical?:boolean}
+export interface GuidedToolReport {inputs:GuidedInputSnapshot;scope:string;reads:ScopedReadObservation[];facts?:FactListView;related?:FactListView[];changeMore?:string;checks?:{citation:string;state:string;message:string}[];error?:string;historical?:boolean}
 function download(name:string,text:string,type='application/json'){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),0);}
 export function EvidenceToolsScreen(props:{route:GuidedEvidenceRoute;scopeIdentity?:string;disabled:boolean;capture():ScopedReadCapture;active?:boolean}):JSX.Element {
  const [fields,setFields]=useState<GuidedFields>({name:'',path:'',prefix:'',kind:'requirement',since:'',exact:true,limit:props.route==='code/outline'?100:50,text:''}),[extra,setExtra]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[report,setReport]=useState<GuidedToolReport>(),[paths,setPaths]=useState<string[]>([]),[direction,setDirection]=useState<'incoming'|'outgoing'>('outgoing'),[hops,setHops]=useState(1);
@@ -47,7 +47,8 @@ export function EvidenceToolsScreen(props:{route:GuidedEvidenceRoute;scopeIdenti
     const request=action??guidedEvidenceRequest(props.route,fields,supplied),result=await read(request.tool,request.args);
     const facts=['symbols','code_facts','references','outline','document_facts','list_files','relationships'].includes(request.tool)?factList({tool:('airk_'+request.tool) as NativeTool,args:request.args,limit:fields.limit},result.logical,publicationOf(result.logical),scope,handles.current,result.raw):undefined;
     if(files&&facts)setPaths([...new Set(facts.items.map(item=>item.path))]);
-    viewCurrent();capture.checkCurrent();setReport({...previous,inputs,scope,reads,...(previous?.facts?{facts:previous.facts,related:[...(previous.related??[]),...(facts?[facts]:[])]}:facts?{facts}:{})});
+    const changeMore=request.tool==='changes'?registerCursor({tool:'airk_changes',args:request.args,limit:fields.limit},result.logical,publicationOf(result.logical),scope,handles.current):undefined;
+    viewCurrent();capture.checkCurrent();setReport({...previous,inputs,scope,reads,...(request.tool==='changes'?{changeMore}:{}),...(previous?.facts?{facts:previous.facts,related:[...(previous.related??[]),...(facts?[facts]:[])]}:facts?{facts}:{})});
    }
   }catch(failure){const message=failure instanceof Error?failure.message:String(failure);setError(message);if(reads.length&&inputs)setReport({inputs,scope:project,reads,error:message});}
   finally{setBusy(false);}
@@ -61,6 +62,15 @@ export function EvidenceToolsScreen(props:{route:GuidedEvidenceRoute;scopeIdenti
   }catch(failure){setError(failure instanceof Error?failure.message:String(failure));setReport({...report,reads,historical:true});}finally{setBusy(false);}
  };
  const fileRoute=props.route==='code/outline'||props.route==='evidence/inspector';
+ const moreChanges=async()=>{
+  if(!report?.changeMore||busy||props.disabled||stale||!lifetime.current.active)return;
+  const epoch=lifetime.current.epoch,current=()=>{if(!lifetime.current.active||lifetime.current.epoch!==epoch)throw Error('The original guided view was hidden or replaced.');};
+  const reads=[...report.reads];setBusy(true);setError('');
+  try{const capture=props.capture(),port={call:async(tool:NativeTool,args:Rec)=>{current();capture.checkCurrent();const result=await capture.read(tool,args);current();capture.checkCurrent();if(result.scopeIdentity!==report.scope)throw Error('The displayed scope was replaced before this result returned.');reads.push(result);return {payload:result.logical,rawPayload:result.raw,publication:publicationOf(result.logical)};}};
+   const {handle,result}=await continueNativePage(port,handles.current,report.scope,report.changeMore);
+   const changeMore=registerCursor(handle,result.payload,result.publication,report.scope,handles.current);current();capture.checkCurrent();setReport({...report,reads,changeMore});
+  }catch(failure){const message=failure instanceof Error?failure.message:String(failure);setError(message);setReport({...report,reads,error:message,historical:true});}finally{setBusy(false);}
+ };
  return <section aria-label={names[props.route]}><h2>{names[props.route]}</h2>
   <p>{props.route==='code/references'?'Exact-case textual occurrences include comments, strings and definitions; they are not resolved references or calls.':props.route==='docs/facts'?'Extraction candidates retain original document locations and limits; they are not verified requirements.':props.route==='evidence/changes'?'Compare indexed publications. This is not Git changes or a claim about unsaved editor buffers.':props.route==='evidence/inspector'?'Read the indexed source record and its dated native saved-byte check. A browser cannot observe unsaved editor changes or open a VSCode file.':props.route==='evidence/checker'?'Check supported citations in pasted text against one selected indexed source, its line count and actual dated native source receipt.':'Read indexed code facts with provenance and coverage. Written relationships remain candidates.'}</p>
   <form onSubmit={event=>{event.preventDefault();void run();}}>
@@ -87,6 +97,7 @@ export function EvidenceToolsScreen(props:{route:GuidedEvidenceRoute;scopeIdenti
     </section>;});
    })}
    {report.checks?.map(check=><article><strong><Text value={check.citation}/></strong><p><Text value={`${check.state}: ${check.message}`}/></p></article>)}
+   {report.changeMore&&<p role="status">More indexed changes remain in the native comparison. <button disabled={busy||props.disabled||stale} onClick={()=>void moreChanges()}>Load more indexed changes</button></p>}
    {report.error&&<p role="alert"><Text value={report.error}/></p>}<button onClick={()=>void copy(JSON.stringify(report,null,2))}>Copy complete guided run JSON</button><button onClick={()=>save('airk-guided-evidence.json',JSON.stringify(report,null,2))}>Export complete guided run JSON</button><button onClick={()=>void copy(completeEvidenceMarkdown(report,report.reads.map(read=>read.request)))}>Copy complete guided run Markdown</button><button onClick={()=>save('airk-guided-evidence.md',completeEvidenceMarkdown(report,report.reads.map(read=>read.request)),'text/markdown')}>Export complete guided run Markdown</button>
    {report.reads.map((read,index)=><details><summary>Complete native read {index+1}: arguments, result and scope</summary><pre><Text value={JSON.stringify(read,null,2)}/></pre></details>)}
   </section>}

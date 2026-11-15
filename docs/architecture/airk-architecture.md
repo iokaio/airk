@@ -499,8 +499,8 @@ Regeneration does not build AIRK or open indexes, models, credentials or live
 service state. Review the owning source/contracts when changing the diagrams;
 updating a picture is not validation of a new capability.
 
-The accompanying [landscape Word edition](airk-architecture-landscape.docx) is
-a standalone print/share document.
+The optional Word builder produces a standalone landscape print/share document.
+The generated Word file is not retained in the repository.
 It embeds all six 3200 x 2100 PNGs, preserves their aspect ratio and gives each
 figure its own US Letter landscape page. Body text is 11 pt, with half-inch
 left/right and 0.45-inch top/bottom margins, repeated table headers and numbered

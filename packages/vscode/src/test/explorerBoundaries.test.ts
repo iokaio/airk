@@ -45,6 +45,35 @@ test('the standalone uninstall hook bundles only itself and Node built-ins (plan
     assert.deepEqual(inputs,['src/uninstallHook.ts'],'the hook removes editor-owned storage only; no native runner, agent or service module');
 });
 
+test('shared guided management bundles complete pure evidence workflows while refusing host controllers',async()=>{
+    const root=path.dirname(source);
+    const build=require(path.join(root,'scripts','build-explorer.cjs')) as {
+        checkInputs(name:string,metafile:{inputs:Record<string,unknown>},allowed:(string|RegExp)[]):void;
+        CONTRACTS:string[];SHARED_MANAGEMENT_INPUTS:string[];
+        sharedAdminStylePlugin():import('esbuild').Plugin;
+    };
+    const help=fs.readFileSync(path.resolve(root,'../ui/generated/help-manifest.json'),'utf8');
+    const result=await bundle({absWorkingDir:root,entryPoints:['src/explorerWebview/main.tsx'],bundle:true,write:false,
+        metafile:true,outdir:'out',platform:'browser',format:'iife',target:'es2022',jsx:'automatic',jsxImportSource:'preact',
+        alias:{preact:path.join(root,'node_modules/preact')},plugins:[build.sharedAdminStylePlugin(),{
+            name:'retained-help-manifest',setup(plugin){
+                plugin.onResolve({filter:/^airk-explorer-help$/},()=>({path:'catalog',namespace:'airk-explorer-help'}));
+                plugin.onLoad({filter:/.*/,namespace:'airk-explorer-help'},()=>({contents:help,loader:'json'}));
+            },
+        }],logLevel:'silent'});
+    const allowed=[/^src\/explorerWebview\//,...build.CONTRACTS,...build.SHARED_MANAGEMENT_INPUTS,
+        /^node_modules\/preact\//,/^airk-explorer-help:/,/^airk-shared-admin-css:/];
+    build.checkInputs('guided-management regression',result.metafile!,allowed);
+    const inputs=Object.keys(result.metafile!.inputs);
+    for(const required of ['../admin/src/EvidenceToolsScreen.tsx','../admin/src/ReviewScreen.tsx','../admin/src/StrategiesScreen.tsx',
+        'src/explorerFacts.ts','src/explorerReviewCore.ts','src/explorerStrategyRunnerCore.ts','src/explorerPlanFiles.ts'])assert.ok(inputs.includes(required),required);
+    for(const forbidden of ['src/explorerEvidence.ts','src/serviceClient.ts','src/nativeSession.ts','src/intentJournal.ts']){
+        assert.ok(!inputs.includes(forbidden),forbidden);
+        assert.throws(()=>build.checkInputs('injected host controller',{inputs:{[forbidden]:{}}},allowed),/outside the allowlist/);
+    }
+    for(const output of result.outputFiles??[])for(const marker of HOST_MARKERS)assert.ok(!output.text.includes(marker),marker);
+});
+
 test('Explorer contract modules depend only on other contract modules', () => {
     for (const name of CONTRACTS) {
         const file = path.join(source, name + '.ts');

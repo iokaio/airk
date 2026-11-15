@@ -1500,6 +1500,17 @@ nothing.
 
 ## 6. C9 — UI view-state and adapter contract
 
+Current guided-browser continuation (2026-11-15): indexed Changes uses the
+shared native cursor owner (`registerCursor` / `continueNativePage` in
+`explorerFacts.ts`), retaining the exact original arguments, opaque composite
+cursor and complete publication vector. It never substitutes a member cursor.
+A hidden/replaced view or changed scope prevents further reads; changed
+publications refuse continuation. Every received page remains intact in full
+run copies/exports, including a page refused by the continuation comparison.
+Focused component callback controls: `node --test
+packages/admin/test/guidedChanges.test.mjs`; these use synthetic packets and do
+not establish native transport parity.
+
 | Inventory | |
 |---|---|
 | Owner | `packages/ui` (shared view state, events, display components); editor-only types stay in `packages/vscode` |

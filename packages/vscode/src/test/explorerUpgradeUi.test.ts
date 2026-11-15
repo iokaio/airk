@@ -3,18 +3,27 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import * as vm from 'node:vm';
-import test from 'node:test';
-import { buildSync } from 'esbuild';
+import test, { before } from 'node:test';
+import { build, type Plugin } from 'esbuild';
 import { ROUTE_KEYS, parseRoute } from '../explorerRoutes';
 
 const directory = path.resolve(__dirname, '../../src/explorerWebview');
 const bundles = new Map<string, string>();
+const {sharedAdminStylePlugin}=require(path.resolve(__dirname,'../../scripts/build-explorer.cjs')) as {sharedAdminStylePlugin():Plugin};
+before(async()=>{
+    const result=await build({entryPoints:[path.join(directory,'app.tsx')],bundle:true,write:false,
+        outfile:path.join(directory,'test-bundle.cjs'),platform:'node',format:'cjs',jsx:'automatic',jsxImportSource:'preact',
+        external:['preact','preact/hooks','preact/jsx-runtime','airk-explorer-help'],plugins:[sharedAdminStylePlugin()]});
+    const javascript=result.outputFiles.find(file=>file.path.endsWith('.cjs'));assert.ok(javascript);
+    bundles.set('app.tsx',javascript.text);
+});
 
 function browserModule(name: string, state?: unknown, route?: unknown) {
     const file = path.join(directory, name), nativeRequire = createRequire(file);
     let hook = 0;
     const hooks = {
         useEffect() {},
+        useLayoutEffect() {},
         useState(initial: unknown) {
             const next = hook++;
             return [state !== undefined && next === 0 ? state : route !== undefined && next === 1 ? route : typeof initial === 'function' ? initial() : initial, () => undefined];
@@ -22,12 +31,8 @@ function browserModule(name: string, state?: unknown, route?: unknown) {
         useRef: (current: unknown) => ({ current }),
         useMemo: (get: () => unknown) => get(),
     };
-    let built = bundles.get(name);
-    if (!built) {
-        built = buildSync({ entryPoints: [file], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact',
-            external: ['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help'] }).outputFiles[0].text;
-        bundles.set(name, built);
-    }
+    const built = bundles.get(name);
+    assert.ok(built,`The real ${name} module must be bundled before its callback checks.`);
     const module = { exports: {} as any };
     vm.runInNewContext(built, { module, exports: module.exports,
         require: (id: string) => id === 'preact/hooks' ? hooks : id === 'airk-explorer-help' ? { topics: [] } : nativeRequire(id),

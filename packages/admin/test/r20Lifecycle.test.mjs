@@ -7,10 +7,12 @@ globalThis.window = { sessionStorage: { getItem: key => preparationStorage.get(k
   setItem: (key, value) => preparationStorage.set(key, value), removeItem: key => preparationStorage.delete(key) } };
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
 const src = fileURLToPath(new URL('../src/', import.meta.url));
-const bundle = await build({ stdin: { contents: `export {Service} from './pages';`, resolveDir: src }, bundle: true,
+const bundle = await build({ stdin: { contents: `export {Service} from './pages';export {Signed} from './app';`, resolveDir: src }, bundle: true,
   write: false, platform: 'node', format: 'esm', jsx: 'automatic', jsxImportSource: 'preact',
   plugins: [{ name: 'lifecycle-host', setup(plugin) {
+    plugin.onLoad({filter:/app\.tsx$/},async args=>({contents:await readFile(args.path,'utf8')+'\nexport {Signed};',loader:'tsx'}));
     plugin.onResolve({ filter: /^preact\/hooks$/ }, () => ({ path: 'hooks', namespace: 'lifecycle' }));
     plugin.onLoad({ filter: /^hooks$/, namespace: 'lifecycle' }, () => ({ contents: `
       export function useState(initial){const h=globalThis.__lifecycleHooks,i=h.cursor++;if(!(i in h.slots))h.slots[i]=typeof initial==='function'?initial():initial;
@@ -22,11 +24,13 @@ const bundle = await build({ stdin: { contents: `export {Service} from './pages'
       export function useContext(){globalThis.__lifecycleHooks.cursor++;return true;}
     ` }));
     plugin.onResolve({ filter: /(?:^|\/)session$/ }, () => ({ path: 'session', namespace: 'lifecycle' }));
-    plugin.onLoad({ filter: /^session$/, namespace: 'lifecycle' }, () => ({ contents: `export function currentSession(){return globalThis.__lifecycleSession;}export function dropSession(){globalThis.__lifecycleSession=null;}` }));
+    plugin.onLoad({ filter: /^session$/, namespace: 'lifecycle' }, () => ({ contents: `export function currentSession(){return globalThis.__lifecycleSession;}export function dropSession(){globalThis.__lifecycleSession=null;}
+      export function onSessionChange(){return()=>{};}export async function logout(){dropSession();}export function takeInitialRoute(){return null;}` }));
   } }],
 });
 const actual = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 const nodes = value => value == null || typeof value !== 'object' ? [] : Array.isArray(value) ? value.flatMap(nodes) : [value, ...nodes(value.props?.children)];
+const text = value => value == null ? '' : Array.isArray(value) ? value.map(text).join('') : typeof value === 'object' ? text(value.props?.children) : String(value);
 function host() {
   const hooks = { cursor: 0, slots: [], effects: [] };
   return { hooks, render() { globalThis.__lifecycleHooks = hooks; hooks.cursor = 0; const tree = actual.Service({ onLifecycle() {} });
@@ -38,6 +42,25 @@ async function settle(hooks) {
   while (hooks.slots.some(slot => slot?.phase === 'pending') && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
   assert.equal(hooks.slots.some(slot => slot?.phase === 'pending'), false);
 }
+test('restart guidance explains the local start before confirmation and after native acceptance',()=>{
+  globalThis.__lifecycleSession={csrf:'private-fixture',serviceInstance:'fixture'};
+  const mounted=host();
+  try {
+    const tree=mounted.render(),guidance=text(tree).replace(/\s+/g,' ');
+    assert.match(guidance,/Both actions stop the service and end this management session/);
+    assert.match(guidance,/this page does not start a replacement service/);
+    assert.match(guidance,/airkctl service start.*airkctl admin open/);
+    assert.match(guidance,/reopen management in the editor after verifying the service connection/);
+    const control=nodes(tree).find(node=>node.props?.phrase==='restart service');
+    assert.equal(control.props.action,'Stop for restart');
+    const after=text(actual.Signed({gate:{kind:'restarted'}})).replace(/\s+/g,' ');
+    assert.match(after,/accepted stop for restart/);
+    assert.match(after,/airkctl service start.*airkctl admin open/);
+    assert.match(after,/does not start a replacement service/);
+    assert.doesNotMatch(after,/When it is back|service is restarting/);
+  }finally{mounted.close();}
+});
+
 test('R20 lifecycle body-loss unknown blocks fresh Stop and Restart keys', async () => {
   const fetch = globalThis.fetch; let calls = 0;
   globalThis.__lifecycleSession = { csrf: 'private-fixture', serviceInstance: 'fixture' };

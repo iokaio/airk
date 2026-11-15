@@ -6,14 +6,24 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import * as vm from 'node:vm';
-import test from 'node:test';
+import test, { before } from 'node:test';
 
 /** Values built inside the webview's VM context, as plain objects of this realm. */
 const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
-import { buildSync } from 'esbuild';
+import { build, type Plugin } from 'esbuild';
 
 const directory = path.resolve(__dirname, '../../src/explorerWebview');
 const bundles = new Map<string, string>();
+const {sharedAdminStylePlugin}=require(path.resolve(__dirname,'../../scripts/build-explorer.cjs')) as {sharedAdminStylePlugin():Plugin};
+before(async()=>{
+    await Promise.all(['workspaces.tsx','indexing.tsx','libraryView.tsx','adminLinks.tsx','agents.tsx','scopeBanner.tsx','projectStatus.tsx','manageViews.tsx'].map(async name=>{
+        const entry=path.join(directory,name),result=await build({entryPoints:[entry],bundle:true,write:false,
+            outfile:path.join(directory,'test-bundle.cjs'),platform:'node',format:'cjs',jsx:'automatic',jsxImportSource:'preact',
+            external:['preact','preact/hooks','preact/jsx-runtime','airk-explorer-help'],plugins:[sharedAdminStylePlugin()]});
+        const javascript=result.outputFiles.find(file=>file.path.endsWith('.cjs'));assert.ok(javascript,name);
+        bundles.set(entry,javascript.text);
+    }));
+});
 const namespace = 'ab'.repeat(16), indexId = 'idx_' + '12'.repeat(16), secondId = 'idx_' + '56'.repeat(16), projectId = 'prj_' + '34'.repeat(16);
 const indexValue = { id: indexId, name: 'Application index', tombstone: false, definition_revision: 1, source_revision: 1, backing: { root: '/source' } };
 const secondValue = { id: secondId, name: 'Second index', tombstone: false, definition_revision: 1, source_revision: 1, backing: { root: '/docs' } };
@@ -23,11 +33,8 @@ const page = (kind: string, value: unknown) => ({ status: 'catalog_page', page: 
 /** Execute one webview module and its effects, retaining hook state between renders. */
 function webview(name: string, state: any, renderWith: (exports: any) => any) {
     const entry = path.join(directory, name);
-    let bundle = bundles.get(entry);
-    if (!bundle) {
-        bundle = buildSync({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact', external: ['preact', 'preact/hooks', 'preact/jsx-runtime','airk-explorer-help'] }).outputFiles[0].text;
-        bundles.set(entry, bundle);
-    }
+    const bundle = bundles.get(entry);
+    assert.ok(bundle,`The real ${name} module must be bundled before its callback checks.`);
     const slots: any[] = [], effects: (() => unknown)[] = [], sent: any[] = [];
     const events = new Map<string, (event: any) => void>();
     let cursor = 0, fail = false, failCode = 'HOST_UNAVAILABLE', failMessage = 'Native catalog unavailable';
