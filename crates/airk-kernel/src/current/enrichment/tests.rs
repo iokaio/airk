@@ -3,6 +3,8 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::{fs, io::ErrorKind};
 
+mod graph_spec_tests;
+
 fn pending_fixture() -> Result<(tempfile::TempDir, Kernel)> {
     // Model admission requires physical ancestors, including macOS /var aliases.
     let directory = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;

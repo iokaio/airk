@@ -247,6 +247,30 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
 }
 
 /// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
+fn graph_specification_readiness(
+    graph: &airk_core::graph_storage::GraphScope,
+    dimensions: usize,
+    state: &CollectionState,
+    policy: DefaultSearchPolicy,
+) -> Result<Option<SemanticReadiness>> {
+    let Some(model) = state.configuration.model.as_ref() else {
+        return Ok(None);
+    };
+    if graph.specification
+        == airk_retrieval::vector::mutable::specification(dimensions, model.pipeline_digest)?
+        && graph.record_bytes == airk_retrieval::vector::mutable::record_bytes(dimensions)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(SemanticReadiness{version:1,state:SemanticState::Unavailable,
+        default_search_policy:policy,selected_artifacts:state.counts.vector_eligible,
+        completed_artifacts:0,selected_units:None,completed_units:0,
+        first_ready_unix_ms:None,fully_ready_unix_ms:None,
+        selection_digest:Some(state.configuration.vector_selection.digest()?),
+        pipeline_digest:Some(model.pipeline_digest),
+        failure:Some("The saved vector graph requires regeneration. Rebuild the index before using semantic search.".into())}))
+}
+
 pub(super) fn readiness_with_state(
     read: &CurrentRead,
     store: &FileStore,
@@ -268,6 +292,21 @@ pub(super) fn readiness_with_state(
             pipeline_digest: store.shared_model_default().map(|o| o.pipeline_digest),
             failure: None,
         });
+    }
+    // Bounded authenticated manifest metadata only; never open weights, graph
+    // records, source bytes or a model session while observing readiness.
+    if read.head().graph_head.allocated_count != 0
+        && let Some(model) = state.configuration.model.as_ref()
+    {
+        let descriptor = crate::shared_models::descriptor(store, model)?;
+        if let Some(unavailable) = graph_specification_readiness(
+            &read.head().graph_head.scope,
+            usize::try_from(descriptor.dimensions)?,
+            state,
+            policy,
+        )? {
+            return Ok(unavailable);
+        }
     }
     if let Some(work) = read_work(read, store)? {
         return Ok(work.readiness(policy));

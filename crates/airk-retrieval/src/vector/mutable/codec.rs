@@ -18,7 +18,7 @@ pub fn record_bytes(dimensions: usize) -> Result<u32> {
 pub fn specification(dimensions: usize, pipeline: Sha256Digest) -> Result<Sha256Digest> {
     record_bytes(dimensions)?;
     let mut digest = Sha256::new();
-    digest.update(b"airk-mutable-diskann-1\0diskann-0.59.0\0le-f32-adjacency-48\0l2\0pruned-degree-32\0build-list-64\0triangle-prune\0");
+    digest.update(b"airk-mutable-diskann-2\0diskann-0.59.0\0le-f32-adjacency-48\0l2\0pruned-degree-32\0build-list-64\0triangle-prune\0seed-zero-bootstrap-only\0");
     digest.update((dimensions as u32).to_be_bytes());
     digest.update(pipeline.as_bytes());
     Ok(Sha256Digest::from_bytes(digest.finalize().into()))

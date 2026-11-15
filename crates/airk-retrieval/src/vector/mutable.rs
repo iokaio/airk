@@ -15,7 +15,7 @@ use diskann::{
 use diskann_vector::DistanceFunction;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
 };
 
 mod codec;
@@ -165,6 +165,10 @@ impl MutableDiskIndex {
             let id = u32::try_from(provider.counts()?.allocated_count)
                 .context("mutable DiskANN physical IDs exhausted")?;
             let context = OperationContext::new(MAX_VECTOR_READS);
+            let context = OperationContext {
+                insertion_id: Some(id),
+                ..context
+            };
             futures::executor::block_on(self.inner.insert(
                 &Strategy,
                 &context,
@@ -461,6 +465,7 @@ impl Drop for CandidateAttempt<'_> {
 
 #[derive(Clone)]
 struct OperationContext {
+    insertion_id: Option<u32>,
     reads: Arc<AtomicUsize>,
     exhausted: Arc<AtomicBool>,
     limit: usize,
@@ -471,6 +476,7 @@ impl provider::ExecutionContext for OperationContext {}
 impl OperationContext {
     fn new(limit: usize) -> Self {
         Self {
+            insertion_id: None,
             reads: Arc::new(AtomicUsize::new(0)),
             exhausted: Arc::new(AtomicBool::new(false)),
             limit,
@@ -655,6 +661,7 @@ impl<'a> glue::InsertStrategy<'a, RecordProvider, Input<'a>> for Strategy {
 struct Neighbors<'a> {
     provider: &'a RecordProvider,
     context: &'a OperationContext,
+    prune_center: &'a AtomicU32,
 }
 impl HasId for Neighbors<'_> {
     type Id = u32;
@@ -665,6 +672,7 @@ impl provider::NeighborAccessor for Neighbors<'_> {
         id: u32,
         neighbors: &mut AdjacencyList<u32>,
     ) -> ANNResult<()> {
+        self.prune_center.store(id, Ordering::Relaxed);
         neighbors.clear();
         for neighbor in self
             .provider
@@ -680,9 +688,11 @@ impl provider::NeighborAccessor for Neighbors<'_> {
 }
 impl provider::NeighborAccessorMut for Neighbors<'_> {
     async fn set_neighbors(&mut self, id: u32, neighbors: &[u32]) -> ANNResult<()> {
+        self.prune_center.store(id, Ordering::Relaxed);
         self.provider.write_neighbors(id, neighbors, self.context)
     }
     async fn append_vector(&mut self, id: u32, neighbors: &[u32]) -> ANNResult<()> {
+        self.prune_center.store(id, Ordering::Relaxed);
         let mut current = self
             .provider
             .read_record(id, self.context)
@@ -702,6 +712,28 @@ struct Pruner<'a> {
     provider: &'a RecordProvider,
     context: &'a OperationContext,
     vectors: workingset::Map<u32, Box<[f32]>, workingset::map::Ref<[f32]>>,
+    center: AtomicU32,
+}
+
+/// The supported missing-view entry excludes synthetic0 even if the inner map
+/// already cached it. Source0 and one-vector bootstrap still see its vector.
+struct PruneView<'a> {
+    inner: workingset::map::View<'a, u32, Box<[f32]>, workingset::map::Ref<[f32]>>,
+    exclude_seed: bool,
+}
+impl workingset::View<u32> for PruneView<'_> {
+    type ElementRef<'a> = &'a [f32];
+    type Element<'a>
+        = &'a [f32]
+    where
+        Self: 'a;
+    fn get(&self, id: u32) -> Option<Self::Element<'_>> {
+        if self.exclude_seed && id == 0 {
+            None
+        } else {
+            workingset::View::get(&self.inner, id)
+        }
+    }
 }
 impl HasId for Pruner<'_> {
     type Id = u32;
@@ -709,7 +741,7 @@ impl HasId for Pruner<'_> {
 impl glue::PruneAccessor for Pruner<'_> {
     type ElementRef<'a> = &'a [f32];
     type View<'a>
-        = workingset::map::View<'a, u32, Box<[f32]>, workingset::map::Ref<[f32]>>
+        = PruneView<'a>
     where
         Self: 'a;
     type Distance<'a>
@@ -724,6 +756,7 @@ impl glue::PruneAccessor for Pruner<'_> {
         Neighbors {
             provider: self.provider,
             context: self.context,
+            prune_center: &self.center,
         }
     }
     async fn fill<I>(&mut self, ids: I) -> ANNResult<(Self::View<'_>, L2)>
@@ -732,13 +765,21 @@ impl glue::PruneAccessor for Pruner<'_> {
     {
         let provider = self.provider;
         let context = self.context;
+        let exclude_seed = self.center.load(Ordering::Relaxed) != 0
+            && provider.counts().map_err(ann)?.allocated_count > 2;
         let view = self.vectors.fill(ids, |id| {
             provider
                 .read_record(id, context)
                 .map(|record| Some(record.1.vector.into_boxed_slice()))
                 .map_err(ann)
         })?;
-        Ok((view, L2))
+        Ok((
+            PruneView {
+                inner: view,
+                exclude_seed,
+            },
+            L2,
+        ))
     }
 }
 impl glue::PruneStrategy<RecordProvider> for Strategy {
@@ -753,6 +794,11 @@ impl glue::PruneStrategy<RecordProvider> for Strategy {
         Ok(Pruner {
             provider,
             context,
+            center: AtomicU32::new(
+                context
+                    .insertion_id
+                    .ok_or_else(|| ann("pruner requires explicit inserted ID"))?,
+            ),
             vectors: workingset::map::Builder::new(workingset::map::Capacity::Default)
                 .build(capacity),
         })

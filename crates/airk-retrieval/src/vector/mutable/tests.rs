@@ -5,6 +5,9 @@ use super::*;
 use airk_core::{graph_storage::GraphScope, identity::Incarnation};
 use std::sync::Mutex;
 
+mod connectivity_tests;
+mod prune_view_tests;
+
 const PIPELINE: Sha256Digest = Sha256Digest::from_bytes([3; 32]);
 
 struct Fixture {
