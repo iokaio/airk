@@ -1711,6 +1711,11 @@ version = "0.2.129"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.webpki-roots]]
+version = "1.0.9"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for webpki-roots 1.0.9; exact crates.io archive checksum and all twelve packaged files authenticated, all 121 embedded certificate fingerprints and compiled subject/SPKI literals checked, static no_std trust-anchor source and sole AIRK rustls download consumer reviewed 2026-11-15. Scope: approved HTTPS model-asset downloads retain normal hostname/chain validation plus compiled SHA/length and deadlines. Not a full safe-to-deploy audit, independent CA policy/revocation review, current advisory clearance or runtime/platform qualification. Imported Mozilla trusted.publisher entries are suggestion-only in cargo-vet 0.10.3; no imported audit coverage or local publisher trust is claimed. See supply-chain/reviews/webpki-roots-1.0.9-2026-11-15.md."
+
 [[exemptions.weezl]]
 version = "0.1.12"
 criteria = "safe-to-deploy"
