@@ -13,4 +13,3 @@ export function taskFromStudio(plan: Plan, studio: StudioDraft): PlanTask {
 }
 export const studioPrompt = (studio: StudioDraft) => studio.prompt ?? (studio.strategy ? compilePrompt({ strategy: studio.strategy, objective: studio.objective, profile: studio.profile, run: studio.run }) : '');
 export const canAddStudio = (studio: StudioDraft) => !!studio.strategy && !studio.promptStale && studioPrompt(studio).length <= 8000;
-
