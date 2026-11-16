@@ -144,10 +144,91 @@ def selected_tests(log_text):
 
 
 def is_test_command(command):
-    words = [Path(word).name.lower().removesuffix(".exe") for word in command[:4]]
-    joined = " ".join(command).lower()
-    return ("nextest" in words or ("cargo" in words[:1] and "test" in words)
-            or "--test" in command or "unittest" in joined)
+    """Recognize test execution, rather than a compilation target or argv text.
+
+    Classify the actual argv without executing or shell-parsing it. In particular,
+    Cargo build/check/clippy --test and --bench only select compilation targets.
+    """
+    if not command:
+        return False
+    program = str(command[0]).replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+    args = list(command[1:])
+    if program == "env":
+        while args:
+            word = args.pop(0)
+            if word == "--":
+                return is_test_command(args)
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", word, re.DOTALL) or word in ("-i", "--ignore-environment"):
+                continue
+            if word in ("-u", "--unset", "-C", "--chdir"):
+                if not args:
+                    return False
+                args.pop(0)
+                continue
+            if word.startswith(("--unset=", "--chdir=")):
+                continue
+            # env -S is a shell-like string, not this argv's executable.
+            return False if word.startswith("-") else is_test_command([word, *args])
+        return False
+    if program == "cargo":
+        while args:
+            word = args.pop(0)
+            if word.startswith("+") or word in ("-v", "-vv", "-q", "--verbose", "--quiet", "--offline", "--locked", "--frozen"):
+                continue
+            if word in ("--color", "--config", "-Z", "-C"):
+                if not args:
+                    return False
+                args.pop(0)
+                continue
+            if word.startswith(("--color=", "--config=", "-Z", "-C")):
+                continue
+            if word == "test":
+                cargo_args = args[:args.index("--")] if "--" in args else args
+                return not any(flag in cargo_args for flag in ("--no-run", "--help", "-h", "--version", "-V")) and "--list" not in args
+            if word == "nextest":
+                return is_test_command(["cargo-nextest", *args])
+            return False
+        return False
+    if program in ("cargo-nextest", "nextest"):
+        if args[:1] == ["nextest"]:
+            args.pop(0)
+        return args[:1] == ["run"] and not any(flag in args for flag in ("--help", "-h", "--version", "-V", "--list"))
+    if re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?|py", program):
+        while args:
+            word = args.pop(0)
+            if word in ("-B", "-I", "-u", "-E", "-s", "-S", "-q") or (program == "py" and re.fullmatch(r"-3(?:\.[0-9]+)?", word)):
+                continue
+            if word in ("-W", "-X"):
+                if not args:
+                    return False
+                args.pop(0)
+                continue
+            if word.startswith(("-W", "-X")):
+                continue
+            if word == "-m":
+                return args[:1] == ["unittest"] and not any(flag in args[1:] for flag in ("--help", "-h"))
+            # Only the maintained environment wrapper transparently forwards argv.
+            path = Path(word) if Path(word).is_absolute() else ROOT / word
+            if path.resolve() == (ROOT / "scripts/static-runtime-environment.py").resolve() and "--" in args:
+                return is_test_command(args[args.index("--") + 1:])
+            return False
+        return False
+    if program == "node":
+        selected = False
+        while args:
+            word = args.pop(0)
+            if word in ("--help", "-h", "--version", "-v", "--eval", "-e", "--print", "-p", "--check", "-c"):
+                return False
+            if word == "--" or not word.startswith("-"):
+                return selected
+            if word == "--test":
+                selected = True
+            elif word in ("--import", "--require", "-r", "--loader", "--test-reporter", "--test-name-pattern", "--test-skip-pattern", "--test-concurrency", "--test-timeout", "--test-reporter-destination"):
+                if not args:
+                    return False
+                args.pop(0)
+        return selected
+    return False
 
 
 def load_module(name, path):

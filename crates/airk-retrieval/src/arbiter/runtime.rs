@@ -329,6 +329,64 @@ fn bytes(source: &dyn AssetSource, asset: &Asset, maximum: u64) -> Result<Vec<u8
 
 impl Scorer {
     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
+        Self::open_configured(profile, source, Ok)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_profiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &std::path::Path,
+        optimized_model: &std::path::Path,
+    ) -> Result<Self> {
+        // Only this private profiler serializes an optimized graph. Ordinary
+        // open(None-equivalent) keeps its exact builder and does not save.
+        let external = optimized_model.with_extension("weights.bin");
+        ensure!(
+            optimized_model
+                .parent()
+                .is_some_and(std::path::Path::is_dir)
+                && !optimized_model.exists()
+                && !external.exists(),
+            "fresh optimized graph/external weights paths required"
+        );
+        let external_name = external
+            .file_name()
+            .and_then(|s| s.to_str())
+            .context("UTF-8 optimized external weights basename required")?;
+        let scorer = Self::open_configured(profile, source, |builder| {
+            Ok(builder
+                .with_profiling(profiling_prefix)?
+                .with_config_entry(
+                    "session.optimized_model_external_initializers_file_name",
+                    external_name,
+                )?
+                .with_config_entry(
+                    "session.optimized_model_external_initializers_min_size_in_bytes",
+                    "1024",
+                )?
+                .with_optimized_model_path(optimized_model)?)
+        })?;
+        // Saving remains inside this original load operation. The owned caller
+        // must also observe these same live output bounds during FFI save.
+        let graph_bytes = std::fs::metadata(optimized_model)?.len();
+        let weights_bytes = std::fs::metadata(&external)?.len();
+        ensure!(
+            graph_bytes > 0 && graph_bytes <= 64 * 1024 * 1024,
+            "diagnostic optimized graph output bound exceeded"
+        );
+        ensure!(
+            weights_bytes > 0 && weights_bytes <= 8 * 1024 * 1024 * 1024,
+            "diagnostic optimized external weights output bound exceeded"
+        );
+        Ok(scorer)
+    }
+    fn open_configured(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        configure: impl FnOnce(
+            ort::session::builder::SessionBuilder,
+        ) -> Result<ort::session::builder::SessionBuilder>,
+    ) -> Result<Self> {
         crate::native_inference::require_service_compute()?;
         profile.description.validate()?;
         validate_selected_policies(profile.description())?;
@@ -421,6 +479,7 @@ impl Scorer {
                 .build()])?
             .with_config_entry("session.intra_op.allow_spinning", "0")?
             .with_config_entry("session.inter_op.allow_spinning", "0")?;
+        builder = configure(builder)?;
         for asset in profile
             .description
             .assets
@@ -587,6 +646,16 @@ impl Scorer {
             joint_calibration,
         })
     }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn finish_profiling(&self) -> Result<std::path::PathBuf> {
+        crate::native_inference::require_service_compute()?;
+        Ok(self
+            .session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?
+            .end_profiling()?
+            .into())
+    }
     pub fn execution_identity(&self) -> Result<(String, usize)> {
         Ok((
             self.profile
@@ -658,4 +727,119 @@ impl Scorer {
         );
         Ok(scores.to_vec())
     }
+}
+
+/// Synthetic GQA operator control only; no model weights or execution profile.
+#[cfg(any(test, feature = "test-support"))]
+pub fn synthetic_gqa_profile(
+    graph: &[u8],
+    tokens: usize,
+    profiling_prefix: &std::path::Path,
+    optimized_model: &std::path::Path,
+) -> Result<serde_json::Value> {
+    crate::native_inference::require_service_compute()?;
+    ensure!(
+        matches!(tokens, 17 | 8192) && graph.len() <= 65536,
+        "bounded synthetic GQA control required"
+    );
+    ensure!(
+        airk_process::cpu_fit::usable_physical_cores()
+            .context("usable physical-core observation unavailable")?
+            >= 4,
+        "native CPU4 refused"
+    );
+    crate::onnx::initialize_runtime()?;
+    let _environment = crate::onnx::acquire_session_environment()?;
+    let mut session = Session::builder()?
+        .with_intra_threads(4)?
+        .with_inter_threads(1)?
+        .with_optimization_level(GraphOptimizationLevel::Level3)?
+        .with_parallel_execution(false)?
+        .with_memory_pattern(false)?
+        .with_execution_providers([CPUExecutionProvider::default()
+            .with_arena_allocator(false)
+            .build()])?
+        .with_config_entry("session.intra_op.allow_spinning", "0")?
+        .with_config_entry("session.inter_op.allow_spinning", "0")?
+        .with_profiling(profiling_prefix)?
+        .with_optimized_model_path(optimized_model)?
+        .commit_from_memory(graph)?;
+    ensure!(
+        session
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect::<Vec<_>>()
+            == [
+                "query",
+                "key",
+                "value",
+                "bias",
+                "seqlens_k",
+                "total_sequence_length"
+            ]
+            && session
+                .outputs
+                .iter()
+                .map(|output| output.name.as_str())
+                .collect::<Vec<_>>()
+                == ["context"],
+        "synthetic control ABI differs; cache must remain private"
+    );
+    let q = vec![0f32; tokens * 2048];
+    let k = vec![0f32; tokens * 1024];
+    let mut v = vec![0f32; tokens * 1024];
+    for t in 0..tokens {
+        for h in 0..8 {
+            for d in 0..128 {
+                v[t * 1024 + h * 128 + d] = (h * 128 + d) as f32 / 1024. + t as f32 / 8192.;
+            }
+        }
+    }
+    let mut bias = vec![0f32; tokens * tokens];
+    for t in 0..tokens {
+        for future in t + 1..tokens {
+            bias[t * tokens + future] = f32::MIN;
+        }
+    }
+    let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
+    let outputs = session.run_with_options(
+        ort::inputs![
+            "query"=>Tensor::from_array(([1,tokens,2048],q))?,
+            "key"=>Tensor::from_array(([1,tokens,1024],k))?,
+            "value"=>Tensor::from_array(([1,tokens,1024],v))?,
+            "bias"=>Tensor::from_array(([1,1,tokens,tokens],bias))?,
+            "seqlens_k"=>Tensor::from_array(([1],vec![tokens as i32-1]))?,
+            "total_sequence_length"=>Tensor::from_array(([1],vec![tokens as i32]))?,
+        ],
+        &options,
+    )?;
+    let (shape, actual) = outputs["context"].try_extract_tensor::<f32>()?;
+    ensure!(
+        shape.as_ref() == [1, tokens as i64, 2048],
+        "actual synthetic context shape differs"
+    );
+    let mut maximum_error = 0f32;
+    for t in 0..tokens {
+        for h in 0..16 {
+            for d in 0..128 {
+                let expected = ((h / 2) * 128 + d) as f32 / 1024. + t as f32 / 16384.;
+                let value = actual[t * 2048 + h * 128 + d];
+                ensure!(value.is_finite(), "nonfinite synthetic GQA value");
+                maximum_error = maximum_error.max((value - expected).abs());
+            }
+        }
+    }
+    drop(outputs);
+    let profiling = session.end_profiling()?;
+    ensure!(
+        maximum_error <= 0.0001,
+        "synthetic causal/GQA value check refused"
+    );
+    Ok(
+        serde_json::json!({"tokens":tokens,"profiling_path":profiling,
+        "optimized_graph_path":optimized_model,"maximum_error":maximum_error,
+        "graph_outputs":["context"],"model_weights_loaded":false,
+        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"}),
+    )
 }

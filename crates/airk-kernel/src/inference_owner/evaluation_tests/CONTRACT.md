@@ -395,3 +395,107 @@ The reviewed code dispatches no nonblank embedding request or Focus scorer
 request; these dispatch facts are stated separately and do not establish measured
 model-forward counts. The existing blank-input early-return control retains only
 its original scope. No telemetry framework or new measured-counter claim is added.
+
+
+## Public human visibility phase observations and shipping identity
+
+The private visibility diagnostic flushes before/after phase markers for pinned
+inputs, source-right evidence, closed-source census, Focus profile/compiler,
+encoder manifest, service lease/owner admission, Kernel open, canonical native
+extraction, evaluation-owner entry, encoder open, row mapping and serialization.
+Per-file planning records only bounded ordinal/total/completed-unit counters and
+elapsed time; row progress records only actual completed rows. No source content,
+question or label is logged by these markers. An unobserved after marker remains
+unknown; it cannot supply counts or completion. The external original120-second
+whole-phase deadline,4GiB native process/Job, output limits and forced-failure
+semantics are unchanged. This diagnostic bound is not product inference p95 or
+source-size qualification.
+
+The actual native unit planner/input-tensor census is factored into a private
+helper without changing extraction, vector-unit recipe or tokenizer calls. This
+adds observations only; repeated tokenization and row×unit scans are retained
+until their measured phase identifies a cost. Source footprint/rights flags stay
+separate from labels and all original1955rows remain in the denominator.
+
+A new explicit original-shipped-u8-ort130-evaluation branch must deserialize its
+genuine pinned descriptor, verify the actual256token/tokenizer ABI and require
+full manifest equality with the native CPU-selected model catalog. It never
+renames the original-mixed descriptor or transfers the old result. New native
+source/image/input/custody and an actual separate shipping census are required.
+No gradient, semantic acceptance, raw-data redistribution, terminal or whole-card
+qualification follows from token visibility.
+
+The U8 family additionally requires the native selected profile to be U8v3;
+an S8-selected host refuses that U8 family even if a supplied S8 manifest matches
+its selected catalog. A genuine S8 census needs its own explicit family/input.
+
+
+The per-file diagnostic also retains the existing owning VectorUnitStats units,
+body_bytes and planning_us. The owner's planning_us excludes the visitor callback;
+file total elapsed is reported separately and is not mislabeled callback time.
+Only bounded numeric metadata is flushed. A separately identified release-local
+build may measure the same offline corpus within the unchanged120s/4GiB bound;
+it preserves every original row, tensor and assertion. Debug timeouts remain
+failed; an optimized diagnostic result is not Debug product p95 qualification.
+Cargo release/CI profile policy and runtime request limits remain unchanged.
+
+
+## Public TRAIN source-span visibility adapters
+
+A private source_spans child reuses the same canonical unpublished extraction,
+production unit planner, native input tensors, real inference-owner lease and
+Focus512 compiler. Its TechQA adapter pins the290source-disjoint positive pairs,
+254original full TEXT documents, original600TRAIN QA authority and the12355-ID
+DEV-source-only fence. It recomputes human Unicode-character offsets into exact
+original UTF8 bytes; candidate DOC_IDS remain metadata only. No held-out question
+or context text is consulted.
+
+The ContextBench adapter pins the exact150TRAIN selection, original450TRAIN
+question/base-revision records and full original-source audit. It retains all2069
+gold spans across818revision-relative files/150repository+commit groups. Source
+roots remain separate per revision and use original repository-relative paths.
+The native adapter independently recomputes LF-based line spans, explicit CRLF
+and outer-newline equivalence and verified integer line counters. Only entire
+raw unique gold at source LF boundaries can use strict-derived offsets; original
+annotations/ranges stay unchanged. Broad Unicode splitlines, fuzzy matching,
+revision substitution and partial gold bags are refused.
+
+Every original case/span remains in output. Source alignment failures and native
+projection unavailability are explicit unknown/null observations, not invented
+zero counts. Gold-span coverage inside one actual unit and union-only coverage
+are separate; every full candidate unit/citation member/prefix/tensor is retained.
+Extra unit content and whole-unit labels remain unjudged. Focus compiles the full
+original question and full actual native unit without cropping, preserving every
+refusal. No original menu, N8card, Context8192 input, terminal class or negative
+judgment is reconstructed from these positive span labels.
+
+Native input emission is an ignored Rust-owned source-only selector using pinned
+original manifests and explicit environment paths. External staging copies whole
+original files only; it does not mirror Core input/Asset types or tokenize text.
+A separate ignored measurement uses a genuine reviewed encoder descriptor; U8
+shipping identity still requires actual U8v3 selection/full manifest equality.
+Actual extraction counters remain separate from unobserved null model-forward
+counts. No nonblank embedding or scorer request/gradient is dispatched. Rights,
+gold/semantic admission, distribution and product performance remain unqualified.
+The original120-second operational cutoff/4GiB Job and512MiB report bound remain;
+this diagnostic does not waive product inference or preregistered cohort gates.
+
+Rights bytes are explicit bounded native input evidence. TechQA requires the exact
+original-archive README (c5a58ed7...) and CDLA-Permissive1 PDF (e12775d6...), not a
+license-name string. Context requires every selected case's actual rights-file
+pins; native code rehashes each file and rejects missing/duplicate/ambiguous pins.
+These pins prove retained source terms, not research/training/distribution
+approval. The24GPL/AGPL local-research dispositions remain pending unless Root
+records a separate scope decision; no metadata flag can grant that authority.
+
+Only LF is trimmed at annotation edges after explicit CRLF-to-LF equivalence.
+BareCR and Unicode/control separators are not accepted as source line boundaries.
+Strict-derived raw gold may end at EOF/LF or before a complete CRLF, never at an
+arbitrary CR or halfway through CRLF. Source offsets remain exact UTF8 ranges.
+
+The current phase/statistics/U8selected guards are preserved. The parent changes
+only by a private child mount. Source-only native input emission is create-only
+outside staged source; full final reports use compact JSON with every original
+field/tensor retained under the unchanged512MiBcap. This changes no existing
+CoSQA output bytes or historical source/image identity. Input byte/count bounds
+are not claims that all cases fit native token/runtime/memory/output limits.

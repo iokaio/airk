@@ -8,6 +8,8 @@ use airk_core::arbiter::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+mod compact_graph;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
@@ -21,6 +23,8 @@ struct Input {
     output: PathBuf,
     source_commit: String,
     source_files: Vec<ResourceFilePin>,
+    #[serde(default)]
+    compact_graph: Option<compact_graph::Input>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -241,7 +245,10 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
     };
     let input: Input = serde_json::from_slice(&pinned_metadata(&request_pin, 1 << 20)?)?;
     ensure!(
-        input.schema == "airk.private.context-metadata-regeneration/1"
+        ((input.schema == "airk.private.context-metadata-regeneration/1"
+            && input.compact_graph.is_none())
+            || (input.schema == "airk.private.context-metadata-regeneration/2"
+                && input.compact_graph.is_some()))
             && input.output.is_absolute()
             && !input.output.exists()
             && input.asset_root.is_absolute(),
@@ -319,13 +326,16 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
     )?;
     let run = (|| -> Result<()> {
         for old in original.profiles {
+            if input.compact_graph.is_some() && old.model != ModelChoice::ContextQwenCompact {
+                continue;
+            }
             let model_name = serde_json::to_value(old.model)?
                 .as_str()
                 .context("native model name")?
                 .to_owned();
             let directory = input.output.join(&model_name);
             let originals = input.asset_root.join(old.manifest.to_string());
-            let source_assets = old
+            let mut source_assets: Vec<AssetInput> = old
                 .assets
                 .iter()
                 .filter(|asset| !matches!(asset.role, AssetRole::Compiler | AssetRole::Calibration))
@@ -334,10 +344,17 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     path: originals.join(&asset.name),
                 })
                 .collect();
+            if let Some(graph) = &input.compact_graph {
+                compact_graph::apply(graph, &mut source_assets)?;
+            }
             let mut prepared = prepare_with_limits(
                 ProfileInput {
                     model: old.model,
-                    profile_id: format!("private-final-policy-v2-{model_name}"),
+                    profile_id: if input.compact_graph.is_some() {
+                        "private-compact-fp32-gqa-diagnostic-v1".into()
+                    } else {
+                        format!("private-final-policy-v2-{model_name}")
+                    },
                     assets: source_assets,
                     cpu_fit: old.cpu_fit.clone().context("original declared CpuFit")?,
                     memory_reservation_bytes: old.memory_reservation_bytes,
@@ -378,6 +395,9 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     &policy,
                 )?;
             }
+            if let Some(graph) = &input.compact_graph {
+                compact_graph::validate_prepared(graph, &prepared)?;
+            }
             ensure!(
                 prepared.profile.qualification.is_none()
                     && prepared.profile.qualified_targets.is_empty()
@@ -395,6 +415,19 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     .iter()
                     .find(|current| current.name == asset.name)
                     .context("original neural/notice/fixture asset absent")?;
+                if asset.role == AssetRole::Model && input.compact_graph.is_some() {
+                    ensure!(
+                        current.sha256
+                            == input
+                                .compact_graph
+                                .as_ref()
+                                .context("graph override")?
+                                .graph
+                                .sha256,
+                        "new graph asset identity differs"
+                    );
+                    continue;
+                }
                 ensure!(
                     serde_json::to_value(current)? == serde_json::to_value(asset)?,
                     "regeneration changed an original neural/tokenizer/notice/fixture identity"
@@ -435,11 +468,16 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                 directory.join("resource-run-input.private.json"),
                 serde_json::to_vec_pretty(&request)?,
             )?;
-            rows.push(json!({"model":old.model,"original_manifest":old.manifest,"profile":profile_pin,
+            let mut row = json!({"model":old.model,"original_manifest":old.manifest,"profile":profile_pin,
                 "manifest":prepared.profile.manifest,"compiler":prepared.profile.compiler,"calibration":prepared.profile.calibration,
                 "task_policies":prepared.profile.task_policies,"max_tokens":prepared.profile.max_tokens,
                 "asset_files":pin(&directory.join("asset-files.private.json"))?,"resource_run_input":pin(&directory.join("resource-run-input.private.json"))?,
-                "original_fixture_is_new8192_qualification":false,"new_neural_weights":false,"terminal_classes_supported":false,"task_qualified":false,"release_qualified":false}));
+                "original_fixture_is_new8192_qualification":false,"new_neural_weights":false,"terminal_classes_supported":false,"task_qualified":false,"release_qualified":false});
+            if let Some(graph) = &input.compact_graph {
+                row["new_model_graph"] = json!(true);
+                row["graph_override"] = serde_json::to_value(graph)?;
+            }
+            rows.push(row);
             fs::write(
                 &report_path,
                 serde_json::to_vec_pretty(&report(false, &rows, None))?,

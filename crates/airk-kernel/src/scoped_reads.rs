@@ -682,6 +682,14 @@ impl SessionScope {
         ensure!(!self.revoked.load(Ordering::Acquire), ScopeReadRefused);
         Ok(())
     }
+    pub(crate) fn require_bootstrap_authority(&self, read: &CurrentRead) -> Result<()> {
+        self.live()?;
+        // Genesis has no configured aliases. Preserve definite foreign-root
+        // refusals rather than assigning temporary availability to bad scope.
+        self.authority
+            .compile(&read.head().scope.root, &BTreeMap::new())?;
+        self.live()
+    }
     pub(crate) fn attach(&self, read: &CurrentRead) -> Result<()> {
         self.live()?;
         #[cfg(test)]
@@ -2242,6 +2250,160 @@ mod tests {
                 .scoped_source_attribution("/not/a/source", "lib.rs")
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn authenticated_genesis_waits_for_configuration_without_weakening_scope() -> Result<()> {
+        use airk_core::{
+            graph_storage::{GraphHead, GraphScope},
+            scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+            service_resources::WaitReason,
+        };
+        use airk_store::current::{CurrentHead, CurrentScope, collection::CollectionConfiguration};
+
+        let directory = tempfile::tempdir()?;
+        let source = directory.path().join("source");
+        std::fs::create_dir(&source)?;
+        let admin = Kernel::open(&source, Some(directory.path().join("data")))?;
+        admin.configure_vectors(false)?;
+        let scope = CurrentScope {
+            root: admin.root_id(),
+            collection: admin.collection.clone(),
+            incarnation: Incarnation::from_bytes([11; 16]),
+        };
+        let lexical = airk_store::current::lexical::LexicalManifest::empty()?;
+        let head = CurrentHead {
+            version: 2,
+            scope: scope.clone(),
+            sequence: 0,
+            artifact_root: airk_store::current::map::empty_root(&scope)?,
+            lexical_sequence: 0,
+            lexical_commit: lexical.digest()?,
+            graph_head: GraphHead::empty(GraphScope {
+                root: scope.root.clone(),
+                collection: scope.collection.clone(),
+                incarnation: scope.incarnation,
+                graph_instance: Incarnation::from_bytes([12; 16]),
+                specification: Sha256Digest::from_bytes([13; 32]),
+                record_bytes: 16,
+            })?,
+        };
+        let quota = admin.collection_quota()?;
+        {
+            let lock = admin.store.lock()?;
+            let mut current = admin.store.current_write(&lock, &quota, &scope, 16 << 20)?;
+            current.initialize(head.clone())?;
+            current
+                .install_initial_lexical_manifest(&head.token()?, &lexical.canonical_bytes()?)?;
+        }
+        {
+            let raw = admin.store.current_read(&scope)?;
+            assert_eq!(raw.head().sequence, 0);
+            assert!(raw.collection_state()?.is_none());
+        }
+        let template = fixture(&admin.root_id());
+        let authority = OpenReadAuthority {
+            schema: 1,
+            backing: airk_core::service::ProjectRegistration::new(
+                admin.root_id(),
+                admin.data_root.to_str().unwrap().into(),
+                admin.collection.clone(),
+            )?
+            .binding,
+            index_id: template.index_id,
+            selection: SelectionScopeRef {
+                owner: SelectionOwnerKind::Agent,
+                grant_nonce: Incarnation::from_bytes([14; 16]),
+                service_instance: Incarnation::from_bytes([15; 16]),
+                scope_identity: Sha256Digest::from_bytes([16; 32]),
+                catalog_revision: CatalogRevision::INITIAL,
+            },
+            sources: template.sources,
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        };
+        let selected = admin.with_open_reads(authority.clone())?;
+        for kernel in [&admin, &selected] {
+            let error = kernel.status_summary().unwrap_err();
+            assert!(!error.is::<ScopeReadRefused>());
+            let hint =
+                crate::retrieval_retry::read_retry_hint(&error).expect("typed bootstrap admission");
+            assert_eq!(
+                serde_json::to_value(hint)?,
+                serde_json::json!({
+                    "status":"retry", "retryable":true, "code":"publication_busy",
+                    "retry_after_ms":25, "action":"repeat_same_request"
+                })
+            );
+            assert_eq!(
+                Kernel::service_enrichment_wait_reason(&error),
+                Some(WaitReason::Publication)
+            );
+        }
+        let revoked = admin.with_open_reads(authority.clone())?;
+        revoked.revoke_scoped_reads();
+        let mut foreign_root = authority.clone();
+        foreign_root.sources[0].original_root =
+            directory.path().join("foreign").to_str().unwrap().into();
+        let foreign_root = admin.with_open_reads(foreign_root)?;
+        let mut wrong_policy = authority.clone();
+        wrong_policy.policy_epoch = 1;
+        wrong_policy.policy_digest = Some(Sha256Digest::from_bytes([17; 32]));
+        let wrong_policy = admin.with_open_reads(wrong_policy)?;
+        for kernel in [&revoked, &foreign_root, &wrong_policy] {
+            let error = kernel.status_summary().unwrap_err();
+            assert!(error.is::<ScopeReadRefused>());
+            assert!(crate::retrieval_retry::read_retry_hint(&error).is_none());
+        }
+        let mut foreign_backing = authority;
+        foreign_backing.backing = Sha256Digest::from_bytes([18; 32]);
+        assert!(
+            admin
+                .with_open_reads(foreign_backing)
+                .err()
+                .unwrap()
+                .is::<ScopeReadRefused>()
+        );
+
+        let policy = admin.rebuild_extraction_policy()?.policy;
+        let configuration = CollectionConfiguration {
+            retained_profile: policy.retained_profile,
+            source_policy_digest: None,
+            roots: BTreeMap::new(),
+            extractor_version: airk_core::EXTRACTOR_VERSION.into(),
+            extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
+            index_detail: policy.legacy_detail(),
+            vector_selection: admin.vector_selection()?,
+            model: None,
+        };
+        {
+            let lock = admin.store.lock()?;
+            let mut current = admin.store.current_write(&lock, &quota, &scope, 16 << 20)?;
+            current.initialize_collection(&head.token()?, &configuration)?;
+        }
+        let status = selected.status_summary()?;
+        assert_eq!(status["index_state"], "available");
+        assert_eq!(status["files"], 0);
+        assert_eq!(status["generation"], 1);
+        assert!(status["publication"]["token"].is_string());
+        assert_eq!(selected.current_reader()?.head().sequence, 1);
+        let mut partial = fixture(&admin.root_id());
+        partial.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_str().unwrap().into(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        partial.grant.memberships[0].membership.scope[0].path = "partial".into();
+        let error = admin
+            .with_scoped_reads(partial)?
+            .status_summary()
+            .unwrap_err();
+        assert!(error.is::<ScopeReadRefused>());
+        assert!(crate::retrieval_retry::read_retry_hint(&error).is_none());
+        assert!(std::fs::read_dir(source)?.next().is_none());
         Ok(())
     }
 }

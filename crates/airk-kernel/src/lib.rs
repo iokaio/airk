@@ -1192,6 +1192,12 @@ impl Kernel {
         read: Arc<airk_store::current::CurrentRead>,
     ) -> Result<Arc<airk_store::current::CurrentRead>> {
         self.attach_source_policy_read(&read)?;
+        if read.head().sequence == 0 && read.collection_state()?.is_none() {
+            if let Some(scope) = &self.read_scope {
+                scope.require_bootstrap_authority(&read)?;
+            }
+            return Err(crate::retrieval_retry::BootstrapPublicationPending.into());
+        }
         if let Some(scope) = &self.read_scope {
             scope.attach(&read)?;
         }

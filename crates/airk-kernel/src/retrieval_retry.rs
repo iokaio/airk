@@ -10,6 +10,17 @@ use airk_store::{
 };
 use serde::Serialize;
 
+/// Authenticated genesis exists, but its first configured publication has not
+/// committed. No evidence query has been admitted. Never inferred from text.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BootstrapPublicationPending;
+impl std::fmt::Display for BootstrapPublicationPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("current bootstrap has no configured publication yet")
+    }
+}
+impl std::error::Error for BootstrapPublicationPending {}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ReadRetryHint {
     pub status: &'static str,
@@ -28,7 +39,8 @@ pub fn read_retry_hint(error: &anyhow::Error) -> Option<ReadRetryHint> {
         // gate admits it. This does not retry ledger operations or mutations;
         // durable job diagnostics retain the distinct quota_ledger_busy code.
         ("selection_busy", SelectionContention::RETRY_AFTER_MS)
-    } else if error.downcast_ref::<CurrentReadContention>().is_some()
+    } else if error.is::<BootstrapPublicationPending>()
+        || error.downcast_ref::<CurrentReadContention>().is_some()
         || matches!(
             error.downcast_ref::<CurrentGateContention>(),
             Some(CurrentGateContention::Applying)
@@ -55,6 +67,7 @@ mod tests {
         for error in [
             anyhow::Error::new(SelectionContention),
             anyhow::Error::new(CurrentReadContention),
+            anyhow::Error::new(BootstrapPublicationPending),
             anyhow::Error::new(std::fs::TryLockError::WouldBlock).context(QuotaContention),
             anyhow::anyhow!("native lock").context(CurrentGateContention::Applying),
         ] {
@@ -75,6 +88,7 @@ mod tests {
             )),
             anyhow::anyhow!("current revision expired"),
             anyhow::anyhow!("corrupt index"),
+            anyhow::anyhow!("current bootstrap has no configured publication yet"),
             anyhow::anyhow!("service incarnation selection is busy; retry after 25 ms"),
             anyhow::anyhow!("write lock").context(CurrentGateContention::Readers),
         ] {

@@ -5798,3 +5798,230 @@ Earlier candidate artifacts retain their old notices; fresh runtime/package
 qualification is still required. All source work for the next DCO milestone is
 reviewed and frozen; follow-on diagnostic implementation waits until the matched
 build/source transfer consumes this snapshot.
+
+
+### Refreshed Windows candidate and measured native data admission boundary
+
+Local DCO milestone6c2410791999fa7691b9be97441f371d4048d870 records31reviewed
+public paths; tree0fca7d9f61123920362e42a03681058caa5f1570. No push occurs.
+Exact3504raw public files transfer to clean candidate-worktree-r2, with405
+measured raw/stat reconciliations,223 compiled editor outputs and locked public
+dependency closure. Canonical C7 is f4353a13aef8d5d908944fb643ff833f59af0f215cbd73bad79723b063ea8b1f/1937.
+The genuine Root warm-target matched runtime build passes219.348s unchanged
+(`windows-runtime-debug-r2-build`, native groupef4297488ab14d1046a7167898fe4d47ac5546366f42052fcaa0fcdfa9feabcf).
+Service/client hashes are60b7f664958208e25336696fc55dfa3c905ee6dcfc9a8eb1ead531bbe0003563 /
+e8d8e32a73700f20b51c29b125dad5dd2ebe8b4aed88e16e38f9f0ca8f72e1c8.
+Current full client/model preflight passes131.922s; actual raw HTTPS passes70/70
+in83.218s across both endpoint phases and Python/Node24.15/PowerShell/raw/MCP/CLI.
+Both raw fixture native Stops complete and both human service PIDs are absent.
+Original unsigned identities retain these results; no signed-image transfer.
+
+Fresh full65DOM cases pass on exact candidate2 bytes, no skips. Canonical
+universal VSIX packages in12.325s,131entries, SHA
+5de5d43b03642e52f53b5dde3636cb34d8b92095a4e11d788e8d13d15c5b6062.
+Private Code1.146 installed Explorer journey passes7.948s with native execution
+and automatic install disabled; original Code process exits0, no scoped children.
+Current native Workbench gate passes16full comparisons, two Answer routes and
+source-open fences in47.402s; native PID70128 StopComplete/retained-handle exit0.
+Embedded Admin gate passes8full comparisons,24navigation/all12titles/icons and
+wide/narrow checks in33.827s; native PID51036 StopComplete/handle exit0, Edge
+Browser.close/exited0/profile removed, clipboard restored in memory. All4577
+inputs remain unchanged. Request census is42issued/9complete200responses over7
+operations/33without terminal observation; those33are observation gaps, not
+parity or active-work evidence. Disposable fixtures deliberately omit pair build
+metadata (Health.build=null); outer artifact/C7 validation remains separate.
+Native scoped freshness unavailable/live_source_verified=false stays disclosed.
+Group proof is `ui-native-r2-cards/group-execution.json` SHA
+92a611c9580e2801d675b000108fe8c857dfda701ec886b3a14721e4f51a645e.
+Root inspects the actual Service screenshot independently of its UI implementer.
+
+The current signed Windows EXE is produced without rebuilding the tested pair:
+SHA879842263e199b4e892e0a60f59ae09212383c1ba40794f12f3e1cd4249b4b53,
+72,270,088bytes. Four actual signatures verify publisher/EKU/trust/timestamp.
+Data-only extraction matches all844payload files, including all11research
+companions and original TechQA PDF. No installer activation occurs. Root's
+canonical existing-signature adoption uses one actual Cargo metadata provenance
+call, no compilation, and produces the same signed images/native ZIP. The first
+signed-pair client preflight fails before the main client/model section: four
+cold status reads give one success/three failures; rejected full envelopes and
+which client-opening phase were not retained by the old harness. Exact cause is
+unknown, not inferred from the contemporaneous index-publication observation.
+Native ordinary StopComplete/PID absence are retained; no contemporaneous PID
+handle is claimed. Capture diagnostics and corrected artifact acceptance remain
+pending; delivery-copy folders are not created merely to hide this failure.
+
+Public Focus R4 stops before Focus import on a stale combined-only diagnostic
+checker, after real MiniLM setup. Private R5 singleton/combined correction passes
+33controls and reaches genuine current R2 Health, native import/cached Provision,
+FocusReady, stale Configure refusal, actual Focus-applied A and ordinary excluded
+B, Disable, Unenroll, Remove/MissingAssets and first Stop/PIDexit0. Four of eight
+candidates are presented/scored, four retained in the original tail;2048reserved
+input tokens are four512pairs, not Context8192. Actual inference7.911453s,
+compile.021085s, queue.001122s; native calls/rounds/fanout fields stay0 as emitted.
+R5whole journey remains failed because implicit Ensure correctly honors explicit
+Stop. A separate retained-state explicit restart first fails an overly strict
+cross-instance fingerprint comparison; all other public source fields and
+publication are unchanged. Root acknowledges missing this boundary in review.
+Native authority hashes include hidden nonce/service instance; the corrective
+checker preserves whole old/new scopes, validates public continuity, and freezes
+the new native scope inside its own epoch. The corrected separate restart passes:
+child8.821s/outer12.277s, persisted disabled/MissingAssets, both original indexes
+serve complete hybrid MiniLM/Focus=null, new same-image instance/PID68936,
+StopComplete/actual handle exit0 and natural empty Job. All910postpins hold.
+R5and the first restart remain failed, with separate source-bound component
+coverage, no whole-run retag or I4/model-quality/resource/CAL qualification.
+
+First Debug native CoSQA visibility census times out120.066607s with no report.
+B4adds flushed phase observations plus exact native U8-selected manifest guard;
+13native controls pass14.834s and scoped Clippy12.546s. The next Debug census
+also times out120.069s, completing150/316files and8426units but no row phase.
+Actual phases disprove the owner-lock/slow-model-open hypotheses: extraction
+20.550687s, model open.301645s; unit planning/export consumes the remaining time.
+Both killed owners observe exit77/empty Job; later hash audits are explicitly
+outside the failed phase and do not upgrade it. Existing VectorUnitStats are
+then retained (callback-excluded planner time, separate total file wall time).
+Clippy passes5.693s. The unchanged release-local policy (opt3/thinLTO/codegen16)
+builds an optimized diagnostic in294.558s with CARGO_INCREMENTAL unset; all13same
+controls pass4.815s on that image. Actual source group is5657ac2fa73fd53eb8e16c1beba3bbb2f0118368d9cd813d3d3cfc03991de9c8;
+bridges and original failures remain under their own identities.
+
+The optimized SAME120s/4GiB/full1955census passes34.137539s, native26.02s, actual
+PID21968 authenticated SID1002/image, naturalexit0/empty Job/handle closure,
+peak Job1,878,794,240bytes. It retains16386native units across all316files,
+1930single-unit complete-function observations and25union-only cases. Strict
+unchanged whole-input MiniLM matches are only21rows/5functions/4repos (9positive,
+12negative);1934stay unknown. Focus compiles1953original full function pairs and
+refuses two positive overflows without cropping. Within the supported private
+rights scope1869,1867full-function Focus pairs fit (932positive/935negative),
+37repos/437functions;86unknown-rights rows stay unknown despite visibility.
+No semantic training admission follows. Actual report242,754,548bytes SHA
+a115b0f32ba012c2717b1d6ff3105192dbc6d0749e5770b66830aca6bee237f5;
+owned receiptb764c9c939c96bd143aa86a44c106e2995fad761ab2dd379ce12c6a12883e825.
+This optimized offline result is not Debug product p95 evidence. Generic
+TechQA/Context native mapping and split/clone/chronology proposals remain separate.
+
+Neo6c authentic bridge verifies3504files/C7f435 under UID501 and preserves the
+original365dirty entries. Scoped Admin Clippy Cargo exits0, but old receipt
+classification mistakes Clippy's --test target selector for a test execution and
+returns4. The batch stops before TLS/runtime/workspace/doc tests; actual owner
+settlement and target cleanup succeed. A reviewed maintained classifier fix and
+38script controls preserve genuine zero-selection refusals and child failures;
+Python3.13empty unittest exits5 and is not rewritten as wrapper4. Corrected
+source-bound Neo batch remains pending. No old failed receipt is rewritten.
+
+The user receives the two-hour progress report about16:35UTC; next report is due
+18:35UTC (11:35Denver). T0 remains05:29:42UTC;24h target/48h cap unchanged.
+All work remains TYAI\tdotn and Mac UID501, without ACL/ownership/account changes.
+
+
+### 2026-11-16 — Critical-path review after the user challenged progress
+
+At about18:11UTC (roughly12h42m from the unchanged05:29:42T0), Root reports
+that implementation is substantial but the plan is not close to complete.
+Supporting harness reconstruction/evidence collection has displaced the primary
+model/Answer/delivery outcomes. The user requires the same critical-path self-check
+every two hours; include the comparison and any course correction in each report.
+Keep the previously promised18:35UTC checkpoint, then two-hour cadence.
+
+Root stops new QASPER replay/source-panel, shipping census and public Context I/O
+preparation; preserved private proposals are not admitted or claimed executed.
+Current focus is the signed cold-start failure, actual Context8192/Answer, a
+definite training disposition, then grouped platform and delivery gates. Existing
+source-span/attention work gets grouped compiler/regression checks, not more
+unrelated infrastructure expansion. No user-installed206 change is authorized.
+
+Signed cold-only diagnostic reproduces the rejection68.875s with completecapture:
+sequential4available; concurrent2available/2nonretryable scoped_read_unavailable;
+exactly one attempt per client/allfour siblings retained. Both actual native
+handles signal after original StopComplete, no signals, both PIDs absent, no
+source/runtime/input drift. Full packet is exec-20261116T052942Z/
+signed-cold-diagnostic-proposal-r1/actual-r1/compact-packet.json SHA
+c049de630c61183c1bab62330737660608e21ccb50282ce735a6fbc8bad59077.
+Read-only native trace identifies a possible visible genesis-before-collection
+bootstrap window; exact failing generation remains unobserved. Deterministic
+regression/source diagnosis are pending, not a claimed cause fix or retry waiver.
+
+Compact graph-only R1 fails2.252610s on a namespace-only removal guard; R4audit
+proves336exporter-global Int64[1]zero-axis constants each belong only to removed
+attention Unsqueeze consumers (12/layer), no original dead/projection removals.
+Graph-onlyR2 then fails19.016278s because optional symbolic value propagation
+tries to open external learned weights from the fresh output CWD. Both actual
+ONNX checkers had passed; no candidate was emitted. R5 keeps true tensor metadata,
+makes optional external values unknown and refuses required external values
+before IO. Thirty literal controls and independent source review pass.
+Actual graph-onlyR3 passes7.672752s under original30s/8GiB: all four exact
+1/17/128/8192 shape cases resolve all28GQA nodes, actual checker/source/projection/
+initializer/ABI guards pass; natural authenticated PID exit0/empty Job/no drift.
+Newgraph d2b32177c875a989bdbe56071168bbcabb8d589ba740099feea44972459828c3,
+823190bytes; shapeproof7cd056abdedffe07a4c8684de3b21744e4f877630d7b1415f3b83aa292b249f0.
+No kernel/model forward or quality/resource qualification follows. Tiny/native
+allocation, new Rust-owned profile/input and single8192diagnostic remain gates.
+
+Generic TechQA/Context source-span adapter is applied contract-first after
+primary/independent review, with original case/span denominators and rights-byte
+pins. The grouped first Clippy fails on a tiny-control Option/Result mismatch;
+Root corrects it using the existing native unknown-core refusal. The next Clippy
+fails on a collapsible-if lint; original failures are retained. Native compiler
+width/recipe guard and these mechanical fixes precede the next grouped run.
+
+F2 disposition:1867source-scoped full-function binary pairs are suitable task-local
+labels, but plan-conforming training admission is not complete. Missing requirements
+are accepted stratified mix/splits/clone/chronology/power, native-accepted general
+replay and an executable frozen experiment card. Missing terminal/N8labels do not
+invalidate those binary labels. No new adaptation, calibration, held-out selection
+or qualified catalog is claimed. Requirements are recorded rather than waived.
+
+
+### 2026-11-16 — 18:35UTC critical-path self-check
+
+Still behind the24h target: training, final model/calibration and delivery gates
+remain incomplete. New intake/replay/shipping-census branches stay stopped.
+The immediate sequence is current native regressions, rebuilt Windows runtime/
+cold-client qualification, and actual tiny/full8192Context execution.
+
+The reviewed genesis-only BootstrapPublicationPending fix is applied after the
+selection-authority contract. It preserves source-policy/live/root/backing
+checks and uses existing publication_busy25ms/same-request limits, plus the
+semantic Publication wait reason. No authority error is reclassified. The
+actual native genesis0→configured1 regression passes0.210s; revoked/policy/
+foreign-root/backing/configured-partial refusals remain hard failures.
+Grouped four-crate Clippy passes35.396671s (current-bootstrap-attention-clippy-r5),
+with subsequent formatting-only line wrapping separately checked. The1102case
+regression batch is still running (over800passed/no reported failure so far),
+not yet a completed pass. Formatting, version1.8.207 agreement, whitespace and
+repository checks pass3508public files. All earlier compiler/lint failures stay
+retained; RSS guards now refuse unavailable Option observations without zero
+substitution and path comparisons borrow rather than allocate.
+
+New Compact metadata override is applied contract-first and independently
+reviewed: native schema/2 replaces only the graph Asset and creates distinct
+profile/calibration/source bindings; old schema/1, all original weights/paths,
+compiler,8192/N8,Cpu4 and16GiB remain fenced. No metadata/model run is claimed.
+Actual synthetic graph617bytes SHA5e00696783dbdc9f3aa377cfca8c566b20c8f83585f1fcb2ae51e6abe4ba2b19
+is created, with no kernel run yet. The harmless OS capacity smoke passes0.311s
+under original30s: authenticated suspended child, actual post-exit memory APIs,
+naturalexit0/empty Job/closed handles. Its receipt SHA
+3f6f48580d8cdd053ed9bc10b772920a149a38d32378c2f862dd7b37d7609063.
+This establishes observer readiness only, not model fit. New image/metadata/tiny
+gates still precede the single8192diagnostic. No new model qualification follows.
+
+The next two-hour report/self-check is due20:35UTC (13:35Denver).
+
+
+### 2026-11-16 — Current bootstrap/attention source milestone passes
+
+Current kernel/retrieval/inference/service regressions pass1102/1102 selected,
+92skipped (two by ci default filter),940.120983s whole/853.133s tests. Source
+group e206b3e443752466e06223f90b55cbe0fb16f33b6f06b00c16a97f1c0bd65002;
+fixture/harness unchanged. Receipt current-bootstrap-attention-regressions-r1
+and JUnit88511888e02aaf0754f102f0e5ab78edfe5b8282e3c965969d9d2c225cf5ce95
+are retained under exec-20261116T052942Z. Actual genesis/configured scope,
+compiler-width, GQA allocation-observer and metadata-proof controls pass.
+This is not a signed-client replay, synthetic kernel/model run or release.
+Clippy35.396671s retains its pre-format source identity; the single comparison
+line wrap is nonsemantic and final fmt check passes. Compiler descendants exited.
+Combined source is primary-reviewed; contract/authority and graph metadata have
+separate parallel review. Genuine image capture, runtime rebuild and Neo bridge
+follow this milestone. Documentation exact-text attempts failed before writing;
+the scoped Section10 update is included in the same unpublished local milestone.
+No user206 change, push, PR, publication or deployment.

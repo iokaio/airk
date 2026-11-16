@@ -315,3 +315,31 @@ retention observation also fails, retain the original typed native error as the
 cause and add the complete observation failure context. Failure remains closed;
 no duration is invented when a clock fails and no subsequent call is admitted.
 A post-call observer failure after native success records that distinction.
+
+## Proposed Compact attention diagnostic profiling
+
+Test-support may create one profiling-enabled scorer with the same native
+profile/source admission, CPU/provider/thread/arena options and input guard.
+Ordinary open calls the identical configured owner with an identity builder;
+profiling and optimized-graph output are test-support APIs only. The diagnostic
+keeps the original native operation journal/watchdog and actual ServiceLease/
+NativeInferenceOwner through scorer drop and source rechecks. It records actual
+ORT allocation/provider/type/shape data, not declared output names as proof.
+No cache output becomes public and no zero-value dependency is added to scores.
+One full8192 Compact forward is diagnostic-only; all-row qualification selectors,
+weights/compiler/inputs, numerical/resource limits and source custody remain
+unchanged. Old same-artifact seals cannot qualify a different graph. Synthetic
+GQA operator controls are separate from model forwards and prove only actual
+registered CPU kernel/allocation shape, never model or task qualification.
+
+
+Private Compact attention proposal R3: the profiled full-model constructor uses
+pinned ORT externalized optimized serialization (fresh weights basename, 1024
+byte threshold). It must never use default Model::Save on injected multi-GiB
+weights. Save time and memory remain inside the original 120 second load and
+16 GiB native budget. Fresh graph <=64 MiB and external weights <=8 GiB are
+checked before forward; the actual execution owner must observe these bounds
+while synchronous serialization is in flight and retain all emitted bytes.
+No profiled execution is authorized by source preparation. Ordinary Scorer::open
+keeps its original builder and performs no optimized serialization. Tiny graphs
+contain no learned/external weights and retain their separately bounded save.

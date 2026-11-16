@@ -99,3 +99,23 @@ logical assets, actual image and any numeric fixture/reference producer. Missing
 seals refuse. Context numeric17/128/8192 inputs must have every token live;
 Focus retains genuine left padding. Vocabulary readout rows must match the
 authenticated native compiler. New native refusal fixtures cover these boundaries.
+
+
+## Private Compact graph diagnostic metadata (/2)
+
+An additive regeneration request schema /2 requires the Compact-only graph,
+actual shape-proof, actual naturally settled graph-creation receipt and original
+native8192 ResourceRunInput pins. Historical /1 rejects overrides and preserves
+its exact construction. /2 emits only Compact. Native code reuses original Core
+Asset values and physical paths, replacing only Model SHA/length/path with the
+actual new graph. The native constructor emits a distinct private profile ID,
+manifest and calibration binding (the calibration binds the new graph). Original
+weights/tokenizer/fixtures/notices and paths, compiler bytes,8192/N8, policy,
+Cpu4/inter1/sequential/no spin and16GiB reservation remain exact. No terminal,
+platform, numerical or release authority is granted. Actual shape checks do not
+prove a registered native kernel or allocated cache outputs; separate tiny and
+profiled one-forward gates remain. Old same-artifact custody binds the old graph
+and cannot transfer. New ResourceRunInput/source_manifest and actual new image/
+build seals are required. The existing native numeric-template emitter must
+produce a byte-identical blank17/128/8192 template before any scoring; original
+independent numeric arrays remain opaque, unchanged evidence only.

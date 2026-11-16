@@ -908,3 +908,23 @@ Tests:
 | N4 dropped nonces | LOW | `sweep`, `purge` and `create` eviction return dropped nonces as `#[must_use]`; each path tested to call `revoke_selection` | §3.3, §5 |
 | N5 revocation ordering | LOW | Local revocation only after the last refusal check, just before `state.pending` is set | §3.3, §5 |
 | N6 caps and empty scopes | LOW | `MAX_SESSIONS = 16` resolved; gate cap 80 × `MAX_SELECTION`; worker cap 80 live + 80 unacknowledged revokes; empty-scope memberships dropped, empty subset refused | §3.2, §3.4, §4, §5, §7 |
+
+## Authenticated bootstrap publication admission
+
+A native current genesis (validated sequence zero and empty authenticated map)
+can be visible before the separate first configured collection publication. It
+contains no CollectionState and cannot admit an evidence query. After permanent
+source-policy attachment, live scoped authority and primary-source compilation
+checks, this exact absence is a typed BootstrapPublicationPending read-admission
+condition. It maps to the existing publication_busy receipt (25 ms, repeat the
+same request), within the original caller deadline and existing attempt limits.
+It neither submits a data query nor returns counts, a replacement revision or
+unrestricted metadata. Native semantic work classifies it as Publication wait.
+
+The marker is internal to Kernel. It does not broaden CurrentReadContention's
+SQLite BUSY/LOCKED contract. Revocation, policy mismatch, foreign source/backing,
+configured partial scope, and missing metadata in a nonzero publication retain
+their existing failures; no ScopeReadRefused is caught or reclassified. A first
+configured publication resumes the same canonical read under its original
+authority. No wire shape, persisted format, digest input, clock, retry cap or
+grant-renewal policy changes.

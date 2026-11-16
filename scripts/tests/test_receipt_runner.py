@@ -54,6 +54,47 @@ class SelectedTests(unittest.TestCase):
         self.assertTrue(RUNNER.is_test_command(["python", "-m", "unittest", "discover"]))
         self.assertFalse(RUNNER.is_test_command(["python", "scripts/dev-check.py", "-p", "airk-core"]))
 
+    def test_cargo_compilation_target_selectors_are_not_test_execution(self):
+        observed = ["cargo", "clippy", "-p", "airk-cli", "--test", "admin_plane", "--all-features", "--locked", "--timings", "--", "-D", "warnings"]
+        self.assertFalse(RUNNER.is_test_command(observed))
+        for subcommand in ("clippy", "check", "build"):
+            for selector in ("--test", "--bench", "--tests", "--benches", "--all-targets"):
+                with self.subTest(subcommand=subcommand, selector=selector):
+                    self.assertFalse(RUNNER.is_test_command(["cargo", subcommand, selector, "unittest"]))
+        for command in (["cargo", "bench", "--bench", "test"], ["cargo", "run", "--", "--test"],
+                        ["cargo", "nextest", "list"], ["cargo", "test", "--no-run"],
+                        ["cargo", "test", "--", "--list"], ["cargo", "test", "--help"]):
+            with self.subTest(command=command):
+                self.assertFalse(RUNNER.is_test_command(command))
+
+    def test_runner_identity_and_global_options_preserve_real_test_execution(self):
+        for command in ([r"C:\tools\cargo.exe", "+1.98.0", "--color", "always", "--config=net.offline=true", "test", "--test", "admin_plane"],
+                        ["/home/human/.cargo/bin/cargo", "-Z", "unstable-options", "nextest", "run", "-E", "test(example)"],
+                        ["cargo-nextest", "nextest", "run"], ["nextest", "run"],
+                        ["python3.13", "-I", "-B", "-X", "utf8", "-m", "unittest", "discover"],
+                        ["py.exe", "-3.13", "-m", "unittest"],
+                        ["node", "--import", "bootstrap.mjs", "--test", "--test-reporter", "spec", "a.test.js"]):
+            with self.subTest(command=command):
+                self.assertTrue(RUNNER.is_test_command(command))
+
+    def test_env_prefix_and_maintained_wrapper_preserve_command_semantics(self):
+        prefix = ["/usr/bin/env", "-i", "--unset", "OLD", "--chdir=/source", "LABEL=unittest", "--"]
+        wrapper = ["python3.13", "-B", "scripts/static-runtime-environment.py", "--environment-file", "static.json", "--"]
+        for before in (prefix, wrapper, prefix + wrapper):
+            self.assertTrue(RUNNER.is_test_command([*before, "cargo", "test", "--test", "admin_plane"]))
+            self.assertFalse(RUNNER.is_test_command([*before, "cargo", "clippy", "--test", "admin_plane"]))
+        self.assertFalse(RUNNER.is_test_command(["env", "-S", "cargo test"]))
+        self.assertFalse(RUNNER.is_test_command(["env", "--unset"]))
+
+    def test_arguments_and_inline_code_do_not_impersonate_a_test_runner(self):
+        for command in (["python", "-c", "print('unittest')", "--test"],
+                        ["python", "scripts/dev-check.py", "--test", "unittest"],
+                        ["node", "script.js", "--test"], ["node", "--", "--test"],
+                        ["node", "--eval", "'--test'"], ["node", "--test", "--help"],
+                        ["python", "-m", "unittest", "--help"], [], ["echo", "cargo", "test"]):
+            with self.subTest(command=command):
+                self.assertFalse(RUNNER.is_test_command(command))
+
     def test_rejects_bad_names_and_missing_commands(self):
         for argv in (["Bad_Name", "echo"], ["ok-name"]):
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
@@ -329,16 +370,21 @@ class Receipts(unittest.TestCase):
             self.assertTrue((out / "plain-run-runner.py").is_file())
 
     def test_empty_test_selection_fails(self):
-        # A successful test command that reports zero selected tests (the trailing
-        # "unittest" argument marks it as a test command).
-        empty = (sys.executable, "-c", "print('Ran 0 tests in 0.001s')", "unittest")
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary)
+            empty_source = out / "empty-tests"
+            empty_source.mkdir()
+            # Real unittest discovery exercises the guard without synthetic markers.
+            empty = (sys.executable, "-B", "-m", "unittest", "discover", "-s", str(empty_source))
+            # Python 3.13+ itself exits 5 for no tests; earlier versions exit 0.
+            # Preserve that observed child failure instead of replacing it with 4.
+            baseline = subprocess.run(empty, cwd=ROOT, capture_output=True, text=True, timeout=30)
+            self.assertIn(baseline.returncode, (0, 5), baseline.stdout + baseline.stderr)
             done = self.run_runner(out, "empty-selection", *empty)
-            self.assertEqual(done.returncode, 4, done.stdout + done.stderr)
+            self.assertEqual(done.returncode, baseline.returncode or 4, done.stdout + done.stderr)
             self.assertEqual(json.loads((out / "empty-selection.json").read_text())["selected_tests"], 0)
             allowed = self.run_runner(out, "empty-allowed", *empty, extra=("--allow-no-tests",))
-            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+            self.assertEqual(allowed.returncode, baseline.returncode, allowed.stdout + allowed.stderr)
 
     def test_command_failure_is_propagated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -413,7 +459,7 @@ class CargoTimingAttribution(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertFalse(RUNNER.cargo_timing_command(command, ROOT))
 
-    def timing_receipt(self, command, *, banner=True, outside=False, stale=False):
+    def timing_receipt(self, command, *, banner=True, outside=False, stale=False, expected_status=0, summary=None, allow_no_tests=False):
         # A fake child creates this test's private artifacts and Cargo banner.
         # The newest alias deliberately belongs to another owner. No Cargo runs.
         class Child:
@@ -440,14 +486,50 @@ class CargoTimingAttribution(unittest.TestCase):
                     RUNNER.os.utime(reported, (1001, 1001))
                 if banner:
                     kwargs["stdout"].write(f"      Timing report saved to {reported}\n".encode())
+                if summary is not None:
+                    kwargs["stdout"].write((summary + "\n").encode())
                 return Child()
             with patch.object(RUNNER, "ROOT", ROOT), patch.object(RUNNER.subprocess, "Popen", side_effect=launch), \
                     patch.object(RUNNER.time, "time", return_value=1000), contextlib.redirect_stdout(io.StringIO()):
-                status = RUNNER.main(["--groups", "", "--out", str(out), "--target-dir", str(target), "timing-owner", *command])
-            self.assertEqual(status, 0)
+                status = RUNNER.main(["--groups", "", "--out", str(out), "--target-dir", str(target), *(["--allow-no-tests"] if allow_no_tests else []), "timing-owner", *command])
+            self.assertEqual(status, expected_status)
             receipt = json.loads((out / "timing-owner.json").read_text(encoding="utf-8"))
             copied = out / "timing-owner-cargo-timing.html"
             return receipt, copied.read_bytes() if copied.exists() else None
+
+    def test_compile_target_receipt_passes_without_inventing_test_selections(self):
+        for subcommand in ("clippy", "check", "build"):
+            with self.subTest(subcommand=subcommand):
+                receipt, copied = self.timing_receipt(["cargo", subcommand, "-p", "airk-cli", "--test", "admin_plane", "--all-features", "--locked", "--timings", "--", "-D", "warnings"])
+                self.assertTrue(receipt["passed"])
+                self.assertEqual(receipt["exit_code"], 0)
+                self.assertEqual(receipt["runner_exit_code"], 0)
+                self.assertIsNone(receipt["selected_tests"])
+                self.assertEqual(copied, b"the command's actual saved Cargo report")
+
+    def test_real_test_command_without_selection_still_refuses_receipt(self):
+        for command in (["cargo", "test", "--test", "admin_plane", "--timings"],
+                        ["cargo", "nextest", "run", "--timings"], ["node", "--test", "a.test.js"],
+                        ["python", "-m", "unittest", "discover"]):
+            with self.subTest(command=command):
+                receipt, _ = self.timing_receipt(command, expected_status=4)
+                self.assertFalse(receipt["passed"])
+                self.assertEqual(receipt["exit_code"], 0)
+                self.assertEqual(receipt["runner_exit_code"], 4)
+                self.assertIsNone(receipt["selected_tests"])
+
+    def test_successful_test_runner_zero_summary_requires_explicit_allowance(self):
+        for command, summary in ((["cargo", "test", "--test", "admin_plane"], "running 0 tests"),
+                                 (["cargo", "nextest", "run"], "Starting 0 tests across 1 binary"),
+                                 (["node", "--test"], "ℹ tests 0"),
+                                 (["python", "-m", "unittest"], "Ran 0 tests in 0.001s")):
+            with self.subTest(command=command):
+                refused, _ = self.timing_receipt(command, summary=summary, expected_status=4)
+                self.assertEqual(refused["selected_tests"], 0)
+                self.assertFalse(refused["passed"])
+                allowed, _ = self.timing_receipt(command, summary=summary, allow_no_tests=True)
+                self.assertEqual(allowed["selected_tests"], 0)
+                self.assertTrue(allowed["passed"])
 
     def test_fresh_incidental_report_is_not_copied_for_python_or_node(self):
         for command in ([sys.executable, "-c", "pass"], ["node", "a-script.cjs"]):

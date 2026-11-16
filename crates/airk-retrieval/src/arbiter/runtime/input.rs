@@ -210,4 +210,35 @@ mod tests {
         assert!(validate(&input, Readout::DecisionSymbol, 3, 2).is_err());
         Ok(())
     }
+    #[test]
+    fn context_attention_candidate_keeps_the_existing_all_live_sequential_domain() -> Result<()> {
+        let valid = CompiledInput {
+            prompt: "SYNTHETIC; NO FORWARD".into(),
+            input_ids: vec![11, 12, 13],
+            attention_mask: vec![1, 1, 1],
+            position_ids: vec![0, 1, 2],
+            decision_position: 2,
+            candidate_positions: vec![32, 33, 34],
+            option_mask: vec![true; 3],
+            input_digest: Sha256Digest::from_bytes([7; 32]),
+        };
+        validate(&valid, Readout::DecisionSymbol, 8192, 8)?;
+        for mask in [
+            vec![0, 1, 1],
+            vec![1, 1, 0],
+            vec![1, 0, 1],
+            vec![0, 0, 0],
+            vec![1, 2, 1],
+        ] {
+            let mut input = valid.clone();
+            input.attention_mask = mask;
+            assert!(validate(&input, Readout::DecisionSymbol, 8192, 8).is_err());
+        }
+        for positions in [vec![0, 0, 2], vec![1, 2, 3], vec![0, 2, 1]] {
+            let mut input = valid.clone();
+            input.position_ids = positions;
+            assert!(validate(&input, Readout::DecisionSymbol, 8192, 8).is_err());
+        }
+        Ok(())
+    }
 }

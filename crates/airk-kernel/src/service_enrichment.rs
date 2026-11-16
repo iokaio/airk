@@ -22,6 +22,7 @@ impl Kernel {
         } else if error.is::<crate::CurrentGateContention>()
             || error.is::<airk_store::current::CurrentReadContention>()
             || error.is::<airk_store::current::CurrentOpenContention>()
+            || error.is::<crate::retrieval_retry::BootstrapPublicationPending>()
         {
             Some(WaitReason::Publication)
         } else if error.is::<airk_store::service::collection::SelectionContention>() {
@@ -127,6 +128,10 @@ mod tests {
             ),
             (
                 airk_store::current::CurrentReadContention.into(),
+                WaitReason::Publication,
+            ),
+            (
+                crate::retrieval_retry::BootstrapPublicationPending.into(),
                 WaitReason::Publication,
             ),
             (
