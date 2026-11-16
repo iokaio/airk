@@ -4,6 +4,27 @@ use super::*;
 const CANDIDATE: &str = "1.8.19";
 
 #[test]
+fn missing_replacement_directory_reports_exact_path_and_preserves_not_found_source() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let missing = owner.path().join("missing-predecessor-directory");
+    let expected_context = format!(
+        "opening replacement directory identity at {}",
+        missing.display()
+    );
+    let error = operation::directory_identity(&missing).unwrap_err();
+    assert!(error.to_string().contains(&expected_context), "{error:#}");
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .context("original filesystem error missing")?
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(!missing.exists(), "diagnostic created missing predecessor");
+    Ok(())
+}
+
+#[test]
 fn expected_predecessor_fences_absence_same_build_and_namespace_but_exempts_consumed_replay()
 -> Result<()> {
     let owner = tempfile::tempdir()?;

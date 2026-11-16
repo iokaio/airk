@@ -102,7 +102,13 @@ pub(super) fn directory_identity(path: &Path) -> Result<String> {
             .custom_flags(0x02000000 | 0x00200000)
             .share_mode(1 | 2 | 4);
     }
-    let file = options.open(path)?;
+    let file = options.open(path).map_err(|error| {
+        let context = format!(
+            "{error}; opening replacement directory identity at {}",
+            path.display()
+        );
+        anyhow::Error::new(error).context(context)
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

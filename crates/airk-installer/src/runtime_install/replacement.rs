@@ -830,7 +830,11 @@ pub fn apply_expected(
     // Recompute the plan only under the lock, so two windows cannot both act
     // on one observation.
     let _replacing = replacement_lock(install)?;
-    let mut plan = plan(install, candidate_sha256, operation_id, generation_id)?;
+    let mut plan =
+        plan(install, candidate_sha256, operation_id, generation_id).map_err(|error| {
+            let context = format!("{error}; planning replacement for {}", install.display());
+            error.context(context)
+        })?;
     ensure!(
         !plan.required || operation_id.is_some(),
         "replacement_operation_required: destructive replacement requires --reinstall --operation-id so interrupted cleanup remains recoverable"
@@ -853,7 +857,13 @@ pub fn apply_expected(
         }
         require_owned(&plan)?;
     }
-    Operation::begin(&mut plan)?;
+    Operation::begin(&mut plan).map_err(|error| {
+        let context = format!(
+            "{error}; admitting replacement journal for {}",
+            install.display()
+        );
+        error.context(context)
+    })?;
     let operation = plan.operation.clone();
     let result = apply_ordered(
         plan,

@@ -275,17 +275,75 @@ async fn submit_without_reply(f: &Fixture, request: &ConfigurationRequest) -> Re
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
-async fn finish(f: &Fixture, request: &ConfigurationRequest) -> Result<Value> {
+// Failure evidence is private and never alters a native request or job outcome.
+// Export is one live snapshot: registry completion can precede raw-log drain.
+fn retain_refresh_failure(
+    owner: &mut tempfile::TempDir,
+    observations: &Value,
+    primary: anyhow::Error,
+    export: impl FnOnce(&mut fs::File) -> Result<u64>,
+) -> anyhow::Error {
+    owner.disable_cleanup(true);
+    let directory = owner.path().join("reference-refresh-failure");
+    let captured = (|| -> Result<()> {
+        ensure!(!directory.try_exists()?, "failure evidence already exists");
+        airk_cli::local_ipc::prepare_root(&directory)?;
+        let mut snapshot = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join("observations.json"))?;
+        serde_json::to_writer_pretty(&mut snapshot, observations)?;
+        snapshot.sync_all()?;
+        let mut raw = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join("raw-errors.jsonl"))?;
+        let exported = export(&mut raw);
+        raw.sync_all()?;
+        let record = json!({
+            "attempted":true,
+            "actual_bytes":raw.metadata()?.len(),
+            "reported_bytes":exported.as_ref().ok(),
+            "error":exported.as_ref().err().map(|error| format!("{error:#}")),
+            "scope":"one live bounded snapshot; no writer-drain or graceful-stop claim"
+        });
+        let mut receipt = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join("raw-export.json"))?;
+        serde_json::to_writer_pretty(&mut receipt, &record)?;
+        receipt.sync_all()?;
+        Ok(())
+    })();
+    match captured {
+        Ok(()) => eprintln!(
+            "failed refresh fixture retained: {}",
+            owner.path().display()
+        ),
+        Err(error) => eprintln!(
+            "failed refresh fixture retained: {}; secondary diagnostic capture failed: {error:#}",
+            owner.path().display()
+        ),
+    }
+    primary
+}
+
+async fn finish(f: &mut Fixture, request: &ConfigurationRequest) -> Result<Value> {
     let s = selected(request);
     // Admission/execution may advance between reads. Poll the actual native
     // observation; compare complete transport responses once work is settled.
     let saved = receipt_observation(f, s.caller, &s.key).await?;
     let id = serde_json::from_value(saved["job"]["id"].clone())?;
     let job = wait_fixture_job(f, id).await?;
-    ensure!(
-        matches!(job.outcome, Some(JobOutcome::Succeeded { .. })),
-        "actual refresh failed: {job:?}"
-    );
+    if !matches!(job.outcome, Some(JobOutcome::Succeeded { .. })) {
+        let control = f.control.clone();
+        return Err(retain_refresh_failure(
+            &mut f.owner,
+            &json!({"request":request,"receipt":saved,"job":job}),
+            anyhow::anyhow!("actual refresh failed: {job:?}"),
+            |output| airk_host::service_logs::export_raw_to(&control, output),
+        ));
+    }
     super::split::pause_quiescent_original(f, 2).await?;
     let saved = receipt(f, s.caller, &s.key).await?;
     ensure!(
@@ -528,7 +586,7 @@ async fn actual_native_refresh_journey() -> Result<()> {
         // not unpause the Project or authorize a paused source pass.
         assert_paused_pending(&f, &full, &before).await?;
         fixture_pause(&f, 2, false).await?;
-        let full_saved = finish(&f, &full).await?;
+        let full_saved = finish(&mut f, &full).await?;
         ensure!(
             full_saved["result"]["effective_scope"] == "whole_index_explicitly_reviewed"
                 && full_saved["result"]["report"]["path_scoped"] == false,
@@ -556,7 +614,7 @@ async fn actual_native_refresh_journey() -> Result<()> {
         submit_without_reply(&f, &selected_request).await?;
         assert_paused_pending(&f, &selected_request, &before).await?;
         fixture_pause(&f, 2, false).await?;
-        let saved = finish(&f, &selected_request).await?;
+        let saved = finish(&mut f, &selected_request).await?;
         ensure!(
             saved["result"]["effective_scope"] == "selected_sources"
                 && saved["result"]["report"]["path_scoped"] == true
@@ -741,5 +799,102 @@ async fn actual_native_refresh_journey() -> Result<()> {
         }
     }
     stop(&f, &mut service).await?;
+    Ok(())
+}
+
+#[test]
+fn refresh_failure_capture_retains_complete_observations_and_exact_exported_bytes() -> Result<()> {
+    let mut owner = tempfile::tempdir()?;
+    let retained = owner.path().to_owned();
+    let source = owner.path().join("actual-diagnostic-source.jsonl");
+    let raw_bytes = b"{\"failure\":{\"detail\":\"complete synthetic fixture bytes\"}}\n";
+    fs::write(&source, raw_bytes)?;
+    let observations = json!({
+        "request":{"selection":{"sources":["first","second"]},"future_field":[1,2,3]},
+        "receipt":{"configuration":{"full_native_field":true},"result":null},
+        "job":{"state":"failed","outcome":{"code":"configuration_failed_reinspect"}}
+    });
+    let calls = std::cell::Cell::new(0);
+    let primary = retain_refresh_failure(
+        &mut owner,
+        &observations,
+        anyhow::anyhow!("original Configure failure"),
+        |output| {
+            calls.set(calls.get() + 1);
+            Ok(std::io::copy(&mut fs::File::open(&source)?, output)?)
+        },
+    );
+    assert_eq!(primary.to_string(), "original Configure failure");
+    assert_eq!(calls.get(), 1);
+    drop(owner);
+    let evidence = retained.join("reference-refresh-failure");
+    airk_cli::local_ipc::require_existing_root(&evidence)?;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(evidence.join("observations.json"))?)?,
+        observations
+    );
+    assert_eq!(fs::read(evidence.join("raw-errors.jsonl"))?, raw_bytes);
+    let export: Value = serde_json::from_slice(&fs::read(evidence.join("raw-export.json"))?)?;
+    assert_eq!(export["attempted"], true);
+    assert_eq!(export["actual_bytes"], raw_bytes.len());
+    assert_eq!(export["reported_bytes"], raw_bytes.len());
+    assert_eq!(export["error"], Value::Null);
+    fs::remove_dir_all(retained)?;
+    Ok(())
+}
+
+#[test]
+fn refresh_failure_capture_preserves_primary_io_error_and_partial_export_on_secondary_failure()
+-> Result<()> {
+    use std::io::Write;
+    let mut owner = tempfile::tempdir()?;
+    let retained = owner.path().to_owned();
+    let observations =
+        json!({"request":{"complete":true},"receipt":{"result":null},"job":{"state":"failed"}});
+    let primary = retain_refresh_failure(
+        &mut owner,
+        &observations,
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "original native failure",
+        )
+        .into(),
+        |output| {
+            output.write_all(b"partial raw evidence")?;
+            Err(
+                std::io::Error::new(std::io::ErrorKind::NotFound, "diagnostic export failed")
+                    .into(),
+            )
+        },
+    );
+    assert_eq!(primary.to_string(), "original native failure");
+    assert_eq!(
+        primary
+            .downcast_ref::<std::io::Error>()
+            .context("original error source lost")?
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    drop(owner);
+    let evidence = retained.join("reference-refresh-failure");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(evidence.join("observations.json"))?)?,
+        observations
+    );
+    assert_eq!(
+        fs::read(evidence.join("raw-errors.jsonl"))?,
+        b"partial raw evidence"
+    );
+    let export: Value = serde_json::from_slice(&fs::read(evidence.join("raw-export.json"))?)?;
+    assert_eq!(export["attempted"], true);
+    assert_eq!(export["actual_bytes"], b"partial raw evidence".len());
+    assert_eq!(export["reported_bytes"], Value::Null);
+    assert!(
+        export["error"]
+            .as_str()
+            .context("secondary error absent")?
+            .contains("diagnostic export failed")
+    );
+    fs::remove_dir_all(retained)?;
     Ok(())
 }

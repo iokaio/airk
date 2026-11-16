@@ -355,3 +355,66 @@ math/weights/inputs/CPU/deadline/memory budgets remain unchanged. This removes
 qualification-reader allocation slack only; it does not establish native model
 fit. Original failed runs remain failures and new source/image measurements are
 required before a new diagnostic attempt.
+
+
+The private full-model profiling diagnostic now uses measurement identity
+compact-fp32-gqa-profiled/2. Scorer::open_profiled applies only with_profiling to
+the exact unchanged ordinary open_configured builder. It never sets an optimized
+model path or save configuration, so pinned ORT uses ordinary !saving_model
+initializer removal. The sole full-model caller records optimized_save.enabled
+false, emits no optimized output record and refuses unexpected optimized files.
+Existing tiny synthetic controls retain their separate optimized-save helper
+unchanged. This removes a diagnostic-only retention mode; profiling still has
+its own overhead and actual production load fit remains unmeasured until a new
+owned run. Prior save-heavy refusals remain failures, not production OOM proof.
+
+Original120s load/score and RSS/committed/CPU/input/source/numeric limits remain.
+Actual28 CPU GQA kernels and all3 exact allocated output shapes/bytes are still
+required. Candidate structural evidence and separately actual tiny optimized
+attributes remain evidence; no full-model optimized graph/attribute snapshot is
+claimed in /2. No task/model/release qualification is granted. Removing the old
+save-heavy helper is conditioned on its single caller migration and clean
+scoped compilation; immutable old image/run evidence remains preserved.
+
+
+Private selected-model GQA diagnostic extension (proposal; no qualification)
+
+The existing test-support-only same-weight metadata regeneration /2 accepts
+exactly one optional graph override: retained compact_graph or additive
+large_graph. /1 accepts neither; both together are refused. Rust selects the
+original model independently of caller graph metadata. Compact remains exact
+28-layer/Q16/KV8/head128/context2048, CPU4/16GiB. Large is exact
+36-layer/Q32/KV8/head128/context4096, CPU16/40GiB; its backbone hidden2560 is
+not its attention output4096. Large keeps its original 48GiB outer Job cap and
+120s native load/score deadlines. No ordinary Scorer constructor or public
+catalog/download authority changes. No full-model optimized snapshot is saved.
+
+The new source-pinned Large graph rewrite keeps all original initializers,
+external byte ranges, projection/QK-normalization/rotary/readout nodes and the
+six-input/scores-only ABI. Only the reviewed attention subgraphs and their
+exclusive literal Unsqueeze-axis constants may disappear. The exact original
+Large graph is f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94:
+398 original initializers (326 external learned Float weights, 72 inline),
+36 original post-QK float32 scale bits f304b53d, no past/cache public input or
+output. Post-RoPE Q and K transpose before flatten; Q is4096, K/V1024. The
+original finite causal mask remains an input to the native GQA kernel. Generic
+shape inference cannot substitute for native allocation/semantics evidence.
+
+Native metadata emission requires the exact original8192/N8 baseline profile,
+unchanged compiler/tokenizer/weights/notice/fixture physical paths and bytes,
+unchanged CpuFit/memory/disk/ABI/task policy, authenticated graph/proof/settled
+creation pins and a genuine matching native build receipt/source closure. A
+new model manifest and rebound unqualified calibration never transfer old
+qualification or same-artifact expected-array custody. All terminal classes
+remain unsupported; no semantic/training admission is introduced.
+
+Separate additive Large synthetic17/8192 controls preserve the Compact controls
+and require actual CPU execution, private KV outputs, numerical group mapping
+and native allocated output shapes [1,T,4096], [1,8,T,128] twice. The Large full
+single-forward diagnostic uses exact original all-live8192/N8 tensors and
+independent original-publisher FP32 arrays under existing raw<=.001,
+mass<=.05 and unchanged argmax checks. Actual36 GQA events/provider/durations/
+allocated output bytes and original process/Job settlement are required; the
+structural proof alone cannot authorize inference or claim resource/p95 gates.
+Original failed Large120s evidence stays failed. Full20-warm qualification is
+separate from this one diagnostic forward.

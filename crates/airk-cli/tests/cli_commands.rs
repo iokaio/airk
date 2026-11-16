@@ -44,10 +44,12 @@ fn ctl_json_ok(args: &[&str]) -> Result<Value> {
 }
 
 fn replacement_json(owner: &Path, args: &[&str]) -> Result<Value> {
-    let output = common::fixture_command(owner, args)?;
+    let output = common::fixture_command(owner, args)
+        .with_context(|| format!("replacement fixture command {args:?}"))?;
     ensure!(
         output.status.success(),
-        "replacement fixture command failed: {}{}",
+        "replacement fixture command {args:?} failed ({}): {}{}",
+        output.status,
         String::from_utf8_lossy(&output.stderr),
         String::from_utf8_lossy(&output.stdout)
     );

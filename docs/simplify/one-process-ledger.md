@@ -6150,3 +6150,130 @@ pins unchanged. Ten complete200responses of48issued support their comparisons;
 census finds0native/browser/Node descendants, no forcedcleanup. Evidence:
 ui-native-r3-cards/observed-review.json SHA27aaa374d24005e034eaa63fde1bbf78a05021e6e9faf440658c787678a255d6.
 The injected Workbench host is real native I2 coverage, not installed editor DOM.
+
+
+### 2026-11-16 — 20:35UTC critical-path self-check and full8192 milestone
+
+Question: am I completing final-plan.md, or getting sidetracked? The last block
+produced substantive plan outcomes: signed R3 delivery/client/UI acceptance,
+a bounded native bootstrap fix, and actual full8192 Compact numerical success.
+The24h target remains at risk; no training/CAL/final promotion is complete.
+New intake/replay/census branches stay stopped. Remaining focus is actual
+regression failures, composed Answer, resource20 and Large execution. The next
+two-hour self-check is22:35UTC/15:35Denver; T0 remains05:29:42UTC, not reset.
+
+Current profiling-only native source6ad5bb91 passes whole-workspace/alltargets/
+allfeatures Clippy91.880681s and genuine CargoJSON no-run150.810006s with the
+controlled CARGO_INCREMENTAL=0 invocation, warm target D:/code/Github/airk/target.
+Original rlib-format failure stays retained; its cause is not established.
+No Windows clean/cache deletion or permanent incremental-policy change occurs.
+Images are preserved with actual human ownership; corrected inventoryf399327c
+records actual HEADf5f9/tree4dab and dirty three-file profiling delta. Earlier
+inventory1a026 inherited the wrong c547 ancestry field; it remains preserved
+and is explicitly superseded, with image bytes/build pins unchanged.
+E/current-profile-only-qualification-controls-r1 passes18 executed,7ignored,
+88filtered (.936s whole/.06s tests); selected roster25 includes ignored rows.
+Windows full Nextest now selects4806 across84binaries with135skipped and restores
+CI-default excluded campaigns. It is still running and reports one live-agent
+configuration automatic_policy refusal so far, not a full pass. Current shell
+has GIT_PAGER, launch recipe preserves Git environment, and fixture diagnosis
+is underway without weakening product policy or changing user environment.
+
+Actual Compact profiling-only/2 run passes119.223422s whole, original120s per
+operation/360s outer/16GiB RSS+commit/32GiB containment unchanged. Load returns
+15.387074s; original full8192/N8 score returns84.449333s. Original FP32 comparison
+raw.00019073486328125, mass.000017566938707469504 and argmaxtrue pass. Actual
+peak RSS15,093,829,632B/Job15,103,348,736B; all28 actual CPU GQA nodes allocate
+context plus both exact KV outputs. Root independently checks actual profiler
+shapes/sizes. PID57012 exits naturally0, Jobempty, all1708seals unchanged.
+Receipt actual-composed-service-r2/compact-native-profiled-execution-r3/execution.json
+SHA72e01cdee3dc62a79dada39f9299931b10cf722c6ddf743584710401c72abb97.
+No optimized model is saved; no full optimized attribute snapshot is claimed.
+Both prior save-heavy failures remain failures. This is one numerical diagnostic,
+not current-artifact same-reference completion, p95, task quality or promotion.
+
+The existing resource20 path is independent of numerical references; a minimal
+currentgraph/source rebind is prepared, not executed. Same-artifact Torch binding
+needs a narrow exact GQA-proof adapter plus a genuine refreshed native source
+roster; old producers are never retagged. Large source audit verifies original
+CPU16/40GiB/120s,36layers/32Q8KV/context4096 (hidden2560); private model-pinned
+proposal preparation proceeds without live edits or a fabricated pass.
+The existing canonical private Service fixture can support fresh R154 attribution:
+three native profiles require23 declared independent flat asset copies totaling
+24,129,450,131B, then actual index/configuration/warm/Ready and original owned
+observer. Staging waits for the broad Windows regression I/O window. The observer
+8GiB Job excludes the separately owned native service; service64GiB configured
+admission is not an OS hard-memory/fit claim. No new public URLs/catalog bypass.
+
+Mac f5 actual source3509/C700b03 remains authentic. Scoped Installer Clippy and
+11/11 native observer controls pass. Exact replacement fails first authorized
+command before .install.replacement-1 journal exists; verified native Stop and
+source/install bytes survive. One bounded readonly UID501 fetch localizes it,
+but missing path remains unrecorded. A minimal private diagnostic seam is queued,
+not applied during the frozen Windows run. All three owned phases settle naturally;
+target cleanup passes. Separate remaining-gates batch passes full workspace
+Clippy170.184s/174.012s outer; other tests are running with the exact known failed
+row explicitly skipped. It remains failed; no whole-workspace or installed pass.
+Root is the single Cargo owner on independent Windows/Mac targets; no delegated
+Cargo or shared-target race. Linux same-human execution remains unavailable.
+
+
+### 2026-11-16 21:33UTC — grouped regression disposition and next critical-path section
+
+The user requests the same anti-drift question every two hours; next checkpoint
+remains22:35UTC. New data/intake branches remain stopped.
+Windows native6ad5 full restored-filter Nextest completed4806:4783passed,23failed,
+135skipped (2252.233986s whole). All23 failures were positive agent-configuration
+fixtures inheriting GIT_PAGER. Production's complete-file/recovery environment
+policy is unchanged. A separate command-scoped GIT_PAGER-only removal passes
+56/56 related cases, including all23 original failures (100.069731s whole).
+Original failed batch remains failed, not retrospectively green. Receipts:
+E/current-profile-only-workspace-regressions-r1 and
+E/current-agent-config-controlled-environment-r1. Doctest command passes
+31.432250s with19suites and0cases; it proves no doctest behavior coverage.
+
+Mac f5 independent full workspace Clippy passes170.184s. Its next test batch
+executes274cases:273pass,1fails,3additionalignored; the exact known replacement
+row is separately filtered. New failure is the first Lean FullReconcileReviewed
+NativeConfigure fencegen2/configuration_failed_reinspect, before restart/Rich.
+The wrapper loses the private underlying job-errors cause; no behavior diagnosis
+is claimed. All children settle naturally; target cleanup passes after failure.
+Evidence E/neo-independent-monitor-f5-r1/final-monitor-milestone-r1.json
+SHA17865bdbdbdb01e2cbdd7c82575c28be919a6e9c6cfeddfb97ddea3d4c13ee8c.
+
+Root reviewed and applied eleven source files as one section, contracts first:
+Large-only original36layer/CPU16/40GiB GQA diagnostic/metadata support, bounded
+replacement ENOENT path context, and actual failed-refresh raw-log preservation.
+Production ordinary scorer construction remains byte-identical. Source native
+198f42ed passes scoped alltarget/allfeature Clippy44.908897s. Focused test build
+fails72.989424s before executing any case: Windows OS1455 paging/commit exhaustion
+while mmap'ing rlibs. This is a failed compilation, not tests passing or missing
+archives proved. No compiler descendants remain; no process/account/pagefile/ACL
+or target-clean workaround occurs. A wholeworkspace matching-feature CargoJSON
+no-run now uses invocation-only CARGO_BUILD_JOBS=2 and CARGO_INCREMENTAL=0.
+
+Large original-weight graph rewrite actually completes21.526584s within original
+30s/8GiB graph-only bounds; natural0/emptyJob. New graph e4cd63d26c1e5b8bbfd28c65
+cb04f5ab3946f57e5511d2cd09e125cdf46c4aca retains authenticated original graph
+initializers/ABI. All36layers pass1/17/128/8192 structural shape gates. No Large
+forward or weight-byte rehash occurs in this graph-only phase. Remaining critical
+path: current image/control success; Large native metadata/tiny/full diagnostic;
+Compact20sample resources and exact same-artifact references; fresh composed
+Answer; exact Mac diagnostics then causal repairs; current integrated gates.
+
+
+### 2026-11-16 — 21:38UTC current native section closes grouped checks
+
+Native198f wholeworkspace/allfeature CargoJSON no-run PASS372.090793s with
+invocation-only jobs2/inc0, warm target unchanged; prior OS1455 failure preserved.
+Current focused controls PASS78/78 (16.908022s whole/3.806s tests),1118skipped.
+E/current-section-controlled-jobs2-build-r1 and E/current-section-controls-jobs2-r1
+retain commands/source groups/timings/JUnit. Root confirms no cargo/rustc/link
+descendants before preserving five genuine Cargo-emitted human-owned PE images.
+Inventory O/current-section-native-preservation-r1/native-test-images-current-section-r1.json
+SHA9ec2a17b8df1645d1e99ba3c38f07e38dfdc3b98aba18c9112606b86a8005e6f
+correctly records f5 ancestry plus dirty198f source, not clean-f5 equivalence.
+Root explicitly self-reviews combined contracts/implementation/diagnostics;
+no independent-review claim is made for that primary review. Delegated reviews
+are retained separately. Repository check3509files and whitespace pass.
+Next actual work is owned native Large metadata/template, then model execution.

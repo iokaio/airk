@@ -25,6 +25,8 @@ struct Input {
     source_files: Vec<ResourceFilePin>,
     #[serde(default)]
     compact_graph: Option<compact_graph::Input>,
+    #[serde(default)]
+    large_graph: Option<compact_graph::Input>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +34,39 @@ struct OriginalCatalog {
     schema: String,
     profiles: Vec<Profile>,
 }
+fn graph_request_scope(schema: &str, compact: bool, large: bool) -> bool {
+    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large)
+        || (schema == "airk.private.context-metadata-regeneration/2" && (compact ^ large))
+}
+
+#[test]
+fn graph_request_scope_preserves_legacy_and_refuses_mixed_overrides() {
+    assert!(graph_request_scope(
+        "airk.private.context-metadata-regeneration/1",
+        false,
+        false
+    ));
+    assert!(graph_request_scope(
+        "airk.private.context-metadata-regeneration/2",
+        true,
+        false
+    ));
+    assert!(graph_request_scope(
+        "airk.private.context-metadata-regeneration/2",
+        false,
+        true
+    ));
+    for (schema, compact, large) in [
+        ("airk.private.context-metadata-regeneration/1", true, false),
+        ("airk.private.context-metadata-regeneration/1", false, true),
+        ("airk.private.context-metadata-regeneration/2", false, false),
+        ("airk.private.context-metadata-regeneration/2", true, true),
+        ("unknown", false, true),
+    ] {
+        assert!(!graph_request_scope(schema, compact, large));
+    }
+}
+
 fn pinned_metadata(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
     pin.validate()?;
     let path = Path::new(&pin.path);
@@ -245,15 +280,21 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
     };
     let input: Input = serde_json::from_slice(&pinned_metadata(&request_pin, 1 << 20)?)?;
     ensure!(
-        ((input.schema == "airk.private.context-metadata-regeneration/1"
-            && input.compact_graph.is_none())
-            || (input.schema == "airk.private.context-metadata-regeneration/2"
-                && input.compact_graph.is_some()))
-            && input.output.is_absolute()
+        graph_request_scope(
+            &input.schema,
+            input.compact_graph.is_some(),
+            input.large_graph.is_some()
+        ) && input.output.is_absolute()
             && !input.output.exists()
             && input.asset_root.is_absolute(),
         "fresh private metadata-regeneration scope required"
     );
+    let graph = input.compact_graph.as_ref().or(input.large_graph.as_ref());
+    let graph_model = if input.large_graph.is_some() {
+        ModelChoice::ContextQwenLarge
+    } else {
+        ModelChoice::ContextQwenCompact
+    };
     let root_meta = fs::symlink_metadata(&input.asset_root)?;
     ensure!(
         root_meta.is_dir() && !root_meta.file_type().is_symlink(),
@@ -326,7 +367,7 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
     )?;
     let run = (|| -> Result<()> {
         for old in original.profiles {
-            if input.compact_graph.is_some() && old.model != ModelChoice::ContextQwenCompact {
+            if graph.is_some() && old.model != graph_model {
                 continue;
             }
             let model_name = serde_json::to_value(old.model)?
@@ -344,14 +385,14 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     path: originals.join(&asset.name),
                 })
                 .collect();
-            if let Some(graph) = &input.compact_graph {
-                compact_graph::apply(graph, &mut source_assets)?;
+            if let Some(graph) = graph {
+                compact_graph::apply(graph, &mut source_assets, graph_model)?;
             }
             let mut prepared = prepare_with_limits(
                 ProfileInput {
                     model: old.model,
-                    profile_id: if input.compact_graph.is_some() {
-                        "private-compact-fp32-gqa-diagnostic-v1".into()
+                    profile_id: if graph.is_some() {
+                        compact_graph::profile_id(graph_model)?.into()
                     } else {
                         format!("private-final-policy-v2-{model_name}")
                     },
@@ -395,7 +436,7 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     &policy,
                 )?;
             }
-            if let Some(graph) = &input.compact_graph {
+            if let Some(graph) = graph {
                 compact_graph::validate_prepared(graph, &prepared)?;
             }
             ensure!(
@@ -415,15 +456,9 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     .iter()
                     .find(|current| current.name == asset.name)
                     .context("original neural/notice/fixture asset absent")?;
-                if asset.role == AssetRole::Model && input.compact_graph.is_some() {
+                if asset.role == AssetRole::Model && graph.is_some() {
                     ensure!(
-                        current.sha256
-                            == input
-                                .compact_graph
-                                .as_ref()
-                                .context("graph override")?
-                                .graph
-                                .sha256,
+                        current.sha256 == graph.context("graph override")?.graph.sha256,
                         "new graph asset identity differs"
                     );
                     continue;
@@ -473,7 +508,7 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                 "task_policies":prepared.profile.task_policies,"max_tokens":prepared.profile.max_tokens,
                 "asset_files":pin(&directory.join("asset-files.private.json"))?,"resource_run_input":pin(&directory.join("resource-run-input.private.json"))?,
                 "original_fixture_is_new8192_qualification":false,"new_neural_weights":false,"terminal_classes_supported":false,"task_qualified":false,"release_qualified":false});
-            if let Some(graph) = &input.compact_graph {
+            if let Some(graph) = graph {
                 row["new_model_graph"] = json!(true);
                 row["graph_override"] = serde_json::to_value(graph)?;
             }
