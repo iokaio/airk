@@ -252,6 +252,29 @@ so these compare against a stale pair, not this build) and two airk-installer ca
 macOS (Mac Neo has 8 GiB and older isolated evidence only) and Linux were not
 rebuilt or tested. Nothing in this candidate supports a cross-platform claim.
 
+## 9. Explorer Service view and Arbiter controls are not user friendly
+
+Reported by the user on 1.8.205 (Explorer > Service, "Native management").
+The layout makes no sense to a user and offers no useful features in a usable
+form:
+
+- Two rows of tabs (Service / Storage / Recovery, then Resources / TLS and trust
+  / Start at sign-in / Restart or stop) with no explanation of what each does
+  or which one to use.
+- "Resources" shows only a bare **Load** button; nothing is shown until it is
+  pressed, and nothing explains what it loads.
+- "Optional local Arbiter" is a collapsed block of internal wording ("Read
+  native stage status", "No current native stage status has been read. No
+  model, enrollment, hardware fit or readiness is assumed.", "Initialize
+  separate disabled stages"). It does not say whether the Arbiter is on, which
+  models are installed, or how to turn Focus or Context on.
+- "Native management · 69cc6133" and "Close management session" expose
+  implementation details instead of the user's task.
+- The panel renders as a white box inside the dark themed Explorer.
+
+Needs a user-task redesign (status first, plain actions such as "Download and
+turn on Arbiter Focus"); not addressed in this candidate.
+
 ## Operational notes
 
 - `AGENTS.md` and `CLAUDE.md` intentionally differ: `AGENTS.md` carries a rule
