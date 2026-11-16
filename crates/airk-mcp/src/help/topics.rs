@@ -74,9 +74,9 @@ Use runtime identities to check that frontend, worker and service versions/build
         id: "overview",
         title: "What AIRK does",
         text: r#"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.
-One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.
+One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTPS MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.
 Use status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command="service" or tool="search" for current guidance and actual schemas.
-Install and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.
+Install and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.
 Bundled Help is not live configuration, source-freshness proof or platform qualification."#,
     },
     Topic {

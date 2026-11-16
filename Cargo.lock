@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "airk-catalog-control"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-endpoint",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "airk-cli"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "airk-core"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "anyhow",
  "schemars",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "airk-endpoint"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-host",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "airk-frontend"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "airk-host"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "airk-https"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "airk-inference"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-endpoint",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "airk-ingest"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "airk-installer"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "airk-ipc"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "airk-kernel"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "airk-mcp"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-kernel",
@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "airk-process"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "anyhow",
  "libc",
@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "airk-retrieval"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "airk-service"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -646,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "airk-store"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "airk-supervisor"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-catalog-control",
  "airk-core",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "airkctl"
-version = "1.8.205"
+version = "1.8.206"
 dependencies = [
  "airk-core",
  "airk-ipc",

@@ -1,8 +1,8 @@
 {
   "schema": "airk.help.manifest/1",
   "catalogVersion": 1,
-  "productVersion": "1.8.205",
-  "extensionVersion": "1.8.205",
+  "productVersion": "1.8.206",
+  "extensionVersion": "1.8.206",
   "channel": null,
   "topics": [
     {
@@ -1080,7 +1080,7 @@
         "overview"
       ],
       "source": "crates/airk-mcp/src/help/content.json",
-      "body": "# What AIRK does\n\nAIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\nBundled Help is not live configuration, source-freshness proof or platform qualification."
+      "body": "# What AIRK does\n\nAIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTPS MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification."
     },
     {
       "id": "engine.topics",
@@ -9861,7 +9861,7 @@
       },
       {
         "id": "overview",
-        "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to authenticated loopback HTTPS MCP. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent with a default or reviewed scope.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
+        "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTPS MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
         "title": "What AIRK does"
       },
       {
@@ -10040,6 +10040,6 @@
         "title": "Arbiter Focus, Context and model requirements"
       }
     ],
-    "version": "1.8.205"
+    "version": "1.8.206"
   }
 }

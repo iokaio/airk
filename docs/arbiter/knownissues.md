@@ -375,6 +375,10 @@ problem, where Explorer snippets carried a `<connection-id>` placeholder.
   (`index_setup_paths_overlap`) exercises index-setup drafts, not U110 code; not
   run on an unmodified tree. `an_installed_first_start_creates_the_index_catalog_and_serves_admin`
   failed once on a native frame deadline and passed on rerun.
+- **Admin UI-pilot fixture drift (not U110):** `airk-https
+  admin_plane::tests::ui_pilot_cases::ui_pilot_i3_semantic_cases` reports
+  `usage_empty` missing from `fixtures/split/ui_pilot` (the native side emits
+  the case, the retained fixture lacks it). Not regenerated without review.
 - **Pre-existing test failures found during U110:** `airk-mcp`
   `arbiter_handler_tests::policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay_or_primitive_loss`
   and `arbiter_handler_tests::optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refusal_stops_delivery`
