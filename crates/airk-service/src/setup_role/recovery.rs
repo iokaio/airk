@@ -84,7 +84,15 @@ pub(super) fn review(request: &SetupRequest, clock: Clock) -> Result<Setup> {
     let digest = files::digest_bytes(&raw);
     let preview: SetupOperation = serde_json::from_slice(&raw)?;
     let pointer = files::pointer_path()?;
-    let mut owner = transaction::Owner::observe(&pointer)?;
+    // An abandoned owner (failed, or expired) of another operation is taken
+    // over by this operation's own `--prepare` under the lock (setup_role
+    // CONTRACT "Abandoned setup takeover"); its projections proceed as if no
+    // owner existed, without re-validating the abandoned owner's live roots.
+    let mut owner = if transaction::abandoned_owner(&pointer, &preview, clock())?.is_some() {
+        None
+    } else {
+        transaction::Owner::observe(&pointer)?
+    };
     if let Some(current) = &owner
         && current.active.operation != preview
     {
