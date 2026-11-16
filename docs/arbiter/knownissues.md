@@ -275,6 +275,63 @@ form:
 Needs a user-task redesign (status first, plain actions such as "Download and
 turn on Arbiter Focus"); not addressed in this candidate.
 
+## 10. Explorer navigation rail: duplicate icons and the "Explore evidence" group
+
+Reported by the user on 1.8.205 (Explorer webview, `packages/vscode/src/explorerWebview/app.tsx`
+`Rail`, icons in `components.tsx` `ICONS`).
+
+**What is wrong**
+
+- When the rail is collapsed to icons, several destinations share one icon, so
+  you cannot tell what you are looking at:
+  - **Activity, Agents and Service** all show the same sliders icon. The rail
+    picks the icon from the route's workspace (`manage`), not from the
+    destination.
+  - **Indexes** (workspace `indexing`) has no icon of its own and shows the
+    same grid as **Overview**.
+- The collapsible **Explore evidence** group heading breaks the collapsed rail:
+  its label wraps into "Explore / evidenc" under a bare disclosure triangle,
+  and the triangle and partial text look like a rendering error.
+- The group label does not say what its five items (Code, Documents, Evidence,
+  Review, Strategies) have in common in terms a user would recognize, and the
+  group opens only when one of them is current, so the items are easy to miss.
+- Inside each page, the native management panel ("Native management · …",
+  "Close management session") shows as a white block in the dark theme (see
+  section 9).
+
+**Proposed improvements**
+
+1. **One unique icon per destination, keyed by destination id** (`overview`,
+   `search`, `indexes`, `activity`, `agents`, `service`, `help`, `code`, `docs`,
+   `evidence`, `review`, `strategies`), not by workspace. Suggested glyphs:
+   Overview — dashboard tiles; Search — magnifier; Indexes — stacked database
+   cylinders; Activity — pulse/clock line; Agents — plug or robot head;
+   Service — power/server; Help — question mark; Code — angle brackets;
+   Documents — page; Evidence — shield with check; Review — checklist;
+   Strategies — branching flow. Add a test that every rail destination maps to
+   a distinct icon so a new destination cannot silently reuse one.
+2. **Remove the "Explore evidence" group heading.** Show all twelve
+   destinations as one flat list, split into two visually separated sections
+   by a thin divider (no text label). Top: the workspace tasks (Overview,
+   Search, Indexes, Activity, Agents, Service). Bottom: reading saved evidence
+   (Code, Documents, Evidence, Review, Strategies). Put Help last, pinned to
+   the bottom of the rail.
+3. **Collapsed rail = icons only, with tooltips.** Each button keeps its
+   `title`/`aria-label` (already present) so hovering or a screen reader names
+   it. No text wraps in the collapsed state, and the current destination keeps
+   its highlight.
+4. **Name the reading section in the expanded rail only, if at all**, with a
+   short caption that cannot wrap (for example "Read" or "Saved index"), shown
+   only when labels are visible and hidden when collapsed.
+5. **Page titles match the rail labels**, so the heading confirms which
+   destination is open ("AIRK WORKSPACE · Agents" today; keep the destination
+   name prominent and drop the generic caption).
+6. **Theme the embedded management panels** (Service, Agents and the others)
+   with the Explorer's dark/light variables instead of a fixed white
+   background.
+
+Not addressed in this candidate.
+
 ## Operational notes
 
 - `AGENTS.md` and `CLAUDE.md` intentionally differ: `AGENTS.md` carries a rule
