@@ -1,0 +1,1010 @@
+# AIRK final implementation plan
+
+Planning date: 15 November 2026 (America/Denver).
+Status: consolidated execution runbook; all seven user decisions recorded.
+This request authorizes writing the plan, not starting training, installation,
+qualification campaigns or public publication.
+
+This plan combines [knownissues.md](knownissues.md) and
+[weights-v2-plan.md](weights-v2-plan.md). It orders product repairs, reliable
+measurement, bounded model experiments and final delivery so a later execution
+can proceed with explicit decisions and little reinterpretation. The research
+rationale remains in weights-v2; the historical failures remain in knownissues.
+Neither source is rewritten by this planning task.
+
+Success is a working, tested product and an honest disposition for each selected
+model. Training is not guaranteed to improve a model. A rejected adaptation
+retains the original weights; those original optional weights still need
+qualification. Missing qualification is a blocker, never a passing fallback.
+All-three qualified Focus/Compact/Large profiles remain mandatory for the final
+native publication catalog. A useful local candidate is a separate milestone.
+
+## 1. Recorded authority and decisions
+
+### User answers for this plan
+
+The user answered D01–D06 during this planning conversation. These are recorded
+planning decisions for later implementation, not claims that checks have passed.
+D07 records the follow-up latency decision. No planning decision remains pending.
+
+| ID | Decision | Answer/status | Dependent work |
+| --- | --- | --- | --- |
+| D01 | Delivery platforms and stopping point | APPROVED: Windows candidate first, then all supported-platform release gates; report genuine blockers. | Steps 15–18 |
+| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
+| D03 | Human-reviewed labels for unattended work | APPROVED: use suitable existing human-reviewed labels; finish other work and block only unsupported promotion when labels are missing. Agent judgments are not human gold. | Data acceptance, terminals and FINAL |
+| D04 | Shared-folder automatic agent-config editing | APPROVED: allow automatic edits only when the entire file and recovery path meet a reviewed safe policy; otherwise provide the complete manual entry. Token-free AIRK fields alone do not qualify a path. | Step 2 |
+| D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
+| D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
+| D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
+
+### Settled rules; do not ask again
+
+1. Keep bundled MiniLM, independent optional Focus (Qwen3-Reranker-0.6B),
+   and optional Context Compact/Large (Qwen3-1.7B/4B). No replacement encoder
+   family, cloud inference, new serving process or new crate is planned.
+2. Use the logged-in user for every shell, build and test. Default tool execution
+   was observed as a sandbox account during planning; the explicit logged-in
+   execution path was verified as `tyai\tdotn`. Never use a sandbox-account
+   baseline or change ACLs/global Git trust to obtain a pass.
+3. Work on `feat/arbiter-final`, created from `feat/advanced-split` at the
+   user's subsequent instruction. The opening local commit includes the pending
+   plans, issue notes, ledger and synchronized agent instructions. Use the
+   configured human identity, `git commit -s` and verify the DCO trailer.
+   No push to this new branch, PR, merge, public upload, release publication or
+   deployment is authorized. Later implementation still needs its task instruction.
+4. Preserve unrelated work, source files, immutable published model releases and
+   historical receipts. Current-version index regeneration is allowed when
+   needed; it never authorizes deleting unrelated user data.
+5. Keep AGENTS.md and CLAUDE.md byte-identical, including the logged-in-user
+   rule. The historical intentional-divergence note is superseded by the current
+   standing instruction. Reconcile them during implementation; do not weaken
+   the repository equality check.
+6. The completion gate is at least .75 completion and at most .02 completion
+   regression against the selected strongest baseline, plus at least .10 mean
+   external-turn reduction on paired common-success tasks. The ".02 gain"
+   wording in knownissues is incorrect; the frozen protocols govern.
+7. Historical 90% test acceptance and local-test profile bypasses are local
+   candidate history. They do not waive final tests or qualify any model.
+8. Use GitHub's existing approved immutable source map unless a later hosting
+   decision authorizes another origin. No mirror, anonymous community export,
+   fabricated download URL or overwrite of an existing release is implied.
+   GitHub-only availability remains disclosed.
+9. Keep the old advanced-split deadline as history. This plan cannot make a
+   missed deadline current or use it to waive gates. D02 supplies a 24-hour
+   execution target and 48-hour maximum; it does not alter correctness requirements.
+10. Public publication is a separate final action on concrete reviewed artifacts.
+    Prepare artifacts, rights/source-map proofs and a readiness report first.
+    Missing final upload authorization does not stop independent local work.
+
+### Source identity and conflict resolution
+
+The planning checkout was `76d84c533437c4934314e1b10b8319af34ebddb6`,
+with live version 1.8.206. knownissues was already modified and weights-v2 was
+already untracked; preserve both. The source SHA-256 values read for this plan:
+
+| Source | SHA-256 |
+| --- | --- |
+| knownissues.md | `cab7328dd2f5d9c09f61b83f1fce078a36d2ae9bdd9ac6ee51dd0cf258cbe026` |
+| weights-v2-plan.md | `283248d07beebbf6a289c3957c6ca460bab11d48caa907b3779aa792e44a9429` |
+
+Use later user answers first, then recorded contract decisions, then this
+runbook. Live code and original receipts establish implementation/evidence
+status. A dated issue is a reproduction lead, not proof it still fails.
+Do not restart completed work merely because an older handoff proposes it.
+
+## 2. Execution rules and ownership
+
+At each step, read its affected source, tests and owning CONTRACT.md. Keep
+behavior changes distinguishable from mechanical moves. Record contract,
+digest-input or persisted-format decisions before dependent implementation.
+Rust owns contracts, generated client types, model views and semantic cases;
+Python consumes native exports, and TypeScript renders native results.
+
+Use the existing [execution ledger](../simplify/one-process-ledger.md).
+Maintain a small step table there with status, exact input identity, owner,
+receipt path, result, next action and blocker. Allowed statuses are
+`not_started`, `in_progress`, `passed`, `retained_original`,
+`unsupported`, `blocked` and `not_applicable`; the last four need a reason.
+A model experiment can end retained_original while qualification remains blocked.
+
+Private model/data outputs:
+`artifacts/advanced-split/models/weights-v2/<experiment-id>/`.
+Other run receipts:
+`artifacts/v190/final-plan/<run-id>/`.
+These are private scratch/evidence roots, never staged or packaged. Verified
+distributable packages use separate fresh output directories.
+
+Every receipt records exact command/arguments, source commit and dirty-input
+hashes, consumed fixture/model/policy identities, environment/hardware, start/end
+and elapsed time, selected/passed/failed/skipped/refused counts, output hashes,
+diagnosis and cleanup/settlement. Cargo receipts also record crate/features,
+target directory and incremental setting. Preserve original failed attempts.
+
+| Owner | Files/outcome | Scheduling rule |
+| --- | --- | --- |
+| Primary/native integration | Ledger, contracts, shared Rust owners, runtime custody, final review and all Cargo processes | One Cargo owner, including remote batches; explicitly hand off only after compiler descendants exit. |
+| Transport/config | airkctl agent configuration and I2, open-read adapters, affected harnesses and real-transport tests | Contract decisions first; coordinate shared Core/Service edits with primary. |
+| UI | Explorer/Admin Service, Agents and rail, generated consumers, behavior tests and Help | Can implement against frozen Rust fixtures while native work proceeds; do not handwrite DTOs/config builders. |
+| Data/evaluation | Rights, splits, labels, native alignment, rubrics, evaluator and untouched FINAL reservation | Keep scoring/labels independent of model implementation; honor D03. |
+| MiniLM | Existing encoder trainer/exporters, original controls, U8/S8 and regeneration evidence | No Cargo outside primary; one GPU-heavy experiment at a time unless measured safe concurrency is frozen. |
+| Focus | Exact-input relevance training, prompt control, export and teacher validation | Prepare alongside MiniLM; teacher transfer waits for measured superiority. |
+| Context | Compact/Large whole-card learning, replay, terminals and calibration inputs | Compact pilot first; Large preparation in parallel, qualification separately. |
+
+The primary independently reviews the combined changes before expensive runs or
+corrective pushes. Agents may prepare independent outcomes in parallel; assign
+exact files before edits. Do not create an agent-orchestration product.
+
+Cheap checks first. A failing filtered run selects at least one test and reports
+the count. On expensive failure stop that batch, preserve diagnostics, reproduce
+cheaply and correct the cause. A repeated failure requires a revised diagnosis
+and cheap regression before the next attempt. Never retry unchanged failed
+inputs, broaden limits, relax assertions, fabricate cleanup or tune on FINAL.
+
+A blocked branch does not block independent work. At D02's 48-hour cap, retain results
+and identify remaining work; do not promise scientific success or mark unmet
+release criteria complete. User silence is not an answer to a pending decision.
+
+## 3. Dependency order
+
+| Step | Outcome | Must follow |
+| --- | --- | --- |
+| 1 | Reconciled inventory and runnable logged-in environment | Planning decisions recorded where needed |
+| 2 | Native contract/fixture decisions frozen | 1, D04–D06 |
+| 3 | Reliable U110 reads, setup and agent configuration | 2 |
+| 4 | Answer deadline/settlement repair and native input census | 2; 3 for integrated transport reproduction |
+| 5 | Task-oriented Service/Agents UI and usable navigation | 2; integrates with 3–4 |
+| 6 | Full model acquisition/lifecycle preflight | 3; existing profiles can be diagnosed while 4–5 proceed |
+| 7 | Corrected baseline and additive experiment freeze | 3–4, 6, D02/D06 |
+| 8 | Audited software corpus and evaluation reservation | 7, D03 |
+| 9 | MiniLM M1 pilot and native exports | 8 |
+| 10 | Focus prompt/SFT pilot and native export | 8; may run before/alongside 9 within hardware limits |
+| 11 | Context useful-read learning and conditional terminals | 8; initial frozen upstream baseline, then selected 9–10 output |
+| 12 | Triggered refinements, exact export/resource freeze | 9–11; early precision diagnostics may start after 7 |
+| 13 | Exact-artifact CAL/confirmation and composed custody evidence | 12 |
+| 14 | Held-out goal evaluation and final model disposition | 13 |
+| 15 | Regeneration/recovery, qualified trio and publication capture | 14 |
+| 16 | Integrated workspace, transport and platform gates | Ordinary gates: reviewed 3–5 and identified current artifacts; model/catalog-specific gates additionally require 15 |
+| 17 | Local packages and installed-product qualification | Applicable independent gates from 16; provisional Windows candidate does not wait for 15; final-series package requires 15 |
+| 18 | Documentation, milestone commits and delivery report | All applicable prior steps; explicit blocker inventory |
+
+## 4. Step-by-step runbook
+
+### Step 1 — Reconcile the live starting point
+
+1. Verify logged-in identity, branch, worktree changes and configured contributor.
+   Save the starting manifest; do not overwrite the two source documents.
+2. Reconcile AGENTS/CLAUDE using the standing rule, then run the repository check.
+   Inventory the current version instead of copying stale 1.9.0 prose.
+3. Verify the persistent Cargo target `artifacts/v190/p10-target`, pinned tools,
+   static ORT inputs, and `AIRK_BUNDLED_MODEL_DIR` pointing to the verified
+   `artifacts/advanced-split/bundled-model-v3` assets. Do not clean Windows
+   targets or reuse the same target simultaneously across checkouts.
+4. Inventory every knownissues failure and every relaxation row: current
+   source/fixture, historical receipt, present reproduction status and owning
+   step. Include the two private-boundary tests, all agent-config failures,
+   setup/recovery, source watcher, measurements, singleton deadline, stale
+   comparison pair, installer/mac placement, U110 and fixture drift.
+5. Baseline only relevant failures against their original/unmodified source
+   where attribution needs it, under the same logged-in account. Use isolated
+   output identities and serialized Cargo ownership; avoid the prior worktree
+   artifact-poisoning mistake. No unrelated rebuild merely to confirm a claim.
+
+**Exit:** environment/source receipt, complete issue inventory, no missing user
+decision hidden as an assumption. Failure families may still be open; schedule
+their cheap reproductions in Steps 3–4 and their owning platform checks later.
+
+### Step 2 — Freeze contracts before consumers
+
+1. Record D04 in I2 and
+   [agent-config CONTRACT.md](../../crates/airkctl/src/agents/config/CONTRACT.md).
+   Existing replacement retains the entire displaced file, including unrelated
+   server secrets and concurrent editor bytes. Tokenless AIRK fields or a secret
+   scanner alone cannot establish safe retention. Preserve regular-file,
+   identity, basename, size, no-clobber, concurrent-change, exclusion, durability
+   and uncertain-outcome fences. No ACL mutation to make a path eligible.
+2. Add Rust-owned manual configuration for the selected client/folder with
+   `file`, `format` and exact `text`; define typed refusal reasons/details
+   rather than parsing an English prefix. Freeze JSON/TOML escaping, endpoint,
+   agent/scope and port-change cases. Preserve unrelated configuration bytes.
+   Generate I2/I3/UI consumers and semantic cases through the existing pilot.
+3. If D05 includes terminals, record the Core/qualification/final-promoter
+   extension and independent refusal fixtures now. Define each whole-card
+   class, supported/unsupported metadata, raw-margin acceptance and no
+   runner-up fallback. Schema changes need explicit recorded decisions; enum
+   presence alone does not authorize deployment.
+4. Record D06 across Core read limits, compiler/profile widths, joint ledger,
+   IPC, callbacks, transports and qualification policy. Inventory every
+   [relaxations.md](relaxations.md) row; preserve original fixtures and create
+   new native-emitted cases for any chosen changed contract. Separate default,
+   structural ceiling, actual allocation and shipping profile.
+5. Prompt, chunk recipe, terminal policy and calibration changes each receive
+   their own identity/fixture decision before use. No silent change to
+   `airk-state/1`, wire digests, vector compatibility or native calibration
+   format. Keep the all-three final catalog requirement.
+
+**Exit:** reviewed contract decisions and independent native fixtures; consumers
+may proceed without waiting for a separate Git commit.
+
+
+### Step 3 — Repair operational and transport failures
+
+1. Reproduce the complete Step 1 failure inventory with focused tests and the
+   current matched runtime. Distinguish code defects, private-parent refusals,
+   stale binary comparisons, generated-fixture drift and environmental failures.
+   The expected result for unsafe shared-parent editing is a typed refusal plus
+   usable manual instructions, unless D04's full safety contract is proven.
+2. Implement Rust manual-entry emission and typed refusal details from Step 2.
+   Cover Claude Code, Codex and VS Code/GitHub Copilot in supported scopes:
+   exact filename/text, JSON/TOML escaping, current port, unrelated servers,
+   stale credential removal, ordinary safe writes and shared-folder fallback.
+   Remove Admin's handwritten `claudeJson`/`codexToml` mirrors in favor of
+   generated native outputs.
+3. Repair U110's repeated terse-status elision and two-index
+   `parse`/`capabilities` failure at their canonical owner. Compare complete
+   native, pipe and HTTPS/MCP results; preserve `read_scope` for single-index
+   responses and receipt-bound `selection.scope_identity` for multi-index
+   bodies. Never inject a field into an already bound body.
+4. Migrate the eleven named harnesses: `check-http-port-relocation.py`,
+   `check-issuer-rotation.py`, `benchmark-service.py`,
+   `benchmark-real-corpora.py`, `benchmark-mcp-investigation.py`,
+   `check-retrieval-quality.py`, `check-usage-inputs.py`,
+   `check-runtime-upgrade.py`, `check-service-install.py`,
+   `check-container.py`, and `setup-local-test.py`.
+   Use the tokenless endpoint and explicit index/set scope. Test workspace
+   defaults separately, missing scope, and clients that never offer MCP roots.
+5. Preserve U110's accepted local-process exposure, TLS trust and Host/Origin
+   ingress protections. Do not silently reintroduce credentials. Test real
+   Codex/Claude/VS Code connection behavior where an existing client is available.
+6. Triage the retained canonical Answer mismatch; the two MCP callback/policy
+   withdrawal failures reproduced on `98c368f4`; setup-path overlap; frame
+   deadline failures; and `usage_empty` fixture drift. Regenerate fixtures
+   only from reviewed Rust producers and compare complete expected semantics.
+   Repair races with observers/clocks, not sleeps or retries.
+7. After harness migration, separately inventory legacy credential operations
+   and callers. Delete only code proven uncalled after clean compilation/Clippy
+   or covered by a reviewed surviving-owner compatibility row. Preserve live
+   predecessor discovery, shutdown and recovery duties; unresolved code stays
+   labeled with evidence, not removed because its name says legacy.
+
+**Checks:** scoped Rust dev-check/focused regressions, script unit tests and
+affected real transports. Report exact selected counts and before/after failure
+inventory. Keep the shared-folder refusal assertion where the policy requires it.
+
+**Exit:** no known operational defect is allowed to confound the baseline.
+Independent platform defects may remain scheduled with an explicit blocker.
+
+### Step 4 — Repair Answer and implement the larger default end to end
+
+1. Locate R154's actual call 0019 and its original inputs. If inaccessible,
+   retain that fact and build a faithful focused reproduction from live owners;
+   do not claim an exact replay. Trace retrieval, compiler, queue, metadata
+   callback, each forward, additional read, packing and transport time.
+2. Repair the failure class, including sibling callers, clipped remaining time,
+   original-clock intersections, source/policy revocation and cancellation.
+   Prove actual native settlement/drain; a response timeout or socket close is
+   not proof of stopped work. Keep a cheap deterministic regression.
+3. Apply D06: default 8192 shared input tokens and 120000 ms. Update the Rust
+   default and each applicable validation, allocation, callback and transport
+   owner from the relaxation inventory; regenerate all affected native
+   fixtures, schemas, Help and clients. Include VS Code host, MCP SDK,
+   CLI/session, pipe, HTTPS/Admin and Workbench transport deadlines.
+4. Distinguish the 120-second operation deadline from client transport overhead.
+   No transport may prematurely truncate a valid operation; any transport
+   overhead must be explicit and must not grant fresh native work time.
+   Retain unrelated TTL, OCR, installer and callback safety semantics unless
+   their actual dependency requires a separately recorded change.
+5. Preserve an explicit 2048/30 historical-control request rather than letting
+   new defaults alter old experiment identities. Keep old qualification rows as
+   dated evidence; define new 8192 profile resource/numerical shapes and D07
+   latency rules before scoring. No old 30-second/2048 result is relabeled.
+6. Measure the actual native tokenizer census for the compact Context prompt,
+   using current task-policy bytes and complete retained cards. Preserve every
+   read, excerpt, hypothesis, gap and reason. Measure missing decisive spans,
+   identifier loss, overflow, prompt/padding charges and useful legal options.
+7. Keep Focus pair width 512 and left padding unless an explicitly triggered
+   wider-export experiment succeeds. Context's dynamic axes do not themselves
+   prove 8192 resource fit. Shared budget charges include every Focus and
+   Context input; there is no per-stage reset.
+
+**Checks:** literal new default/upper-bound/refusal fixtures; full request/result
+parity; no early client expiry; native cancellation and stale-authority
+regressions; small actual end-to-end timing probes after review.
+
+**Exit:** diagnosed Answer behavior, honest settlement, exact 8192/120 request
+propagation and a native input/token/menu report. Poor fit leads to a separately
+identified recipe repair, never hidden truncation or an invented model gain.
+
+### Step 5 — Make Service, Agents and navigation usable
+
+1. Present current Service/resource/Arbiter status on opening the view, with
+   loading, failure, stale and retry states. Replace the unexplained Load-only
+   view and two-level tab maze with clear user tasks and short descriptions.
+2. Show Focus and Context independently: installed/download state, on/off state,
+   selected Compact/Large model, index enrollment, fit/readiness and failure.
+   Offer plain actions such as “Download and turn on Arbiter Focus,” showing
+   model size, explicit consent and enrollment before mutations. Preserve
+   separate stages, default-off behavior and real native state.
+3. Remove internal session IDs and custody wording from routine screens. Keep
+   useful diagnostics in Details. Show measured requirements with their profile
+   and platform; label provisional requirements until measurements exist.
+4. Agents always offers “Set up manually” with the Rust-provided target path,
+   full entry and Copy button. On automatic refusal, open it, explain the typed
+   reason plainly, and retain raw detail. Explain that a port change requires a
+   fresh entry and point to Copy/`airkctl agents endpoint`.
+5. Give all twelve rail destinations a distinct destination-keyed icon:
+   Overview, Search, Indexes, Activity, Agents, Service, Code, Documents,
+   Evidence, Review, Strategies and Help. Remove the Explore evidence group.
+   Use a flat list with a divider; pin Help last. Collapsed mode is icons only,
+   with tooltips/aria labels and active highlight. Match page titles to labels.
+6. Use existing code-native icons/styles. Test icon uniqueness against an
+   independently authored destination set, keyboard/screen-reader names,
+   expanded/collapsed layout, initial status loading, typed refusal/manual
+   copy, consent, stale replies, retry and independent stage operations.
+
+**Checks:** extension compile/tests; Admin build/check/tests; generated asset
+verification. Compare the full native manual entry with both rendered/copied
+surfaces for every supported agent. Review the rendered UI at narrow/wide sizes.
+
+**Exit:** usable tasks, complete native results and sealed assets. UI mocks alone
+do not qualify transport or installed product behavior.
+
+### Step 6 — Prove acquisition and model lifecycle before training
+
+1. Use fresh owned test storage and explicit provisioning consent in the
+   fixture. Exercise the actual app/service Provision path for all three
+   selected models: download every part, verify size/hash, join, verify logical
+   assets, load ONNX, check tokenizer/ABI and make a bounded native call.
+2. Exercise unreachable source, interrupted part, corrupted part/whole asset,
+   deadline/idle stall, cancellation, retry, Remove and verified whole-asset
+   reuse. Preserve sanitized errors with no signed URLs or secrets.
+   Current incomplete-asset retries restart rather than resume; retain partial
+   bytes honestly and explain Remove. Do not claim resumable parts.
+3. Preserve the existing size-dependent part deadline (at least 900 seconds or
+   size at 256 KiB/s), 30-second idle bound and fixed redirect limit unless a
+   separately measured source-map change justifies different part sizing.
+4. Verify disabled/offline behavior, independent enrollment, decline consent,
+   load failure/OOM recovery and unchanged ordinary MiniLM progress.
+   Test the pre-1.9 local-test profile path and its hard refusal at 1.9+.
+5. Retain existing public release assets unchanged. A new model/profile needs
+   new immutable identity/tag and reviewed exact source map; stage new bytes
+   locally until separately authorized publication. A locally staged download
+   fixture proves lifecycle mechanics, not public availability of future URLs.
+
+**Exit:** exact provision/load/lifecycle receipt per model. Failure blocks its
+expensive training/qualification path until reproduced and corrected; other
+product work continues. Record GitHub-only hosting as a retained limitation.
+
+### Step 7 — Establish a corrected baseline and bounded experiment program
+
+1. Freeze a matched runtime pair, source/dirty-input manifest, original MiniLM
+   U8/S8 controls, all selected Qwen inputs, native recipes, policies, sources,
+   GPU/CPU environment and exact index IDs. Use fresh experiment indexes.
+2. Run a small service-client preflight on the new U110 and 8192/120 path.
+   Compare exact dense search with DiskANN on identical vectors and queries;
+   measure semantic-only, lexical-only and production hybrid separately.
+   Preserve extraction/alignment refusals, fallback, unavailable/partial
+   graphs and source identity in the original task denominator.
+3. Re-score old development diagnostics only to attribute prior errors.
+   Historical failed/partially consumed FINAL sets remain consumed and retain
+   their evaluation-only restrictions. DiskANN improvements are infrastructure
+   gains, not evidence that weights improved.
+4. Obtain same-visible-input/menu oracle decisions and a separate full-evidence
+   oracle. Record representation/proposal misses independently. If the menu
+   cannot offer the needed evidence, fix the recipe with frozen weights before
+   scaling Context learning.
+5. Create an additive software-v2 experiment freeze, leaving the original
+   A0/encoder/goal-baseline protocols unchanged. Bind D06/D07's new budget and
+   resource policy; state how old gates map to new software support definitions.
+   Preselect metrics, critical strata, negative masks, controls, sample/power
+   rationale, seeds, caps and exact stop/selection rules before scores.
+6. Profile inference/export-only resource probes on already authorized inputs;
+   do not take gradient steps before Step 8's data acceptance. Draft M1, F1/F2
+   and C1 cards with hypothesis, primary change, controls, optimizer proposal,
+   metric, limits and diagnostic. Step 8 binds actual accepted data hashes and
+   freezes executable cards before even a short gradient probe.
+7. Freeze terminal risk/sample/coverage criteria before CAL/raw task scores:
+   zero observed false-sufficient cases and one-sided 95% upper bound below 1%
+   false accepted Sufficient decisions. Roughly 299 independent zero-error
+   accepted cases is an elementary-binomial guide; use repository-cluster
+   analysis and an adequate sample rationale. Insufficient existing human
+   labels leaves the class unsupported; never lower this target after scores.
+8. Use only this machine and Neo. No cloud teacher or paid compute. An existing
+   local teacher may label TRAIN only after its identity, suitability and cost
+   are recorded; teacher review is not human gold. Use one pilot seed and
+   three finalist seeds. No giant Cartesian/hyperparameter sweep.
+
+**Exit:** trustworthy baseline, failure taxonomy, token/menu census, weight-
+addressable residuals, pre-score acceptance criteria and a draft experiment register. A non-neural failure
+blocks only dependent neural experiments until its cheap regression passes.
+
+### Step 8 — Freeze licensed, aligned software supervision
+
+1. Target an initial 2,000 query-group pilot across at least 20 unrelated
+   repository families; expand toward 5,000 only if the measured D02 budget
+   permits. Any justified size change happens before scoring and preserves a
+   meaningful stratum/power rationale. The 25,000–50,000 scale-up is conditional
+   future work unless a learning curve and remaining cap support it.
+2. Start with mutually assigned 40% code/tests, 35% docs/contracts/config,
+   15% cross-file diagnostics and 10% general-document replay. Cover Rust,
+   TS/JS, Python, Go, C/C++, shell/PowerShell, Markdown/config and supported
+   technical-document extraction. Avoid single-repository/language dominance.
+3. Split TRAIN, DEV, CAL, policy-confirmation and FINAL by repository/fork,
+   issue/symbol family and chronology before synthesis, mining or teacher
+   scoring. Deduplicate clones, copied docs, fixes and paraphrases; reserve
+   unseen projects and task/language slices. FINAL's source closure is excluded
+   even from unsupervised training and mining.
+4. Pin per-source rights, revisions and notices; a benchmark wrapper's license
+   does not grant rights to underlying files. Use the weights-v2 benchmark
+   shortlist selectively, with exact benchmark identity and overlap audit.
+   Hotpot remains evaluation-only. Do not use private workspace/customer/live
+   requests for training without separate explicit consent.
+5. Keep exact path/spans, original context, native-unit mapping, question origin,
+   relevance grades, uncertainty, annotation authority and alternative coherent
+   support sets. Adjudicate file-level labels to visible spans. Never leak a
+   future patch, revealed filename or later documentation into a pre-fix task.
+6. Ground synthesized TRAIN questions in real evidence and verify claims.
+   Mine lexical/dense negatives; include wrong overload/platform/version,
+   missing constraints and different-failure tests. Unjudged is unknown.
+   Counterevidence can be positive; mask all alternative positives and clones.
+   Reject invisible positives instead of teaching tiny prefixes unseen facts.
+7. Apply D03 to every final critical-evidence/terminal label, teacher conflict
+   and stratified TRAIN review. Reuse appropriate existing human judgments only
+   when they cover the exact claim and visible evidence. Native span projection
+   or agent annotation is not new human review. Prepare a clear missing-label
+   packet; continue tooling/data/nondependent experiments, blocking unsupported
+   training acceptance or promotion as the applicable gate requires.
+8. Audit concentration, native alignment and refusal denominator; keep
+   multi-instance weak parent bags a separate arm with equalized bag-size
+   controls. Freeze sample sizes from repository-cluster variance before
+   one-shot scoring; inadequate power yields no promotion.
+9. Only after that acceptance, bind exact data/split/rights/native-visible-example
+   hashes, starting checkpoints, seed/config, metric, controls and maximum
+   steps/compute to executable M1/F1/F2/C1 cards. Freeze them before short bounded
+   gradient probes; measure those probes and admit longer pilots only within
+   their recorded caps and the remaining campaign budget.
+
+**Exit:** rights/split/alignment/label audits, frozen executable experiment cards,
+general-document regression panel,
+frozen rubrics and untouched FINAL reservation. Never turn 20 evaluable tasks
+out of 64 into an all-64 pass.
+
+
+### Step 9 — Run MiniLM's smallest useful adaptation
+
+1. M0 is the exact original publisher controls on the corrected native pipeline.
+   Keep 256 WordPieces, 384 dimensions, tokenizer, masked-mean/L2 and batch-one
+   deployed ABI fixed for the first weight experiments.
+2. M1 uses multi-positive contrastive training with general replay; compare
+   easy negatives against screened lexical+dense negatives on the same rows.
+   Give each required evidence unit/need its own positive loss. Pool only
+   genuinely interchangeable alternatives; one easy implementation hit must
+   not satisfy the loss for a required test and contract.
+3. Start AdamW with one epoch, learning rate `1e-5`, temperature .05 and
+   effective contrastive batch 32. Test `5e-6` or `2e-5` sequentially only
+   if the frozen diagnostic justifies it. Memory-permitted larger batches
+   (up to 128) require explicit negative groups or verified cached contrastive
+   learning; gradient accumulation alone does not enlarge negative pools.
+4. Export promising checkpoints immediately to both U8 and S8. Compare reference
+   and actual native exact/ANN/hybrid Recall@10, complete coherent evidence sets,
+   nDCG/MRR, actual Focus-pool recall, semantic rescue, general-document and
+   language/repository strata. Float-only improvement is insufficient.
+5. If Step 7 found a chunk/title/path/identifier/fusion defect, test that recipe
+   with unchanged weights separately, then use the original/adapted weights ×
+   original/revised recipe 2×2 control. Record the new pipeline identity.
+6. Select by the preregistered DEV rule and confirm finalists across three
+   training seeds. If the critical strata/native exports/gates fail, retain
+   originals for downstream work rather than blocking Focus/Context.
+
+**Exit:** selected original or candidate MiniLM, exact U8/S8 identities and
+attributed quality/cost evidence. Final promotion still waits for Step 14.
+
+### Step 10 — Improve Focus on actual admitted pairs
+
+1. F0 fixes publisher weights, current prompt and candidate pool. F1 changes
+   only the software-evidence instruction, with native recipe/fixture identity.
+   Select the instruction on DEV before attributing F2's weight effect.
+2. F2 performs continued relevance SFT on exact escaped, left-padded 512-token
+   native query/window pairs. Rust-refused overflows stay refusals; Python must
+   not silently crop. Train response-position full-vocabulary yes/no loss,
+   mask the prompt, preserve deployed no=2152/yes=9693 logit scoring.
+3. Start LoRA rank16, learning rate `5e-5`, effective batch32, one epoch and
+   the frozen replay fraction. A second epoch or one changed rank/rate is a
+   separately bounded follow-up. Full tuning requires demonstrated adapter
+   capacity limits. Merge the adapter before native ONNX comparison.
+4. Compare original/adapted under the same instruction on a fixed pool, then on
+   Step 9's selected encoder pool. Measure nDCG and necessary/complementary/
+   exception evidence retention. Report original, admitted, scored and
+   delivered counts and overflow; ranking cannot recover absent candidates.
+5. Keep diversity/overlap controls separate. No learned relevance cutoff or
+   probability interpretation is added merely because a score is normalized.
+
+**Exit:** selected original or adapted Focus with valid export and useful-evidence
+ordering. It becomes an M2 teacher only after independent DEV superiority.
+
+### Step 11 — Train Context and implement conditional terminal support
+
+1. C0 scores unchanged Compact and Large on the same native states, current
+   prompt, complete cards and upstream snapshot. Begin C1 with Compact;
+   prepare Large's data/export path concurrently and carry forward the winning
+   recipe, with separate controls/results.
+2. Preserve nonthinking chat, six-input graph, final-prefix A–H vocabulary-row
+   readout and `scores[1,N]`. The current view contains at most four newest
+   192-byte hit prefixes, five verified Read choices and eight total cards.
+   Whole-card correctness includes action, gap, reason and every source-role/
+   relevance hypothesis. It is not free-form answer generation.
+3. C1 starts useful-Read LoRA with rank16, learning rate `5e-5`, dropout .05,
+   effective batch32, one epoch and allowed-symbol decision loss. Distribute
+   targets across equivalently useful complete cards. Attention projections
+   first; add MLP or rank/rate variants only for measured underfit. At most
+   three pilot epochs with frozen DEV early stopping.
+4. Balance positions through separately emitted native fixture variants;
+   never reorder a frozen production roster. Test alias/path/evidence-order
+   sensitivity. Score the complete roster, choose its global winner/margin,
+   then apply supported class calibration. An unsupported terminal winner
+   abstains; never substitute a lower-scoring Read. No abstain token is added.
+5. Keep complete-support, duplicate-only, ambiguous and no-useful-choice states.
+   During read-only C1, terminal-needed examples are refusal/evaluation probes,
+   not fabricated Read targets.
+6. C2 executes eligible counterfactual reads from identical pre-action TRAIN
+   states; measure required support/counterevidence gained, duplicate content
+   and real token/read/time cost. Freeze utility weights on DEV. Limited
+   two-step lookahead prevents labeling bridge reads useless. Future outcomes
+   may label utility but never enter student inputs.
+7. C3 gathers actual learner-visited TRAIN mistakes/recovery states, obtains
+   valid labels and compares against equal-size/equal-compute additional
+   expert-state SFT. This is offline replay, not runtime learning.
+8. Implement D05's terminal applicability across Core/task/fitter/promoter with
+   independent fixtures, even if real semantic labels remain unavailable.
+   Sufficient requires all task-required visible support; Clarify requires
+   genuine ambiguity; NoJustifiedRead requires a complete verified menu with
+   no justified choice and cannot mean global unanswerability or timeout.
+9. Train a separate terminal-bearing arm only with D03-compliant labels.
+   Include missing constraints, stale APIs, conflicting tests, platform
+   qualifications, duplicate choices and natural missing-evidence cases.
+   Missing gold leaves each class unsupported and the runtime fail closed.
+   Do not project QASPER answerability or generic CAL Read certificates into
+   terminal human judgments.
+
+**Exit:** independently measured Compact/Large useful-read behavior, bounded
+trajectory coverage, missing-menu/input rates and per-class supported or
+unsupported disposition. Include Focus-off cases. Terminal extension code
+does not establish qualified terminal functionality.
+
+### Step 12 — Run only justified refinements; freeze practical native artifacts
+
+Use the following branch table mechanically. Each branch gets one registered,
+capped attempt plus a corrective attempt only after changed inputs and cheap
+diagnostic evidence. Skip branches that cannot finish before the reserved
+qualification window; record the reason rather than treating them as passes.
+
+| Branch | Required trigger | Comparison/stop rule |
+| --- | --- | --- |
+| M2 teacher distillation | Focus/teacher demonstrably better on relevant DEV pairs; same inferable content | Contrastive-only, score-difference/distribution distillation-only and small combined arm; no cross-model vector matching. |
+| M3 / F4 refreshed negatives | Measured remaining ranking misses with valid labels | One TRAIN refresh versus equal extra training on old negatives; stop on more false negatives or lost evidence diversity. |
+| M4 short denoising | Demonstrated residual code-representation gap | Equal compute on extra retrieval supervision; no broad pretraining by default. |
+| F3 preference/soft-target objective | F2 residual and independently grounded teacher preference | One added objective; mask ties/conflicts, retain pointwise loss, compare equal compute. |
+| C4 preferences/distillation | Useful-Read SFT leaves a defined decision residual | Same-state/menu preference or audited teacher distribution, SFT/reference regularization; no online GRPO/general agent search. |
+| Large → Compact distillation | Large measurably stronger on the same visible state | Compare native-card distributions; no generated chain-of-thought supervision. |
+| Wider Focus/changed Context evidence view | Input census shows consequential visibility loss | New recipe/export/profile identity and unchanged-weight control; fit the shared 8192/120 budget. |
+| W4 or quantization-aware training | Reproduced failure of cheaper valid W8/mixed-precision approaches | Pinned native operator support and all original numerical/task gates; otherwise retain valid full precision. |
+
+1. Separate reference→FP32 ONNX, FP32→quantized ONNX and native→task comparisons.
+   Preserve tokenizer/prompt bytes, positions/masks, output rows and identities;
+   include difficult real inputs and near-tied margins.
+2. Diagnose Compact W8's historical .290778875 raw-logit drift against the .25
+   limit with matched intermediate tensors. Test sensitive-layer exclusions or
+   scaling before W4. Check the actual operator/provider before applying an
+   ORT-issue setting. Argmax agreement does not waive numeric failure.
+3. Preserve MiniLM's mixed-precision protections and test both U8/S8 ISA paths;
+   distinguish quantization loss from ANN loss. Quantized training techniques
+   do not automatically qualify a quantized ONNX deployment.
+4. Measure complete resident combinations: download bytes, staging/disk peak,
+   load peak, steady/peak process memory, warm/cold p50/p95, throughput, CPU
+   fit/threads/provider, actual widths and MiniLM coexistence. Do not sum
+   isolated RSS figures and present that as measured joint memory.
+5. Retain old shapes and add native 8192/N8 boundary/numerical/resource evidence
+   under the new frozen policy. Apply D07 to measured latency; report actual
+   component and end-to-end costs, overflow/failure and low-memory refusal.
+   Reservations and old CPU1/4/8/16 observations are not fresh measurements.
+6. Recheck OOM/recovery, cold/warm lifetime, disabled/excluded indexes,
+   independent stages, offline inference, cancellation/drain and authority
+   changes with the actual final exports.
+7. Freeze the selected original/adapted checkpoint, precision, graph/external
+   data, tokenizer, compiler/task policy and resource fit for every component.
+   Finalist seeds and DEV selection are finished before CAL/FINAL.
+   Any later upstream/model/recipe change invalidates dependent calibration
+   or task evidence; no post-hoc relabeling.
+
+**Exit:** final artifact set with valid numerics and measurable fit, or explicit
+unpromoted components. Compression failure keeps a valid larger artifact only
+if it also meets actual resources; no automatic precision switch.
+
+### Step 13 — Collect exact-artifact calibration and custody evidence
+
+1. Review current selected-model qualification contracts and the private
+   runbook anchors in Section 7. Port needed maintained driver code into the
+   existing developer-tool ownership with cheap tests before running it.
+   Do not execute old sandbox-owned packets, stale binaries or historical
+   release/decision hashes. Missing private source is a blocker or a reason
+   to reconstruct a tested harness from its owning contract.
+2. Freeze a fresh CAL100 population, ownership wrapper and U110 scope bindings.
+   The thirteen chunks are phase-00 through phase-11 with eight ordered
+   questions each, then phase-12 with four. Preserve ordering and every
+   natural ownership closure; a partial capture is not CAL100.
+3. Historical chunk limits were 1800 seconds/phase, one fixture's absolute
+   10800-second lifetime, 500 total probes and 30 seconds/read. D06 changes
+   the read configuration to 120 seconds; it does not silently extend fixture
+   custody or other protocol caps. Review/freeze a new compatible execution
+   protocol before capture. If full capture cannot fit the retained custody
+   caps, diagnose and record the needed protocol decision; do not refresh
+   deadlines in-place or stitch expired evidence into a passing run.
+4. CAL gathering uses Focus ON and no Context task forwards. Aggregate all
+   thirteen original closures and independently establish reference
+   certificates before looking at Context raw task scores.
+5. Run two complete serial raw Context captures, one Compact and one Large,
+   under current 8192 policies and bounded owned execution. Before either run,
+   separately inventory its historical 3360-second whole-census bound; 100
+   permitted 120-second calls do not fit that bound in the worst case. Record
+   and review the new whole-census custody cap using measured projections,
+   actual fixture lifetime, per-call semantics and remaining campaign time.
+   This is an implementation protocol decision, not an automatic multiplication
+   or a new user gate. Preserve original task denominators, all legal choices
+   and source/recipe identities.
+6. Fit raw-margin acceptance in the native owner on CAL, using the exact final
+   export. The generic Read fit needs at least one certified positive and
+   zero accepted UNKNOWN. No supporting cutoff means unsupported/no qualified
+   profile. Terminal fitting uses the new reviewed class-specific path and
+   actual human semantic gold; old reference certificates have none.
+7. Confirm the fitted policy once on disjoint policy-confirmation data.
+   Report accepted precision, risk/coverage, false sufficiency, unnecessary
+   clarification, useful-read rejection and every invalid/unavailable outcome.
+   Keep whole-roster winner/margin semantics. Temperature diagnostics remain
+   offline unless separately added to the native calibration contract.
+8. Evaluate the already frozen Step 7 terminal risk/sample/coverage criteria.
+   Report bounds and effective independent coverage; do not change the rule
+   after raw scores, fitting or confirmation. Missing human labels or inadequate
+   sample support keeps that class unsupported.
+9. Run final fitted resource and ten actual composed cases:
+   `baseline_identity`, `focus_only_search`, `dual_compact`,
+   `dual_large`, `noninterference`, `cancel_drain`, `source_revoke`,
+   `remove_recover`, `stage_independence`, `normal_shutdown`.
+   Include MiniLM progress, joint reservation/memory, natural exit, empty
+   ownership jobs and settlement. `source_revoke` removes real membership;
+   retiring the entire set is not an equivalent test.
+
+**Exit:** final-artifact CAL/fit/confirmation/resource/composed receipts, complete
+closure and supported-class inventory. A valid export or fitted metadata file
+alone cannot pass this step.
+
+### Step 14 — Run held-out goals once and select final dispositions
+
+1. Freeze finalists, prompts, thresholds, corpus, rubrics, fixed local capable
+   agent/scaffold, scope and total read/token/byte/deadline budgets. The local
+   scaffold must be reproducible on D02's allowed machines; unavailable
+   capability is reported, not replaced with an unapproved cloud model.
+2. Preserve the required selected-Qwen A6 comparison with Focus enabled for all
+   its arms: ordinary follow-up, deterministic packet, Compact and Large.
+   Use the native-selected driver, not the legacy public four-model CLI. Its
+   --split confirmation flag is a runner mode: bind the campaign to untouched
+   v2 FINAL tasks, disjoint from policy-confirmation, rather than reusing the
+   calibration-confirmation population under another name.
+3. Add v2 attribution controls: original versus adapted MiniLM with optional
+   stages off; lexical-only/lexical+Focus/original hybrid/hybrid+Focus; selected
+   encoder with original/adapted Focus and Context off; each Context size with
+   Focus off; original/adapted Compact and Large in the composed path.
+   DEV reduces the matrix; no full Cartesian sweep.
+4. Give the ordinary baseline legitimate follow-up reads and equal total
+   budgets. Choose the strongest baseline using baseline results only:
+   higher completion, then fewer mean external turns on each baseline's
+   completed tasks, then deterministic packet on an exact tie.
+5. Score coherent complete support alternatives, citations/source identity,
+   critical evidence/counterevidence, unsupported claims, completion, visible
+   turns, every internal canonical read, inference work and resource cost.
+   Localize implementation/test/contract correctly; any fixed-agent repair
+   subset supplements the independent rubric rather than replacing it.
+6. Report paired query deltas, repository-macro/task/language strata,
+   repository-cluster uncertainty, all-task failures/costs and paired
+   common-success outcomes. An empty common-success set cannot pass.
+7. Apply Section 6's frozen gates to each required profile/mode.
+   If FINAL fails, retain the failure, keep original weights where applicable
+   and do not retune/reselect on that FINAL. A later experiment needs a new
+   hypothesis and fresh held-out reservation.
+
+**Exit:** adapted/original/unsupported disposition per component with exact
+evidence. Large needs measured benefit for its cost. If any required optional
+profile cannot qualify, final catalog promotion is blocked even if another
+component improves.
+
+
+### Step 15 — Prove regeneration/recovery and produce the native catalog
+
+1. A changed MiniLM encoder or semantic input recipe gets a new embedding/
+   pipeline identity, invalidates incompatible caches and regenerates vectors.
+   Never mix old document vectors with new query embeddings. Preserve lexical
+   availability and disclose semantic readiness throughout.
+2. Test interrupted regeneration, stale-graph refusal, resume and rollback.
+   Rollback selects original weights with matching original vectors or rebuilds
+   them; restoring only a model file is insufficient. Use experiment indexes
+   first; preserve source bytes and unrelated user indexes.
+3. Focus/Context-only changes leave semantic vectors unchanged but invalidate
+   model/policy/calibration-dependent advice caches. Exercise independent
+   enable/disable/enrollment, stale advice refusal and recovery.
+4. Complete exact-byte rights/provenance for checkpoints, derivations, graphs,
+   tokenizer and notices, plus actual target/fit proofs and approved immutable
+   download-source maps. Retain per-part/logical-file hashes and new/old
+   manifest comparisons. Do not invent URLs for unpublished bytes.
+5. Use the native final promoter only with all three selected qualified profiles.
+   Rebuild the compiled catalog, then emit genuine
+   `fixtures/arbiter/publication_catalog.json`. Validate catalog/publication/
+   offline projections against exact staged inputs. No handwritten capture,
+   empty catalog bypass or partial trio.
+6. The final series must reject `unqualified-local-test` profiles and require
+   the native capture. Preserve the bounded local series only for an honestly
+   labeled provisional candidate. New profiles/assets use new identities;
+   existing releases are never edited. Remove old public assets only under
+   separately authorized retirement, outside this plan's local work.
+
+**Exit:** regeneration/recovery proof, qualified trio, compiled catalog and native
+capture; or a precise promotion blocker. Local staging is not remote publication.
+
+### Step 16 — Qualify the reviewed integrated candidate
+
+1. Primary reviews the full combined patch, contracts, fixtures, generated
+   assets, dependency boundaries and receipt identities. Freeze all consumed
+   source/model/toolchain/runtime inputs before expensive gates. Run ordinary
+   workspace/transport/platform checks on identified retained-original/local-test
+   artifacts even if Step 15 is blocked. Only checks that require qualified
+   models, the final catalog or publication capture wait for those inputs.
+2. Run format, affected scoped Clippy/regressions and script/UI checks first.
+   Then complete full workspace Clippy, all-feature tests, doctests, routine-
+   excluded campaigns where Nextest is used, ignored vector-performance and
+   final publication-input cases. No 90% pass threshold or ignored failure
+   inventory counts as a full pass.
+3. Exercise current [per-surface read parity](../read-interface-parity.md):
+   CLI/session, MCP, Admin and Workbench through real canonical/native handlers
+   and transports. Compare full inputs/results, copy/export, provenance,
+   readiness, coverage, continuations, error/retry, omissions, scope identities,
+   fallback and all work accounting. Document inapplicable operations.
+4. Build/reuse an exact matched runtime pair and run service-client integration
+   preflight; never compare against the old ORT 1.22.1/stale MiniLM binary.
+   Reuse unchanged artifacts only with their original proven identities.
+5. Qualify Windows first. Batch Mac Neo through existing SSH/POSIX sh, preserve
+   receipts outside its target, and clean its target after every batch including
+   failures. Keep single Cargo ownership. Check its actual architecture, disk,
+   descriptor limits and memory; an 8 GiB host cannot demonstrate a larger
+   resource fit merely because the program compiles.
+6. Attempt Linux/container and other required platform gates only with existing
+   suitable environments on the allowed Windows/Neo machines. No third host,
+   paid runner or cloud CI is authorized by D02. Missing host/ISA/physical
+   capacity or required hosted-release evidence is an explicit blocker;
+   cross-compilation does not establish target execution.
+7. On failure stop the batch, collect exact diagnostics and follow the cheap
+   reproduction rule. Re-run only invalidated checks; unchanged passing
+   evidence retains its original identity.
+
+**Exit:** per-platform gate matrix, actual test counts, failed/skipped/unavailable
+checks and complete release-blocker inventory. Windows success alone never
+establishes cross-platform release readiness.
+
+### Step 17 — Deliver Windows packages, then test installed behavior
+
+1. For a useful early Windows milestone, package reviewed Steps 3–6 under the
+   next unused local 1.8.x candidate version with unqualified models clearly
+   labeled. This can proceed while model research/qualification is blocked.
+   It does not require or imply a final 1.9.0 catalog.
+2. Keep native/extension versions and lockfiles synchronized. Discover the next
+   unused version from live state; do not hard-code historical proposed 1.8.207.
+   Reserve 1.9.0 for final delivery after its applicable gates. Perform each
+   accepted bump once per milestone, including generated version/Help assets.
+3. Build/stage the exact matched runtime after static ORT/model provisioning
+   and sealed Admin assets. Package only tested native artifacts and compiled
+   universal VSIX. Use fresh outputs, verified notices/signatures and complete
+   hashes/census. Optional models remain explicit separate downloads; never
+   include training checkpoints, optimizer state, credentials or source corpora.
+4. Use isolated installed-product fixtures under the logged-in user. Exercise
+   install, upgrade, interrupted setup/recovery, repair, silent mode, uninstall,
+   real service process ownership, sign-in behavior, Explorer and agent setup.
+   Use safe automatic edits or manual entries according to D04. Preserve the
+   user's actual installation/configuration unless a later instruction
+   explicitly authorizes changing it.
+5. Exercise actual model Provision/import/load/enable/disable/enrollment/Remove
+   from the built product and normal MiniLM-only operation. For new unpublished
+   assets, use approved local staging/import tests and clearly mark actual
+   public-source availability as pending; never call this a successful public
+   download. Verify full published downloads only after separately authorized
+   immutable publication.
+6. Recheck the installed 8192/120 timeout chain, resource display, status-first
+   controls, collapsed rail, manual Copy/config equivalence and recovery. Source
+   read-only behavior and complete process settlement are acceptance criteria.
+7. Collect installer/VSIX/native-package paths, hashes, signatures, version,
+   source/model identities and exact installed-journey receipts.
+
+**Exit:** concrete Windows candidate(s) and tested/unavailable installed behavior.
+A packaged file without installed checks is a candidate, not a qualified release.
+
+### Step 18 — Reconcile documentation and hand off exact outcomes
+
+1. Update current Help/operator documentation with model roles/stages, consent,
+   independent enrollment, download/staging/RAM requirements, measured latency,
+   8192/120 defaults, offline behavior, limitations and recovery.
+2. Correct current README/documentation index/release notes/Marketplace/VSIX
+   claims and version references. Keep historical receipts recognizable;
+   explicitly retire the .02-gain wording, sandbox-user advice and obsolete
+   known-issue statements only after their fixes/evidence exist.
+3. Update the existing ledger and this plan's outcome table. Summarize each
+   original known issue as fixed with evidence, retained by decision,
+   unsupported, unavailable or still blocked. Link the exact receipts.
+4. Review and commit coherent milestones only on the authorized branch/remote
+   with the human DCO identity. Preserve the user's unrelated starting changes;
+   never stage private data or broad artifact directories. No PR.
+5. Deliver Windows artifacts first, then the platform/qualification report.
+   Distinguish implementation, measured model gains, rejected experiments,
+   compilation, installed outcomes and public availability. If the 48-hour cap
+   arrives, stop new work, settle owned processes and hand off honest remaining
+   blockers; do not mark an unmet goal complete.
+6. Only after concrete artifacts and all required release gates are ready may
+   public publication be proposed for separate approval. Do not request a
+   blanket release approval during this planning task.
+
+## 5. Time budget and unattended scheduling
+
+The user selected a **24-hour target and 48-hour maximum for the work**, using
+only this Windows machine and Mac Neo. At execution start, record T0 in UTC and
+America/Denver plus exact T0+24h/T0+48h timestamps. The cap applies to the
+implementation campaign, not just GPU training. Do not borrow elapsed time
+from a fresh session or reset the clock after a failed run.
+
+| Elapsed target | Main outcome | Parallel independent work |
+| --- | --- | --- |
+| 0–4h | Steps 1–4 contracts, focused failures and timeout repair | UI Steps 5, source/rights inventory, download preflight |
+| 4–6h | Steps 6–8 baseline/input census and audited pilot freeze | UI completion; Windows candidate preparation if reviewed |
+| 6–12h | First M1, F1/F2, C1 pilots with early exports | Label audits, refusal/recovery tests; Large export preparation |
+| 12–15h | Finalist seeds and exact artifact/resource freeze | Windows candidate checks and maintained qualification harnesses |
+| 15–20h | CAL, fit, composed and held-out runs that fit their frozen caps | Documentation and available noncompeting platform preparation |
+| 20–24h | Windows delivery, integrated gates and status at target | Report remaining qualification blockers and justified extension work |
+| 24–44h, if needed | Only remaining acceptance criteria, diagnosed repairs and required validation | No optional new research branch |
+| 44–48h | Finish already justified bounded checks, packaging, settlement and handoff | No new long experiment; reserve time for an honest final report |
+
+These are scheduling targets, not claims that a six-hour CAL allowance or human
+labeling fits automatically. Before each long run, estimate measured duration
+plus recovery/settlement and confirm it fits both its own protocol and remaining
+campaign time. Review the entire inventory at least every four hours.
+
+At hour 12, stop optional exploration if it threatens core export/qualification.
+At hour 24, continue unattended toward unfulfilled acceptance criteria within
+the authorized 48 hours; no new permission is needed merely for the extension.
+Missing human labels, unavailable hosts or a failing profile cause a local
+blocker and continued independent work, not a weaker claim.
+
+## 6. Frozen acceptance rules
+
+Bind these to the additive v2 freeze before scoring. The original protocols are
+[A0](../../tools/retrieval-train/a0-freeze.json),
+[encoder controls](../../tools/retrieval-train/encoder-baseline-freeze.json) and
+[baseline selection](../../tools/retrieval-train/goal-baseline-selection-freeze.json).
+The old budget/resource rows remain historical; D06/D07 explicitly amend the new
+profile's policy only.
+
+| Boundary | Required result |
+| --- | --- |
+| MiniLM | Recall@10 >= .85; coherent complete support alternative >= .70; >= .03 absolute paired complete-recall improvement against each original unsigned control; mean-recall regression <= .02. Both U8/S8 native exports, critical strata and actual delivered path pass. |
+| Source identity | Citation/source precision 1.0; no invented path/span, hidden omission or mixed embedding identity. |
+| Optional quality | Required evidence/completion floor >= .75 where applicable; completion no more than .02 below the strongest baseline; no citation/critical-evidence regression. Independent Compact/Large results and preserved Focus-only/Context-only modes. |
+| Follow-up effort | >=10% mean external-turn reduction on nonempty paired common-success tasks; also disclose all-task failures, internal reads, compute and resources. |
+| Generic Context fit | >=1 certified positive; zero accepted UNKNOWN; exact whole-roster winner and margin before class acceptance. |
+| Terminals | Class-specific human-backed evidence, zero observed false sufficiency and frozen risk/coverage criteria; unsupported stays unavailable. Generic Read success is not terminal qualification. |
+| Approximate export | Raw-logit drift <= .25; normalized-mass diagnostic drift <= .05; identical fixture argmax under the frozen rule. New real near-boundary cases supplement these gates. |
+| New default | Shared 8192 input tokens / 120000 ms; compatible actual graph/profile; complete client timeout propagation; no work-budget reset. Focus remains 512 per admitted pair. |
+| New latency | Measured p95 <= 120 seconds for the new profile; report actual component and end-to-end cold/warm latency and failure costs. Preserve the frozen sample/quantile protocol and original 30-second evidence separately. |
+| Resources | Measured actual CPU/ISA/provider/threads, memory/disk/load peaks and resident coexistence at shipped inputs; no unsupported transfer from old reservations or hosts. |
+| Catalog/package | Exactly three qualified selected optional profiles, native emitted catalog/capture, complete rights/source maps, final-series local-test refusal and verified payload census. |
+| Release claims | All applicable workspace, transport, platform, installed and artifact gates actually pass. Missing platform/public availability remains explicit. |
+
+A proposed statistical target is frozen before scoring; it cannot be weakened
+after results. Publication of new weights remains separate from scientific and
+local artifact readiness.
+
+## 7. Verified commands and qualification entrypoints
+
+Use the pinned repository tools, current live selectors and owning contracts.
+Replace placeholders in a retained run receipt before starting; never execute
+the literal placeholders. List/inspect a focused selector and require nonzero
+selection. Do not run cargo check before equivalent Clippy.
+
+| Purpose | Command/owner |
+| --- | --- |
+| Format | `cargo fmt --all -- --check` |
+| Scoped Rust | `python scripts/dev-check.py -p <crate>` with the actual needed features/targets |
+| Focused tests | `cargo nextest run --profile ci -p <crate> --locked --timings -E '<verified expression>'` |
+| Final workspace | `cargo clippy --workspace --all-targets --all-features --locked --timings -- -D warnings`, then `cargo test --workspace --all-features --locked --timings` |
+| Doctests | `cargo test --doc --workspace --locked --timings` |
+| Complete Nextest alternative where selected | Add `--ignore-default-filter` to restore routine-excluded campaigns; run doctests separately; do not duplicate a completed equivalent full run without cause. |
+| Extension | `npm run compile --prefix packages/vscode`; `npm test --prefix packages/vscode` |
+| Admin | `npm run build --prefix packages/admin`; `npm run check --prefix packages/admin`; `npm test --prefix packages/admin` |
+| Matched pair | `python scripts/build-service-runtime.py --destination <pair-dir> --profile debug` after provisioned inputs/sealed assets |
+| Preflight | `python scripts/check-service-clients.py --runtime-dir <pair-dir> --files 16 --model --report <receipt.json>` |
+| Version agreement | `python scripts/release-version.py check --expected <chosen-version>` |
+| Native package | `python scripts/package-native.py --target <native-target> --runtime-dir <tested-pair-dir> --output artifacts/<fresh-output>` |
+| VSIX package | `python scripts/package-extension.py --channel stable --output artifacts/<fresh-output>` |
+| Repository | `pwsh -NoProfile -File scripts/check-repo.ps1`; `git diff --check` |
+
+Use persistent `artifacts/v190/p10-target` and Windows incremental on; preserve
+Cargo timings. Read [CONTRIBUTING](../../CONTRIBUTING.md) and
+[CI/build instructions](../ci-and-builds.md) for provisioning, vector-performance,
+signing and installed commands. Select real platform/features from live source.
+
+### Selected-Qwen harness anchors: inspect and adapt before use
+
+These private paths were inspected during planning; they are historical source
+anchors, not ready-to-run current packets. Root:
+`artifacts/advanced-split/models/selected-native-goal-driver-r1/`.
+
+| Operation | Existing anchor and required behavior |
+| --- | --- |
+| CAL chunks | `chunked-cal-r1/collector/prepare_packets.py`, then `run_controller.py --packet ... --packet-sha256 ... --decision ... --decision-sha256 ...`; child `capture_chunk.py` stays inside owned controller. |
+| CAL aggregation | `chunked-cal-r1/proof/aggregate_chunks.py`; bind protocol/controller/decision and all thirteen phase-execution/hash pairs; output original capture and closure. |
+| Independent certificate | `cal-completion-owned-r1/prepare_phase.py --phase certificate` and its owned `run_phase_reviewed.py`; producer `source/prepare_selected_cal_reference_certificates.py` pins capture/corpus/rubric/source manifest/task policy. |
+| Raw Context | `native-cal-owned-r1/prepare_raw_packet.py --model arbiter-context-qwen3-17b`, then the 4b model; `run_raw_reviewed.py` consumes fresh reviewed packet/hash/decision. Current selector: `inference_owner::context_action_tests::selected::selected_context_cal_complete_readout_raw_scores`. |
+| Generic native fit | `inference_owner::context_action_calibration_tests::selected::fit_selected_context_generic_read_calibration`; env `AIRK_CONTEXT_ACTION_FIT_INPUT`, `_INPUT_SHA256`, `_OUTPUT`, `AIRK_SELECTED_CONTEXT_PROFILES_SHA256`, `AIRK_SELECTED_CONTEXT_CORPUS_SHA256`. Terminal support needs the reviewed new native path. |
+| Composed | `artifacts/advanced-split/actual-composed-service-preparation-r1/run_composed.py <reviewed-plan-path> <fresh-output>`; consumes a pinned Rust execution plan and owned descendants. |
+| Selected A6 | Private `source/run_goal_condition.py --split confirmation --campaign-freeze <path> --campaign-freeze-sha256 <sha> --focus-profile <manifest>`, plus actual runtime/fixture/scope/request/rubric/assets/output pins and selected arm. Public `tools/retrieval-train/run_goal_condition.py` has legacy development/final flags and is not interchangeable. |
+| Native final promotion | `service_runtime::arbiter::final_distribution::tests::emit_final_selected_distribution_from_recorded_proofs`; env `AIRK_FINAL_DISTRIBUTION_INPUT`, `_INPUT_SHA256`, `_OUTPUT`; requires actual approved proofs/source maps/rights and all three profiles. |
+
+Do not reuse historical packet deadlines, fixture lifetimes, approvals, selected
+IDs or hashes. Check maintained tool availability under the logged-in user and
+write the full exact command in each new receipt. Rust emits native profiles,
+schema/semantic cases and publication projections; no Python protocol mirror.
+
+## 8. Coverage of both input documents
+
+| Input requirement | Implementing steps |
+| --- | --- |
+| knownissues 1, 2a: unqualified models/local-test bypass | 6–15; final-series refusal in 15–17 |
+| knownissues 2: full model acquisition/no backup | 6, 12, 15, 17; GitHub-only limitation retained by decision |
+| knownissues 3: missing publication capture | 15–17 |
+| knownissues 4, relaxations: larger limits and stale resource evidence | 2, 4, 7, 12–16; D06/D07 |
+| knownissues 5: R154 Answer timeout | 4, 7, 13 |
+| knownissues 6: prompt fit/task identity | 4, 7–8, 11–13 |
+| knownissues 7: failed/incomplete tests, stale comparison pair | 1, 3–4, 16–17 |
+| knownissues 8: unavailable platforms | 16–18, D01/D02 |
+| knownissues 9: Service/Arbiter UX | 5, 17–18 |
+| knownissues 10: rail/icons/grouping | 5, 17 |
+| knownissues 11: tokenless scope, roots, legacy code, harnesses, parity/fixtures | 2–3, 16 |
+| knownissues 12: shared-parent config refusal/manual fallback | 2–3, 5, 17; D04 |
+| knownissues replacement rules/operational notes | 1–2, 6, 15–18 |
+| weights-v2 Stage 0 | 3–4, 6–7 |
+| weights-v2 Stage 1 | 7–8 |
+| weights-v2 Stages 2/3 | 9–10, triggered branches in 12 |
+| weights-v2 Stages 4/5 | 11–13; D03/D05 |
+| weights-v2 Stage 6 | Early export probes in 9–11; exact artifact/resources in 12 |
+| weights-v2 Stages 7/8 | 13–18 |
+| weights-v2 research/benchmark provenance | Retained rationale in source plan; exact rights/source/split audit in 8 |
+| weights-v2 stopping, ownership, numeric gates | Sections 2, 5–7 and every step's exit |
+
+## 9. Planning validation and execution handoff
+
+This document records the user's seven decisions and the current implementation
+order. Source review, contract/gate checks and independent read-only reviews
+support the plan; historical test/model results were not rerun here. No model
+training, runtime implementation, installation or qualification is performed by
+this planning task.
+
+Planning validation: all relative Markdown links resolve; the new file's
+whitespace and git diff --check pass after final review. The repository-wide
+scripts/check-repo.ps1 check stops at the pre-existing AGENTS.md/CLAUDE.md byte
+mismatch; no later repository-wide check is claimed. The planning outcome is
+recorded in the existing execution ledger. Only this plan and that ledger entry
+are written by this task; both input documents and agent instruction files are
+preserved. No builds or runtime tests are appropriate to this documentation-only
+change. Do not convert planned checks into claimed passes.
+
+### Branch and agent-instruction handoff
+
+After planning, the user requested feat/arbiter-final from the current
+feat/advanced-split branch and an opening commit of all pending files. AGENTS.md
+and CLAUDE.md now contain identical mandatory execution-identity rules for
+Codex and Claude Code: use the verified logged-in user for shells, edits,
+children, temporary/cache/build outputs, delegated work and remote batches.
+An unverified or foreign identity blocks the operation before file creation;
+no sandbox-account, ACL/ownership or global Git-trust workaround is permitted.
+This handoff updates branch/instruction state without starting implementation.

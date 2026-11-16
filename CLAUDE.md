@@ -1,5 +1,53 @@
 # Working on AIRK
 
+## Mandatory execution identity (Codex and Claude Code)
+
+All work must run as the current logged-in human user on the execution host.
+Never use an agent-specific sandbox account, another human account, SYSTEM,
+root, a service account or alternate credentials. An elevated shell is allowed
+only when it retains the same logged-in user's identity.
+
+- Before the first shell or filesystem operation in a session, select the
+  execution mode that runs as the logged-in user. Verify the effective account
+  and stable identity (Windows SID or Unix UID) using a read-only command through
+  that mode, and compare it with the host's logged-in human account. A home
+  directory, environment variable, Git author or repository owner alone is not
+  identity proof. Never use the default sandbox account even for diagnostics.
+- On this Windows host, use the verified logged-in-user execution path
+  (Codex: require_escalated when the default shell uses a sandbox identity).
+  Reuse existing authorization; do not change sandbox configuration or grant
+  another account access as a workaround. Claude Code must likewise verify its
+  shell identity before working.
+- Apply the rule to every file and folder creation or mutation, including
+  direct file-edit tools, shell redirection, temporary files, caches, virtual
+  environments, downloads, generated fixtures, Cargo/npm/Python outputs, Git
+  operations, receipts, installer tests and artifacts. Use only tools whose
+  execution identity has been established; a verified shell does not establish
+  the identity of a separate tool process.
+- Child processes, background jobs, delegated agents, build/test runners,
+  installers and services started for tests must retain that identity. Give
+  delegated agents this rule explicitly. Never launch a process under another
+  account or use a system-wide service installation to bypass it.
+- Before a remote batch on Mac Neo, verify the SSH execution identity against
+  that host's logged-in human user. Do not assume the Windows username applies
+  remotely. Never use sudo, su or another SSH account to create outputs.
+- Keep output paths in the authorized workspace or the verified user's own
+  approved temporary/cache locations. Check resolved paths and the effective
+  output-directory access policy before writing. Never direct work into another
+  account's profile or agent-specific sandbox directories.
+- If the identity is wrong, unknown or cannot be preserved by a tool or child
+  process, stop that operation before it creates files. Use an already
+  authorized same-user execution path when available; otherwise report the
+  precise blocker and continue independent compliant work. Do not fall back to
+  the sandbox account, change ACLs/ownership, add global Git trust exceptions or
+  delete/recreate foreign-owned artifacts to obtain a pass.
+- Existing foreign-owned files are not permission to adopt or overwrite them.
+  Preserve them and report blocked inputs. Record verified identities and any
+  unavailable same-user operations in the execution ledger.
+
+These requirements apply equally to both agents and every campaign. Keep this
+section and the rest of AGENTS.md and CLAUDE.md byte-identical.
+
 AIRK is an independent Artifact Indexing and Retrieval Kernel. This file holds the standing rules for agents. Campaign-specific state lives in "Current work" at the end and in the documents it names. Keep AGENTS.md and CLAUDE.md byte-identical.
 
 Before changing behavior, read the affected source, its tests and the owning component's `CONTRACT.md`. Consult README.md, CONTRIBUTING.md and docs/architecture.md when relevant. Do not preload manuals or dated history.
@@ -205,54 +253,61 @@ At handoff distinguish findings, reproductions, hypotheses, passes and skipped/u
 
 ## Current work
 
-<!-- The only section expected to change between campaigns. Replace it when the campaign changes; do not accumulate history here. -->
-
-Active campaign: the advanced split.
-
-Delivery window: 14 November 2026 03:05 UTC through 15 November 2026 15:05 UTC,
-including the user's 12-hour extension on 15 November. Complete the whole plan on `feat/advanced-split`, with
-no PRs. This is an execution deadline, not permission to omit acceptance gates
-or report unfinished work as complete.
-
-Campaign execution rules:
-
-- Assign complete feature outcomes to parallel owners, including their tests,
-  documentation and recovery paths. Keep file ownership explicit; avoid repeated
-  investigation-only handoffs when implementation is authorized.
-- Record and review new contract/format decisions before dependent behavior.
-  Once that decision and its fixtures are frozen, consumer implementation does
-  not wait for a separate Git commit. Preserve contract-first ordering within
-  the eventual milestone commits; combine review and validation into coherent
-  feature batches instead of making every small step a commit gate.
-- Use cheap scoped diagnostics during implementation. Batch compatible checks
-  at integration points, freezing their actual consumed inputs. Reuse passed
-  evidence under its exact identity. Reserve full workspace, platform, installed
-  and published-artifact checks for reviewed integrated candidates.
-- Keep the critical path moving while another owner works. Review the whole
-  P0–P11 status at least every four hours, shift effort to unfinished acceptance
-  criteria. Under the user's 12-hour extension, operational targets are
-  15 November 07:05 UTC for integrated source and model inputs, 11:05 UTC for
-  qualification, and 14:05 UTC for local installer delivery, leaving one hour
-  for recovery. Public publication remains separately authorized only after
-  concrete reviewed artifacts and required release gates are ready.
-  Move to qualification as soon as a coherent candidate is ready. Do not fill
-  the window with optional cleanup or treat the deadline as a waiver of checks.
+Active campaign: Arbiter final planning and execution handoff.
 
 | Need | Source |
 |---|---|
-| Plan | docs/split/codex-plan.md |
-| Recorded decisions | docs/split/split-plan.md |
+| Ordered implementation plan and all seven user decisions | docs/arbiter/final-plan.md |
+| Known issues and historical candidate evidence | docs/arbiter/knownissues.md |
+| Weight-experiment rationale | docs/arbiter/weights-v2-plan.md |
 | Progress ledger | docs/simplify/one-process-ledger.md |
+| Existing split decisions and contracts | docs/split/split-plan.md, docs/split/contracts.md |
 | Standing simplification decisions | docs/simplify-plan.md |
 
-- Precedence: later user instructions, then recorded approvals, then the plan text. Planning-only restrictions and gates already satisfied in those documents no longer apply.
-- Current-version delivery: previous-version compatibility is not required. If indexed data cannot be upgraded, index replacement/regeneration is authorized. Preserve source files and unrelated user work; current-version contracts, authority, budgets, quality and release gates still apply. Historical receipts remain historical evidence, not compatibility obligations.
-- Resume from the working tree, the ledger and the relevant receipts.
-- The advanced split's approved local Arbiter work follows its own boundaries in the plan.
-- The user selected independent Arbiter Focus (Qwen3-Reranker-0.6B) plus Arbiter Context Compact/Large (Qwen3-1.7B/4B). This supersedes the original four-choice catalog and broad comparison condition; implement and qualify this path with the existing acceptance gates. Product Help must explain the stages, models, consent and measured requirements.
-- DiskANN is the selected final disk-backed vector engine. The lexical/SQLite bootstrap storage is not that implementation; do not treat it as one.
-- The installed-editor repair is superseded. Ordinary split work does not resume it.
-- Authorized milestone commits/pushes: `feat/advanced-split` to `origin` (`https://github.com/iokaio/airk.git`); no force-push and no pushes to other branches.
-- Isolated build target: `artifacts/v190/p10-target`.
-- Mac host: Mac Neo; run command batches through POSIX `sh` over SSH. Checkout `~/code/airk`; connection details in ignored `artifacts/v190/neo-connection.local.json`.
-- Private artifact subpaths include `artifacts/one-process/native-fixtures*/`, `artifacts/editor-qualification/`, and any fixture/state/cache/data roots created under a campaign's artifacts directory. Treat credentials, indexed source copies and live state there as private regardless of directory name. Build targets and verified installer/VSIX/native-package output directories are separate; being under artifacts does not authorize staging or publication.
+- Branch: feat/arbiter-final, created from feat/advanced-split. The user authorized
+  this branch and an opening DCO-signed commit containing the pending files and
+  agent-instruction cleanup. Commit locally; no push to this new branch, PR,
+  merge, publication or deployment is authorized.
+- Current task: prepare the agent instructions and opening commit. The final
+  plan is ready for a later implementation instruction; this task does not
+  start its training, builds, qualification or installation campaign.
+- The final plan supersedes the old advanced-split execution deadline and
+  campaign ordering. Preserve prior ledger entries as historical evidence.
+- For later authorized implementation, target 24 hours with a hard 48-hour
+  maximum from its recorded execution start. Use only this Windows machine and
+  Mac Neo. Deliver a Windows candidate first, then attempt all applicable
+  supported-platform gates and report genuine blockers. No paid/cloud compute
+  or cloud teachers.
+- Preserve the selected bundled MiniLM plus independent optional Focus
+  (Qwen3-Reranker-0.6B) and Context Compact/Large (Qwen3-1.7B/4B). Terminal
+  classes stay unavailable until their own evidence passes. Use suitable
+  existing human-reviewed labels; missing labels block only dependent
+  acceptance/promotion, while independent work continues.
+- The approved qualification target is a new default of 8192 shared input tokens
+  and 120 seconds, including all client timeouts, with a measured p95 limit of
+  120 seconds. Report actual component and end-to-end latency. Historical
+  2048-token/30-second evidence remains historical; Focus's graph remains
+  512 tokens per pair unless separately re-exported and qualified.
+- Automatic agent-config edits require a reviewed safe policy for the entire
+  file and recovery path; otherwise provide the complete canonical manual
+  entry. No account, ACL or retention-policy workaround.
+- Current-version index regeneration is authorized when upgrade cannot preserve
+  the current contract. Preserve source files and unrelated user work. DiskANN
+  remains the selected disk-backed vector engine. The superseded installed-editor
+  repair does not resume.
+- Resume from live source, the final plan, ledger and exact receipts. Keep
+  contract-first ordering, explicit parallel file ownership, a single Cargo
+  owner and primary review before expensive integrated runs. A failing model
+  or unavailable host does not stop independent product checks.
+- Isolated build target: artifacts/v190/p10-target. Reuse the warm Windows
+  target; do not routinely clean it or share it concurrently across checkouts.
+- Mac Neo: existing SSH setup, POSIX sh batches, checkout ~/code/airk;
+  connection details in ignored artifacts/v190/neo-connection.local.json.
+  Verify the host's logged-in user before any batch. Preserve evidence outside
+  its target and clean that target after each batch, including failures.
+- Private state includes temp/, .airk/, artifacts/one-process/native-fixtures*/,
+  artifacts/editor-qualification/, artifacts/advanced-split/models/weights-v2/,
+  artifacts/v190/final-plan/ and any fixture/state/cache/data roots under
+  campaign artifacts. Never stage or package private state, credentials,
+  indexed source copies or training examples. Verified distributable outputs
+  belong in separate fresh package directories.

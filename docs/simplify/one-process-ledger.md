@@ -4874,3 +4874,54 @@ The VSIX receipt says `dirty: true` only because another session created the unt
 matched pair, the raw example qualification, installed journeys, real Claude Code/Codex/VS Code
 connections (no token, roots fill), macOS/Linux. Follow-ups: known-issues §11.
 
+
+### 2026-11-15 — Consolidated Arbiter final execution plan
+
+Created [docs/arbiter/final-plan.md](../arbiter/final-plan.md) from the live
+knownissues and weights-v2 plans, preserving their pre-existing changes.
+The 18-step runbook includes dependency order, explicit owners, conditional
+experiments, recovery, acceptance gates, command anchors and source coverage.
+
+Recorded user answers: Windows candidate first, then all supported-platform
+gates with genuine blockers reported; this Windows machine and Mac Neo only,
+24-hour target and 48-hour maximum; existing suitable human-reviewed labels,
+blocking unsupported promotion when missing; automatic agent-config edits only
+under a reviewed whole-file/recovery safety policy, otherwise complete manual
+setup; terminal-class contract extension with each class unavailable until
+qualified; new default 8192 tokens/120 seconds including clients; new measured
+p95 qualification limit 120 seconds, reporting component/end-to-end latency.
+Public publication remains separately authorized on concrete verified artifacts.
+
+Resolved the .02 completion-gain discrepancy against the frozen maximum .02
+regression rule, preserved all-three catalog qualification, and separated
+independent product/platform checks from model-promotion blockers. Independent
+read-only reviews identified ordering corrections for data-before-gradient,
+criteria-before-scoring and private capture custody caps; these are incorporated.
+This task plans later execution; it does not start training or implementation.
+
+Validation: relative links and plan whitespace pass; git diff --check passes.
+scripts/check-repo.ps1 stops at the pre-existing AGENTS.md/CLAUDE.md mismatch;
+later repository checks remain unrun. No builds, model runs or runtime tests.
+Shell work used the verified logged-in identity after correcting the initial
+default sandbox-account observation; no ACL or Git trust setting was changed.
+
+
+### 2026-11-15 - Arbiter final branch and agent identity rules
+
+At the user's request, created feat/arbiter-final from feat/advanced-split for
+the opening commit of all pending planning/issue/ledger files. Replaced the
+expired campaign instructions with the final-plan handoff and synchronized
+AGENTS.md and CLAUDE.md byte-for-byte. Both agents must verify the current
+logged-in human identity before filesystem work and preserve it through child,
+delegated, remote, build/test, cache and temporary-file operations. Unknown or
+foreign identities block the operation; no sandbox-account or ACL workaround.
+Updated the final plan's branch authority; no push or implementation is started.
+
+Execution identity verified as tyai\tdotn. Validation: the full
+scripts/check-repo.ps1 check passes for 3426 public files (including identical
+AGENTS/CLAUDE hashes, Markdown links, self-spawn roster and generated I2/I3
+checks); git diff --check passes. No native rebuild is needed. The current
+README/index/Marketplace and release text were reviewed; their older 1.9.0
+candidate wording predates this documentation-only branch setup and remains
+scheduled for the final plan's documentation reconciliation. No version bump
+or product-behavior claim is part of this opening commit.

@@ -386,6 +386,101 @@ problem, where Explorer snippets carried a `<connection-id>` placeholder.
   earlier `test-r2`/`test-r5` runs; a commit between those runs and
   `98c368f4` broke them). Not investigated.
 
+## 12. Explorer Agents tab: Connect is refused and there is no manual fallback
+
+Reported by the user on 1.8.206 (Explorer > Agents, repository on `D:`).
+History: before U110, the Codex and Claude Code entries copied from the Agents
+tab had a literal `<connection-id>` placeholder, so `/mcp` returned 401
+`credential_required`. U110 fixed that. On 1.8.206, **Connect** now fails
+every time for this repository with:
+
+> Automatic config editing was refused; apply the edit manually: parent grants
+> foreign mutation
+
+Emptying or deleting `.mcp.json` does not help, because the check is on the
+folder, not the file.
+
+**Cause.** `airkctl` reviews the target before an atomic replace with a
+retained recovery copy
+(`crates/airkctl/src/agents/config/retention.rs`, `review`). It calls
+`airk_ipc::endpoint::require_protected_parent_handle` on the containing folder
+(`crates/airk-ipc/src/endpoint/handle_policy.rs`). That check refuses if any
+other account has write access to the folder. `D:\code\Github\airk` inherits
+Modify for `Authenticated Users`, which is the Windows default on a secondary
+drive. It also grants Modify to `CodexSandboxUsers` and to two Codex sandbox
+SIDs. So almost every repository outside the user profile is refused. This is
+the same failure behind the roughly 26 `airkctl` `agents::config::*` test
+failures listed above.
+
+**The Explorer leaves the user stuck.** The refusal is shown as raw text.
+Nothing on the page shows what to edit by hand:
+
+- **Copy** copies only the endpoint URL
+  (`packages/vscode/src/explorerWebview/agents.tsx`, the endpoint card). It
+  does not copy a config entry.
+- The ready-to-paste entries exist only on AIRK Admin > Agents
+  (`packages/admin/src/agents.tsx`, `ManualCard`). The Explorer mentions them
+  only in small print inside the collapsed **Details** section.
+- "parent grants foreign mutation" is never explained, and the target file is
+  never named.
+
+The workaround used on 1.8.206 was to hand-write the entry. For Claude Code,
+`.mcp.json` gets the URL and the `X-AIRK-Response-Mode` header. For Codex,
+`.codex\config.toml` gets `[mcp_servers.airk]` with `url` and
+`[mcp_servers.airk.http_headers]`. The old token and helper fields are removed.
+
+**Proposed fix (1.8.207):**
+
+1. **Native writer: no hard refusal for credential-free entries.** Since U110,
+   AIRK entries hold no secret, only a URL and a header. When the parent folder
+   grants write access to other accounts, the writer would still write the
+   entry, with these safeguards:
+   - It keeps the same-parent identity, basename and size checks.
+   - It still preserves the user's other servers.
+   - It reports a typed warning, for example
+     `recovery_copy_unprotected`, that names the folder and the
+     principals that have write access.
+
+   A hard refusal stays in place where it is still needed: a legacy entry that
+   carries a credential, or a target that is not a regular file. This changes
+   the agent-config writer contract (I2 / `airkctl` `src/contract/CONTRACT.md`).
+   It needs a recorded decision and updated tests. The `agents::config::*`
+   failures should then pass without any assertion being weakened.
+2. **One canonical manual entry, from Rust.** `airkctl agents connect` (and
+   the `agents.read` / `agents.connect` views) would return a `manual` object
+   for the selected agent and folder with three fields:
+   - `file`: `.mcp.json`, `.codex\config.toml` or `.vscode\mcp.json`;
+   - `format`: `json` or `toml`;
+   - `text`: the exact entry, filled in with the live endpoint URL.
+
+   AIRK Admin's `claudeJson`/`codexToml` builders would render this text
+   instead of building it in TypeScript. Today they are handwritten mirrors of
+   the writer, which the repository rules prohibit.
+3. **Explorer "Set up manually" section** under **Connect**, always available.
+   It shows the target file path, the entry for the selected agent, and a
+   **Copy** button.
+4. **Refusals in plain language.** When **Connect** is refused, the Explorer
+   opens that section and replaces the raw error with a plain-language message,
+   for example: "AIRK can't safely edit files in `D:\…` because other accounts
+   can change files there. Paste this entry into `D:\…\.mcp.json` instead." The
+   raw error stays available under **Details**. Every refusal from
+   `retention.rs` needs a short message like this. The writer would return a
+   typed refusal code instead of one prefixed string, so the Explorer and Admin
+   don't have to parse message text.
+5. **Endpoint port changes.** The manual entry carries the current port. Next
+   to it, the section says that if the service has to pick a new port, the
+   entry must be updated. It points to **Copy** or `airkctl agents endpoint`.
+
+Checks:
+
+- Rust: scoped `airkctl` dev-check and the `agents::config::*` regressions,
+  run in a folder that grants `Authenticated Users` Modify.
+- Explorer and Admin: typecheck and behaviour tests.
+- Parity: the CLI, Explorer and Admin show the same manual entry for each
+  agent.
+
+Not addressed in this candidate.
+
 ## Operational notes
 
 - `AGENTS.md` and `CLAUDE.md` intentionally differ: `AGENTS.md` carries a rule
