@@ -4808,3 +4808,30 @@ refused (`installation_in_progress`). The fixed installer cannot self-heal such 
 
 Runtime pair: `airk` `c597a11f…d9a4`, `airkctl` `31794b33…9446`. Not yet run: installing it (fresh
 install after the reset), the installed service start, upgrade/uninstall journeys.
+
+### 2026-11-15 — Self-healing setup and 1.8.204 candidate
+
+After the manual reset, a fresh 1.8.203 install hit two more hand-edit-only states: unowned AIRK
+data/state/logs folders ("not empty and is not this installation's") and an orphaned Task Scheduler
+login entry (`airk-service-9bca0e31…`, former install id `fea7aa5f…`; exported to
+`%LOCALAPPDATA%\airk-manual-reset-20261115\` before removal). The user decided setup must resolve these
+itself (split-plan "self-healing setup"). `da5ff042`: abandoned-owner takeover (failed or expired,
+under the lock, archived to `setup-history/superseded/`), orphaned split login replacement (exact
+`airk` image + `service-login` shape only; Windows and Linux; parallel implementer, primary-reviewed),
+and set-aside of recognizably AIRK unowned folders to `<folder>.previous-<UTC>`, disclosed on the
+review page. No persisted format change.
+
+Validation: Clippy `-p airk-service -p airk-installer` with and without `local-inference` (target
+`artifacts/v190/p10-target`); setup_role + service_manager Nextest 73 run, 70 pass, 3 fail — the two
+known setup failures and `service_manager::direct_tests::split_mac_job_requires_exact_static_role_and_placed_bundle`,
+which fails identically without the change (pre-existing). 8 new/affected regressions pass. Extension
+1121/1123 (2 skipped); Admin assets up to date. Not run: an installed journey through any of the three
+recovery paths (unit-level only); the PowerShell action enumeration was checked against a fake
+scheduler, not a real registered task.
+
+**1.8.204 candidate** (commit `e6f0a72b`, clean; 939 s):
+
+| File | SHA-256 | Bytes | Signing |
+|---|---|---|---|
+| `artifacts/local-service-installer/20261115-172022/airk-service-1.8.204-x86_64-pc-windows-msvc-installer.exe` | `2e7c60e67317fbba1054dc2b1c5c07a97119f883d885d4a1da92850f828d4da0` | 75,414,352 | Authenticode valid, Ioka LLC |
+| `artifacts/local-vsix/20261115-173533/vsix/publish/airk-1.8.204.vsix` | `daa348001fba5aa65779a1beef8d279caccdb4af90b6b4718c1b1ed52cb23a4e` | 1,700,301 | none |
