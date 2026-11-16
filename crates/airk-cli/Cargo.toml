@@ -19,6 +19,9 @@ parser-training = []
 name = "airk"
 path = "src/main.rs"
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [dependencies]
 airk-service.workspace = true
 airk-https.workspace = true

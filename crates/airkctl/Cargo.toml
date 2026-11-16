@@ -14,6 +14,9 @@ test-support = []
 
 # Split plan U27: airkctl depends only on airk-core, airk-process and airk-ipc.
 # The edge gate (scripts/dev/boundary-exceptions.json) enforces the list.
+[build-dependencies]
+embed-resource.workspace = true
+
 [dependencies]
 airk-core.workspace = true
 airk-ipc.workspace = true

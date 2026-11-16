@@ -58,6 +58,8 @@ rusqlite = { git = "https://github.com/rusqlite/rusqlite", rev = "2a71e35d94b2a0
 scip = "=0.10.0"
 protobuf = "=3.7.2"
 url = "2"
+# Build-time only: Windows VERSIONINFO for the shipped executables (airk, airkctl).
+embed-resource = "=3.0.12"
 sha2 = "0.10"
 lz4_flex = { version = "=0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 getrandom = "=0.3.4"
