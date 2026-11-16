@@ -332,6 +332,32 @@ Reported by the user on 1.8.205 (Explorer webview, `packages/vscode/src/explorer
 
 Not addressed in this candidate.
 
+## 11. Explorer Agents page does not look or behave like part of the Explorer
+
+Reported by the user on 1.8.205 (Explorer > Agents). The page reads as an
+embedded foreign panel rather than part of the Explorer:
+
+- It renders as a white block with light grey cards inside the dark themed
+  Explorer, with different fonts, spacing and button styles from the rest of
+  the UI.
+- It opens with implementation details ("Native management · 69cc6133",
+  "Close management session") instead of what the user came to do: connect an
+  agent.
+- The first card is a wall of explanatory text about the MCP endpoint, port
+  changes, TLS validation, cached trust and client certificate lists. The
+  endpoint URL is greyed out and looks disabled, and the issuer SHA-256 is
+  barely legible.
+- "Connect an agent automatically", the task most users want, is below the
+  fold, after the endpoint and certificate details.
+- Raw diagnostics ("Complete endpoint result (JSON)", "Complete trust result
+  (JSON)") sit in the main flow instead of a details/troubleshooting area.
+
+Needs the same redesign as section 9: themed with the Explorer's variables,
+the connect-an-agent task first (pick an agent, connect, see its status), a
+plain one-line status ("Ready: agents can connect" with the URL and Copy),
+and certificate/trust and JSON details moved into a collapsed
+"Troubleshooting" section. Not addressed in this candidate.
+
 ## Operational notes
 
 - `AGENTS.md` and `CLAUDE.md` intentionally differ: `AGENTS.md` carries a rule
