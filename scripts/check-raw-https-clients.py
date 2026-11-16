@@ -44,11 +44,11 @@ NONREAD_MCP_NAMES = {"draft_search", "draft_strategy", "draft_plan", "suggest_vi
 # Every case names the fixture index (U110); the escape stays refused inside it.
 SCOPE_CASE = ("search", {"query": "rawexamplemarker", "mode": "lexical", "response_mode": "full"})
 CASES = (
-    ("query_scope", {"view": "projects", "response_mode": "full"}, False),
+    ("query_scope", {"view": "projects"}, False),
     ("list_files", {"response_mode": "full"}, False),
     ("search", {"query": "rawexamplemarker", "mode": "lexical", "response_mode": "full"}, False),
     ("read_file", {"path": "fixture.py", "start_line": 1, "end_line": 2, "response_mode": "full"}, False),
-    ("read_file", {"path": "../other/secret.py", "response_mode": "full"}, True),
+    ("read_file", {"path": "../other/secret.py", "start_line": 1, "end_line": 2, "response_mode": "full"}, True),
 )
 
 
@@ -88,12 +88,115 @@ def invoke(command, flags, control, tool, arguments, environment, *, index=None,
             "body": body, "stderr": result.stderr, "dispatches": 1, "retries": 0}
 
 
-def verify_result(observed, baseline, negative=False):
-    expected_exit = 1 if negative else 0
+def verify_result(observed, baseline, negative=False, *, expected_exit=None):
+    expected_exit = (1 if negative else 0) if expected_exit is None else expected_exit
     if observed["exit_code"] != expected_exit:
         raise AssertionError("Example exit status disagrees with the native result")
     if transport.parity_envelope(observed["body"]) != transport.parity_envelope(baseline):
         raise AssertionError("Complete example/native result parity differs")
+
+
+
+def verify_case_arguments(schema, arguments):
+    """Check selected syntax against the actual native catalog, not a Python schema mirror."""
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise AssertionError("Selected native input schema has no properties")
+    if set(schema.get("required", [])) - set(arguments):
+        raise AssertionError("Selected case omits required native arguments")
+    if schema.get("additionalProperties") is False and set(arguments) - set(properties):
+        raise AssertionError("Selected case supplies unsupported native arguments")
+
+
+def native_body(value, *, require_envelope=False):
+    if not isinstance(value, dict):
+        raise AssertionError("Native result is not an object")
+    if not isinstance(value.get("content"), list):
+        if require_envelope:
+            raise AssertionError("Native envelope has no complete text content")
+        return value
+    body = clients.tool_value(value)
+    if "structuredContent" in value and transport.parity_value(body) != transport.parity_value(value["structuredContent"]):
+        raise AssertionError("Complete native text and structured result copies differ")
+    return body
+
+
+def objects(value):
+    if isinstance(value, dict):
+        yield value
+        for item in value.values():
+            yield from objects(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from objects(item)
+
+
+def path_refusal(body):
+    error = body.get("error")
+    if not isinstance(error, dict) or error.get("retryable") is not False:
+        raise AssertionError("Scope escape lacks a nonretryable native path refusal")
+    scoped = error.get("code") == "scoped_read_unavailable"
+    invalid_path = error.get("code") == "read_failed" and error.get("message") == "invalid indexed source path"
+    if not (scoped or invalid_path):
+        raise AssertionError("Scope escape failed for another reason instead of the native path fence")
+    if any(isinstance(row.get(key), list) and row[key] for row in objects(body)
+           for key in ("hits", "files", "records", "ranking")):
+        raise AssertionError("Scope escape returned evidence")
+
+
+def verify_case_reply(tool, arguments, negative, envelope, index, secret):
+    """Inspect real success/member failure without replacing the complete parity result."""
+    outer_error = envelope.get("isError", False)
+    if type(outer_error) is not bool:
+        raise AssertionError("Native isError is not boolean")
+    body = native_body(envelope, require_envelope=True)
+    combined = body.get("schema") == "airk.combined-read/1"
+    if combined:
+        members = body.get("members")
+        if not isinstance(members, list) or len(members) != 1 or members[0].get("index_id") != index:
+            raise AssertionError("Selected case changed the exact fixture member")
+        if body.get("partial") is not negative or body.get("truncated") is not False:
+            raise AssertionError("Unexpected native member readiness or truncation")
+        member = members[0]
+        if member.get("is_error") is not negative or member.get("outcome") != ("failed" if negative else "complete"):
+            raise AssertionError("Unexpected native member readiness or failure")
+        leaves = [native_body(member["result"])]
+        aggregate = body.get("error")
+        if negative:
+            if body.get("ranking") != []:
+                raise AssertionError("Scope escape returned ranked evidence")
+            if aggregate is not None and aggregate != {"code":"member_unavailable","retryable":False,"failed_members":[index]}:
+                raise AssertionError("Unexpected aggregate refusal for scope escape")
+            if outer_error != (aggregate is not None):
+                raise AssertionError("Outer and aggregate native refusal disagree")
+    else:
+        leaves = [body]
+        if outer_error != negative:
+            raise AssertionError("Native positive/negative fixture assumption differs")
+    if secret in json.dumps(envelope, ensure_ascii=False):
+        raise AssertionError("Outside-source bytes escaped the fixture scope")
+    if negative:
+        if tool != "read_file" or not arguments.get("path", "").startswith("../"):
+            raise AssertionError("Unknown negative fixture intent")
+        for leaf in leaves:
+            path_refusal(leaf)
+    else:
+        if outer_error or any(leaf.get("error") is not None for leaf in leaves):
+            raise AssertionError("Positive native fixture read failed")
+        if tool == "query_scope":
+            if any(leaf.get("schema") != "airk.query-scope/1" for leaf in leaves):
+                raise AssertionError("Native query_scope body differs")
+        elif tool == "list_files":
+            if not any(row.get("path") == "fixture.py" or (isinstance(row.get("files"), list) and "fixture.py" in row["files"])
+                       for leaf in leaves for row in objects(leaf)):
+                raise AssertionError("Fixture inventory is not ready")
+        else:
+            hits = [row for leaf in leaves for row in objects(leaf)
+                    if isinstance(row.get("citation"), dict) and row["citation"].get("path") == "fixture.py"
+                    and isinstance(row.get("text"), str)]
+            if not any("rawexamplemarker" in row["text"] and (tool != "read_file" or "return 42" in row["text"]) for row in hits):
+                raise AssertionError("Fixture source evidence is not ready")
+    return int(outer_error)
 
 
 def catalog_tools(catalog):
@@ -123,6 +226,13 @@ def verify_catalog(catalog, mcp_catalog):
     return raw
 
 
+
+def verify_http_refusal(status, body):
+    if (status != 404 or not isinstance(body, dict) or body.get("schema") != "airk.local-api-error/1"
+            or not isinstance(body.get("error"), dict) or body["error"].get("code") != "read_tool_not_found"):
+        raise AssertionError("Unknown/mutation route did not return the native read_tool_not_found refusal")
+
+
 def verify_relocated(previous, current):
     """The endpoint moved and restarted under the same installation authority and CA."""
     before, after = previous, current
@@ -146,7 +256,7 @@ def qualify(runtime, report):
     selected = commands()  # Fail before native setup if a client is missing.
     inputs = harness_identity()
     receipt = {"schema": "airk-raw-example-qualification/1", "passed": False,
-               "selected_clients": list(selected), "selected_cases": list(CASES), "observations": [], "endpoints": [],
+               "selected_clients": list(selected), "selected_cases": list(CASES), "observations": [], "endpoints": [], "attempts": [],
                "routes": ["GET /api/v1/tools", "POST /api/v1/tools/{name}"],
                "separate_required_coverage": ["GET /mcp session SSE native transport regression"],
                "normalization": "scripts/http_fixture.py parity_envelope: documented transport identities/timing only",
@@ -155,6 +265,16 @@ def qualify(runtime, report):
     if report.exists():
         raise FileExistsError("Qualification report already exists")
     fixture = None
+    source_file = outside_file = None
+    original = outside_original = None
+    def source_observation():
+        rows = {}
+        for label, path, before in (("indexed", source_file, original), ("outside", outside_file, outside_original)):
+            if path is not None and before is not None:
+                after = path.read_bytes()
+                rows[label] = {"before_sha256":hashlib.sha256(before).hexdigest(),
+                               "after_sha256":hashlib.sha256(after).hexdigest(), "unchanged":after == before}
+        return rows
     def save():
         report.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     try:
@@ -166,6 +286,12 @@ def qualify(runtime, report):
             source_file = source / "fixture.py"
             source_file.write_text("def rawexamplemarker():\n    return 42\n", encoding="utf-8")
             original = source_file.read_bytes()
+            outside = owner / "other"
+            outside.mkdir()
+            outside_file = outside / "secret.py"
+            secret = "outside_raw_https_scope_sentinel"
+            outside_file.write_text(secret + "\n", encoding="utf-8")
+            outside_original = outside_file.read_bytes()
             fixture = clients.Fixture(runtime, owner)
             with fixture:
                 if not fixture.single_image:
@@ -193,38 +319,79 @@ def qualify(runtime, report):
                         network.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
                         mcp_catalog = {tool["name"]: tool for tool in network.receive(2)["result"]["tools"]}
                         catalog = network.api_catalog()
+                        catalog_attempt = {"phase":phase,"raw":catalog,"mcp":mcp_catalog,
+                                           "expected_read_names":sorted(READ_NAMES),"examples":{}}
+                        receipt.setdefault("catalog_attempts", []).append(catalog_attempt)
+                        save()
                         schemas = verify_catalog(catalog, mcp_catalog)
                         for name, (command, flags) in selected.items():
                             observed = invoke(command, flags, fixture.control, None, None, fixture.environment)
+                            catalog_attempt["examples"][name] = observed
+                            save()
                             verify_result(observed, catalog)
                             receipt["observations"].append({"phase": phase, "client": name, "kind": "catalog", **observed})
                             save()
                         for ordinal, (tool, arguments, negative) in enumerate(CASES, 10):
+                            wire = transport.scoped_arguments(tool, arguments, {"index_ids":[index]})
+                            request = {"jsonrpc":"2.0","id":ordinal,"method":"tools/call",
+                                       "params":{"name":tool,"arguments":wire}}
+                            attempt = {"phase":phase,"ordinal":ordinal,"tool":tool,"arguments":arguments,
+                                       "expected":{"intent":"scope_escape" if negative else "positive", "index_id":index},
+                                       "requests":{"raw":{"method":"POST","path":"/api/v1/tools/"+tool,"body":wire},
+                                                   "mcp":request,"cli":{"tool":tool,"arguments":arguments,"index":index}},
+                                       "examples":{}}
+                            receipt["attempts"].append(attempt)
+                            save()  # The exact original request/intent survives even dispatch failure.
                             if tool not in schemas:
                                 raise AssertionError("Selected read is absent from the advertised catalog")
+                            attempt["native_input_schema"] = schemas[tool]["inputSchema"]
+                            save()
+                            verify_case_arguments(attempt["native_input_schema"], wire)
                             baseline = network.api_read(tool, arguments)
-                            if baseline.get("isError", False) != negative:
-                                raise AssertionError("Native positive/negative fixture assumption differs")
-                            network.send({"jsonrpc": "2.0", "id": ordinal, "method": "tools/call", "params": {"name": tool, "arguments": arguments}})
+                            attempt["raw"] = baseline
+                            save()  # Full original native baseline precedes every assumption assertion.
+                            expected_exit = verify_case_reply(tool, arguments, negative, baseline, index, secret)
+                            attempt["expected"]["exit_code"] = expected_exit
+                            network.send(request)
                             mcp = network.receive(ordinal)["result"]
-                            _, cli_envelope = fixture.open_call("raw-example", tool, arguments)
+                            attempt["mcp"] = mcp
+                            save()
+                            cli_code, cli_envelope = fixture.open_call("raw-example", tool, arguments)
+                            attempt["cli"] = {"exit_code":cli_code,"body":cli_envelope}
+                            save()
+                            if cli_code != expected_exit:
+                                raise AssertionError("CLI exit disagrees with the verified native result")
                             if not (transport.parity_envelope(baseline) == transport.parity_envelope(mcp) == transport.parity_envelope(cli_envelope)):
                                 raise AssertionError("Complete raw/MCP/CLI results differ")
                             receipt["observations"].append({"phase": phase, "kind": "canonical_parity", "tool": tool, "arguments": arguments,
                                                             "raw": baseline, "mcp": mcp, "cli": cli_envelope})
                             for name, (command, flags) in selected.items():
                                 observed = invoke(command, flags, fixture.control, tool, arguments, fixture.environment, index=index)
-                                verify_result(observed, baseline, negative)
+                                attempt["examples"][name] = observed
+                                save()
+                                verify_result(observed, baseline, negative, expected_exit=expected_exit)
                                 receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": arguments, **observed})
                                 save()
                         # U110: a workspace with no stored default is refused scope_required on every surface.
                         tool, arguments = SCOPE_CASE
                         workspace = str(owner)
+                        scope_attempt = {"phase":phase,"tool":tool,"arguments":arguments,"workspace":workspace,
+                                         "expected":"scope_required","examples":{}}
+                        receipt.setdefault("scope_attempts", []).append(scope_attempt)
+                        save()
                         baseline = network.api_read(tool, {**arguments, "workspace": workspace})
+                        scope_attempt["raw"] = baseline
+                        save()
                         network.send({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
                                       "params": {"name": tool, "arguments": {**arguments, "workspace": workspace}}})
                         mcp = network.receive(30)["result"]
-                        _, cli_envelope = fixture.open_call("raw-example", tool, arguments, workspace=workspace)
+                        scope_attempt["mcp"] = mcp
+                        save()
+                        cli_code, cli_envelope = fixture.open_call("raw-example", tool, arguments, workspace=workspace)
+                        scope_attempt["cli"] = {"exit_code":cli_code,"body":cli_envelope}
+                        save()
+                        if cli_code != 1:
+                            raise AssertionError("CLI scope_required exit differs")
                         for envelope in (baseline, mcp, cli_envelope):
                             clients.scope_refusal(envelope)
                         if not (transport.parity_envelope(baseline) == transport.parity_envelope(mcp) == transport.parity_envelope(cli_envelope)):
@@ -233,21 +400,31 @@ def qualify(runtime, report):
                                                         "arguments": arguments, "raw": baseline, "mcp": mcp, "cli": cli_envelope})
                         for name, (command, flags) in selected.items():
                             observed = invoke(command, flags, fixture.control, tool, arguments, fixture.environment, workspace=workspace)
+                            scope_attempt["examples"][name] = observed
+                            save()
                             verify_result(observed, baseline, True)
                             receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": arguments,
                                                             "workspace": workspace, **observed})
                             save()
                         for tool in ("missing_fixture_tool", "index"):
+                            http_attempt = {"phase":phase,"tool":tool,"arguments":{},"expected":{"status":404,"schema":"airk.local-api-error/1","code":"read_tool_not_found"},"examples":{}}
+                            receipt.setdefault("http_attempts", []).append(http_attempt)
+                            save()
                             try:
                                 network.api_read(tool, {})
                             except transport.HttpRefused as refused:
                                 baseline = refused.body
+                                http_attempt["evidence"] = refused.evidence()
+                                save()
+                                verify_http_refusal(refused.status, baseline)
                                 receipt["observations"].append({"phase": phase, "kind": "http_refusal", "tool": tool,
                                                                 "evidence": refused.evidence()})
                             else:
                                 raise AssertionError("Unknown or mutation tool was admitted by the raw API")
                             for name, (command, flags) in selected.items():
                                 observed = invoke(command, flags, fixture.control, tool, {}, fixture.environment, index=index)
+                                http_attempt["examples"][name] = observed
+                                save()
                                 verify_result(observed, baseline, True)
                                 receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": {}, **observed})
                                 save()
@@ -281,9 +458,11 @@ def qualify(runtime, report):
                             else:
                                 peer.close()
                                 raise AssertionError("Native relocation contacted the foreign endpoint")
-                if source_file.read_bytes() != original:
+                receipt["source_observations"] = source_observation()
+                if not all(row["unchanged"] for row in receipt["source_observations"].values()):
                     raise AssertionError("Raw client fixture source changed")
                 receipt["source_preserved"] = True
+            receipt["native_stop"] = fixture.managed_stop
             receipt["native_stop_complete"] = fixture.managed_stop is not None
             receipt["selected_observation_count"] = len(receipt["observations"])
             # Per phase: catalogs, each case, the scope_required refusal and two HTTP refusals.
@@ -299,7 +478,13 @@ def qualify(runtime, report):
         if isinstance(error, transport.HttpResponseError):
             receipt["failure_evidence"] = error.evidence()
         receipt["failure_message"] = str(error)[:4096]
+        receipt["native_stop"] = fixture.managed_stop if fixture is not None else None
         receipt["native_stop_complete"] = fixture is not None and fixture.managed_stop is not None
+        try:
+            receipt["source_observations"] = source_observation()
+            receipt["source_preserved"] = bool(receipt["source_observations"]) and all(row["unchanged"] for row in receipt["source_observations"].values())
+        except OSError as source_error:
+            receipt["source_observation_error"] = {"type":type(source_error).__name__,"message":str(source_error)}
         raise
     finally:
         save()

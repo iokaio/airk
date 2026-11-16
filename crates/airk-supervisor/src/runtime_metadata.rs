@@ -6,6 +6,9 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Read, path::Path, sync::OnceLock};
 mod arbiter;
+#[cfg(test)]
+mod build_tests;
+pub(crate) mod split_build;
 
 static PROCESS: OnceLock<RuntimeProcess> = OnceLock::new();
 static PROCESS_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -54,6 +57,51 @@ struct Source {
     files: u64,
 }
 
+// This is a path-free source observation, not a C7 release qualification.
+fn validate_split_build(
+    root: &Path,
+    main: &Path,
+    executable: &str,
+    inventory: &Inventory,
+    receipt: &split_build::Receipt,
+) -> Result<()> {
+    let declared = &receipt.runtime;
+    declared.validate_target(
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )?;
+    let (_, _, actual) =
+        airk_host::runtime_pair::read_installed_pair(main, env!("CARGO_PKG_VERSION"))?;
+    ensure!(
+        actual.split.as_ref() == Some(declared),
+        "build receipt pair differs from running payload"
+    );
+    ensure!(
+        declared.airk_sha256.to_string() == executable,
+        "split build service image differs"
+    );
+    let metadata = bounded(&root.join("airk-runtime.json"), 4096)?;
+    let metadata_hash = format!("{:x}", Sha256::digest(&metadata));
+    ensure!(
+        inventory.files.get("airk-runtime.json") == Some(&metadata_hash),
+        "split pair metadata differs from runtime inventory"
+    );
+    let cli_name = declared.cli_relative_path()?;
+    let cli_hash = declared.airkctl_sha256.to_string();
+    ensure!(
+        inventory.files.get(cli_name) == Some(&cli_hash),
+        "split CLI differs from runtime inventory"
+    );
+    let cli = root.join(cli_name);
+    airk_host::install_files::safe_file(&cli)?;
+    ensure!(
+        airk_host::runtime_pair::digest_file(&cli)? == cli_hash,
+        "split build CLI image differs"
+    );
+    Ok(())
+}
+
 fn build(
     main: &Path,
     executable: &str,
@@ -85,19 +133,27 @@ fn build(
         "build receipt differs from runtime inventory"
     );
     let receipt: Receipt = serde_json::from_slice(&receipt_bytes)?;
-    ensure!(
-        receipt.schema == 1 && receipt.profile.len() <= 32 && receipt.rustc.len() <= 2048,
-        "invalid build receipt"
-    );
-    Ok((
-        payload,
-        RuntimeBuild {
-            source_sha256: receipt.source.sha256,
-            source_files: receipt.source.files,
-            profile: receipt.profile,
-            rustc: receipt.rustc,
-        },
-    ))
+    let observed = match receipt.schema {
+        1 => {
+            ensure!(
+                receipt.profile.len() <= 32 && receipt.rustc.len() <= 2048,
+                "invalid build receipt"
+            );
+            RuntimeBuild {
+                source_sha256: receipt.source.sha256,
+                source_files: receipt.source.files,
+                profile: receipt.profile,
+                rustc: receipt.rustc,
+            }
+        }
+        2 => {
+            let receipt = split_build::decode(&receipt_bytes)?;
+            validate_split_build(root, main, executable, &inventory, &receipt)?;
+            receipt.observation()
+        }
+        _ => anyhow::bail!("invalid build receipt"),
+    };
+    Ok((payload, observed))
 }
 
 pub fn process() -> RuntimeProcess {

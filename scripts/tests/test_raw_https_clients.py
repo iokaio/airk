@@ -102,7 +102,10 @@ class RawHttpsClientContracts(unittest.TestCase):
 
     def test_selected_cases_include_full_reads_and_scope_escape(self):
         self.assertGreater(len(CAMPAIGN.CASES), 0)
-        self.assertTrue(all(arguments["response_mode"] == "full" for _, arguments, _ in CAMPAIGN.CASES))
+        self.assertEqual(CAMPAIGN.CASES[0], ("query_scope", {"view":"projects"}, False))
+        self.assertTrue(all(arguments["response_mode"] == "full" for tool, arguments, _ in CAMPAIGN.CASES if tool != "query_scope"))
+        self.assertTrue(all(arguments.get("start_line") == 1 and arguments.get("end_line") == 2
+                            for tool, arguments, _ in CAMPAIGN.CASES if tool == "read_file"))
         self.assertTrue(any(tool == "read_file" and negative and arguments.get("path", "").startswith("../")
                             for tool, arguments, negative in CAMPAIGN.CASES))
         tool, arguments = CAMPAIGN.SCOPE_CASE
@@ -141,12 +144,32 @@ class RawHttpsClientContracts(unittest.TestCase):
             if arguments.get("index_ids") != ["idx_fixture"]:
                 raise AssertionError("read without the fixture scope: " + json.dumps(arguments))
             arguments = {key: value for key, value in arguments.items() if key != "index_ids"}
-            return {"content": [], "structuredContent": {"tool": tool, "arguments": arguments,
-                                                         "future": {"retained": True}},
-                    "isError": arguments.get("path", "").startswith("../")}
+            negative = arguments.get("path", "").startswith("../")
+            if negative:
+                body = {"error":{"code":"scoped_read_unavailable","retryable":False}}
+            elif tool == "query_scope":
+                body = {"schema":"airk.query-scope/1","projects":[]}
+            elif tool == "list_files":
+                body = {"files":[{"path":"fixture.py"}]}
+            else:
+                body = {"hits":[{"citation":{"path":"fixture.py"},"text":"def rawexamplemarker():\n    return 42\n"}]}
+            body.update({"tool":tool,"arguments":arguments,"future":{"retained":True}})
+            return {"content":[{"type":"text","text":json.dumps(body)}],"structuredContent":body,"isError":negative}
 
+        def schema(tool):
+            props = {"index_ids":{}}
+            required = []
+            if tool == "query_scope":
+                props["view"] = {}; required = ["view"]
+            else:
+                props["response_mode"] = {}
+                if tool == "read_file":
+                    props.update({key:{} for key in ("path","start_line","end_line")}); required = ["path","start_line","end_line"]
+                elif tool == "search":
+                    props.update({"query":{},"mode":{}}); required = ["query"]
+            return {"type":"object","properties":props,"required":required,"additionalProperties":False}
         catalog = {"schema": "airk.local-api/1", "contract_version": 1,
-                   "tools": [{"name": tool, "inputSchema": {"type": "object"}} for tool in sorted(CAMPAIGN.READ_NAMES)]}
+                   "tools": [{"name": tool, "inputSchema": schema(tool)} for tool in sorted(CAMPAIGN.READ_NAMES)]}
 
         class Fixture:
             instances = []
@@ -214,6 +237,8 @@ class RawHttpsClientContracts(unittest.TestCase):
         clients_seen = []
 
         class Network:
+            bad_baseline = False
+            mutate_source = False
             def __init__(self, endpoint, control, *, scope):
                 assert "credential_file" not in endpoint and scope == {"index_ids": ["idx_fixture"]}
                 clients_seen.append(endpoint["url"])
@@ -237,8 +262,13 @@ class RawHttpsClientContracts(unittest.TestCase):
                 return catalog
 
             def api_read(self, tool, arguments):
+                if self.bad_baseline and tool == "query_scope":
+                    if self.mutate_source:
+                        (Fixture.instances[-1].owner / "source/fixture.py").write_text("changed source")
+                    body = {"error":{"code":"invalid_query_scope_arguments","retryable":False},"future":{"original":"retained"}}
+                    return {"isError":True,"content":[{"type":"text","text":json.dumps(body)}],"structuredContent":body}
                 if tool in ("index", "missing_fixture_tool"):
-                    raise CAMPAIGN.transport.HttpRefused(404, {"error": {"code": "unknown_tool"}})
+                    raise CAMPAIGN.transport.HttpRefused(404, {"schema":"airk.local-api-error/1","error": {"code": "read_tool_not_found"}})
                 return result(tool, self.scoped(tool, arguments))
 
             def close(self):
@@ -260,7 +290,7 @@ class RawHttpsClientContracts(unittest.TestCase):
         def invoke(_command, _flags, _control, tool, arguments, _environment, *, index=None, workspace=None):
             assert (index is None) == (tool is None or workspace is not None)
             scoped = {**arguments, "workspace": workspace} if workspace is not None else {**(arguments or {}), "index_ids": [index]}
-            body = catalog if tool is None else ({"error": {"code": "unknown_tool"}}
+            body = catalog if tool is None else ({"schema":"airk.local-api-error/1","error": {"code": "read_tool_not_found"}}
                     if tool in ("index", "missing_fixture_tool") else result(tool, scoped))
             return {"exit_code": int(tool in ("index", "missing_fixture_tool") or body.get("isError", False)), "body": body}
 
@@ -287,6 +317,25 @@ class RawHttpsClientContracts(unittest.TestCase):
                 Fixture.fail_start = True
                 with self.assertRaisesRegex(TimeoutError, "uncertain start"):
                     CAMPAIGN.qualify(runtime, base / "failed-report.json")
+                Fixture.fail_start = False
+                Network.bad_baseline = True
+                Network.mutate_source = True
+                owner = base / "bad-baseline-owner"
+                owner.mkdir()
+                with self.assertRaisesRegex(AssertionError, "positive/negative"):
+                    CAMPAIGN.qualify(runtime, base / "bad-baseline-report.json")
+                bad = json.loads((base / "bad-baseline-report.json").read_text())
+                attempt = bad["attempts"][0]
+                self.assertEqual(attempt["tool"], "query_scope")
+                self.assertEqual(attempt["requests"]["raw"]["body"], {"view":"projects","index_ids":["idx_fixture"]})
+                self.assertEqual(attempt["expected"], {"intent":"positive","index_id":"idx_fixture"})
+                self.assertEqual(attempt["raw"]["structuredContent"]["future"], {"original":"retained"})
+                self.assertFalse(bad["passed"])
+                self.assertTrue(bad["native_stop_complete"])
+                self.assertIsNotNone(bad["native_stop"])
+                self.assertFalse(bad["source_preserved"])
+                self.assertFalse(bad["source_observations"]["indexed"]["unchanged"])
+                self.assertTrue(bad["source_observations"]["outside"]["unchanged"])
             self.assertTrue(receipt["passed"])
             self.assertEqual(receipt["selected_observation_count"], 70)
             self.assertEqual(Fixture.instances[0].close_count, 2)
@@ -300,6 +349,85 @@ class RawHttpsClientContracts(unittest.TestCase):
             self.assertFalse(failed["passed"])
             self.assertEqual(failed["failure_type"], "TimeoutError")
             self.assertEqual(Fixture.instances[1].close_count, 2)
+
+
+
+class RawCaseIntentControls(unittest.TestCase):
+    @staticmethod
+    def envelope(body, failed=False):
+        return {"content":[{"type":"text","text":json.dumps(body)}],"structuredContent":copy.deepcopy(body),"isError":failed}
+
+    def test_native_schema_blocks_the_observed_query_scope_and_escape_input_mistakes(self):
+        scope = {"properties":{"view":{},"index_ids":{}},"required":["view"],"additionalProperties":False}
+        CAMPAIGN.verify_case_arguments(scope, {"view":"projects","index_ids":["idx"]})
+        with self.assertRaisesRegex(AssertionError, "unsupported"):
+            CAMPAIGN.verify_case_arguments(scope, {"view":"projects","response_mode":"full","index_ids":["idx"]})
+        read = {"properties":{"path":{},"start_line":{},"end_line":{},"index_ids":{}},
+                "required":["path","start_line","end_line"],"additionalProperties":False}
+        with self.assertRaisesRegex(AssertionError, "required"):
+            CAMPAIGN.verify_case_arguments(read, {"path":"../other/secret.py","index_ids":["idx"]})
+
+    def test_scope_escape_requires_the_actual_path_fence_not_arbitrary_is_error(self):
+        good = self.envelope({"error":{"code":"scoped_read_unavailable","retryable":False}}, True)
+        self.assertEqual(CAMPAIGN.verify_case_reply("read_file", {"path":"../other/secret.py"}, True, good, "idx", "outside-sentinel"), 1)
+        for error in [{"code":"invalid_native_arguments","retryable":False},
+                      {"code":"read_failed","message":"worker unavailable","retryable":False},
+                      {"code":"scoped_read_unavailable","retryable":True}]:
+            with self.subTest(error=error), self.assertRaises(AssertionError):
+                CAMPAIGN.verify_case_reply("read_file", {"path":"../other/secret.py"}, True, self.envelope({"error":error}, True), "idx", "outside-sentinel")
+
+    def test_combined_report_failure_keeps_documented_outer_exit_but_strict_member_refusal(self):
+        refusal = {"error":{"code":"scoped_read_unavailable","retryable":False}}
+        body = {"schema":"airk.combined-read/1","partial":True,"truncated":False,"ranking":[],
+                "members":[{"index_id":"idx","is_error":True,"outcome":"failed","result":refusal}],"future":{"kept":True}}
+        reply = self.envelope(body)
+        self.assertEqual(CAMPAIGN.verify_case_reply("read_file", {"path":"../other/secret.py"}, True, reply, "idx", "sentinel"), 0)
+        CAMPAIGN.verify_result({"exit_code":0,"body":copy.deepcopy(reply)}, reply, True, expected_exit=0)
+        for pointer, value in [("index_id","another-index"),("is_error",False),("outcome","unqueried")]:
+            changed = copy.deepcopy(body); changed["members"][0][pointer] = value
+            with self.subTest(pointer=pointer), self.assertRaises(AssertionError):
+                CAMPAIGN.verify_case_reply("read_file", {"path":"../other/secret.py"}, True, self.envelope(changed), "idx", "sentinel")
+
+    def test_combined_canonical_conditional_body_is_not_mistaken_for_a_text_envelope(self):
+        native = {"evidence":{"status":"content"},"content":{"hits":[{
+            "citation":{"path":"fixture.py"},"text":"def rawexamplemarker():\n    return 42\n"}]},"future":{"kept":True}}
+        body = {"schema":"airk.combined-read/1","partial":False,"truncated":False,
+                "members":[{"index_id":"idx","is_error":False,"outcome":"complete","result":native}],"ranking":[]}
+        reply = self.envelope(body)
+        self.assertEqual(CAMPAIGN.verify_case_reply("read_file", {}, False, reply, "idx", "outside-sentinel"), 0)
+        with self.assertRaisesRegex(AssertionError, "envelope"):
+            CAMPAIGN.verify_case_reply("read_file", {}, False, native, "idx", "outside-sentinel")
+
+    def test_positive_outer_success_cannot_hide_unready_or_failed_members(self):
+        body = {"schema":"airk.combined-read/1","partial":True,"truncated":False,"ranking":[],
+                "members":[{"index_id":"idx","is_error":True,"outcome":"failed","result":{"error":{"code":"worker_unavailable"}}}]}
+        with self.assertRaisesRegex(AssertionError, "readiness"):
+            CAMPAIGN.verify_case_reply("search", {}, False, self.envelope(body), "idx", "sentinel")
+        with self.assertRaisesRegex(AssertionError, "not ready"):
+            CAMPAIGN.verify_case_reply("search", {}, False, self.envelope({"hits":[]}), "idx", "sentinel")
+
+    def test_unknown_route_refusal_cannot_be_substituted_with_service_or_auth_failure(self):
+        CAMPAIGN.verify_http_refusal(404, {"schema":"airk.local-api-error/1","error":{"code":"read_tool_not_found"},"future":"retained"})
+        for status, body in [(503,{"error":{"code":"service_unavailable"}}),(401,{"error":{"code":"auth_required"}}),(404,{"schema":"airk.local-api-error/1","error":{"code":"unknown_tool"}}),
+                             (404,{"error":{"code":"read_tool_not_found"}}),(404,{"schema":"another-schema","error":{"code":"read_tool_not_found"}}),
+                             (404,{"schema":"airk.local-api-error/1","error":{"code":"another_error"}})]:
+            with self.subTest(status=status), self.assertRaises(AssertionError):
+                CAMPAIGN.verify_http_refusal(status, body)
+
+    def test_raw_refusal_expectation_is_bound_to_the_native_router_source(self):
+        # Independent literal tripwire: mocked responses cannot invent the native error.
+        source = (CAMPAIGN.ROOT / "crates/airk-mcp/src/remote/http.rs").read_text(encoding="utf-8")
+        self.assertRegex(source, r'ReadCallError::UnknownTool\)\s*=>\s*error\(StatusCode::NOT_FOUND,\s*"read_tool_not_found"\)')
+        self.assertIn('json!({"schema":"airk.local-api-error/1","error":{"code":code}})', source)
+
+    def test_source_bytes_and_inconsistent_full_result_copies_are_not_accepted(self):
+        body = {"error":{"code":"scoped_read_unavailable","retryable":False},"future":"outside-sentinel"}
+        with self.assertRaisesRegex(AssertionError, "Outside-source"):
+            CAMPAIGN.verify_case_reply("read_file", {"path":"../other/secret.py"}, True, self.envelope(body,True), "idx", "outside-sentinel")
+        changed = self.envelope({"schema":"airk.query-scope/1"})
+        changed["structuredContent"]["future"] = "dropped from text copy"
+        with self.assertRaisesRegex(AssertionError, "copies differ"):
+            CAMPAIGN.verify_case_reply("query_scope", {}, False, changed, "idx", "outside-sentinel")
 
 
 if __name__ == "__main__":

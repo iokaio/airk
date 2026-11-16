@@ -166,6 +166,8 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
     return (initial === null ? null : parseRoute(initial, 1)) ?? { page: 'overview', params: new URLSearchParams(), seq: 0 };
   });
   const page = route.page;
+  const pageTitle = page === 'search' || page === 'index-library' ? null
+    : MAIN_DESTINATIONS.find(entry => entry.id === browserDestination(page))?.title;
   const retained = useRef({ generation: sessionOwner.current.generation, routes: new Map<PageId, Route>() });
   if (retained.current.generation !== sessionOwner.current.generation) retained.current = { generation: sessionOwner.current.generation, routes: new Map() };
   if (session !== null && props.embedded) retained.current.routes.set(page, route);
@@ -267,6 +269,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
       </nav>
       </> : null}
       <main key={sessionOwner.current.generation}>
+        {pageTitle ? <h1>{pageTitle}</h1> : null}
         <PreparedActions />
         {browserDestination(page) === 'activity' ? <div class="actions" aria-label="Activity views">{(['activity', 'logs', 'usage'] as const).map(id =>
           <button type="button" class={page === id ? '' : 'secondary'} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{PAGES.find(entry => entry[0] === id)![1]}</button>)}</div> : null}

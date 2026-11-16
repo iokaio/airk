@@ -250,3 +250,68 @@ revision1cfa9a7208912126459214e8b04321603b3df60c. Configuration/index SHA256
 pins were independently recomputed after the complete original publisher
 SHA/Git-blob closure check. Output records these provenance identities without
 claiming that the minimal neural roster replaces that complete source audit.
+
+
+## Original-operation external observation for software-v2 qualification
+
+The test-only software_v2 operation module emits create-new, append-only
+OUTPUT.with_extension("operations.jsonl") observations for resource load,
+warmup0 and samples 1 through 20, or numeric load and each original full fixture row.
+It has no production Scorer hook, new provider, caller signal or public API.
+An event binds the pinned native run-input/profile/image, actual process ID,
+strict sequence, kind/ordinal and exact compiled input digest where present.
+The image is hashed once before operations, never once per forward.
+
+The clock is the existing airk_process::monotonic owner: Windows QPC scaled to
+nanoseconds; Unix/Darwin use the existing monotonic/uptime contract. Each start
+samples one original absolute policy120s expiry and is flushed/synced BEFORE
+FFI. Publishing that start consumes the original allowance. Expiry while
+publishing refuses dispatch and emits not_dispatched; no signal can renew it.
+Immediately after a native load/score returns, success/error and original
+start/expiry/return clocks are durably retained. A failed observer cannot admit
+further native work. A native error remains an actual returned error.
+
+A matching external Windows watcher owns the same original absolute QPC
+expiry, with the actual suspended-assigned direct-child process/job handles,
+PID/image/SID and exact input identity. It observes complete journal lines by
+native directory-change notification and process-handle waits. Notifications
+or later records never refresh an active expiry. Missing end at expiry, wrong
+identity/sequence/clock or changed journal prefix fails the execution; any
+termination applies only to that exact owned Job. Actual exit handles and Job
+accounting still prove settlement. A forced/unknown outcome cannot pass and
+never fabricates native cancellation, reservation release or zero NN work.
+A separate fixed whole-process bound covers preflight/compilation and the batch;
+it is neither a new per-operation limit nor p95 evidence.
+
+The new measurement identity is
+native-original-operation-start-to-post-end-retention/1.
+Actual full-operation elapsed is rounded conservatively upward to u64
+microseconds; raw native-call elapsed remains separate in returned events.
+The resource series therefore includes both durable observer costs, stops on
+its first known deadline/RSS overrun and has no partial p95/maximum. Load and
+warmup limits precede measured admission; twenty valid warm samples and sorted
+index18 remain required. Numeric rows retain exact inputs/raw outputs and the
+original tolerances, with each actual row retained before its deadline refusal.
+A post-end-sync native clock check retains both observer flush costs. The external
+watcher does not clear an active expiry merely on Returned bytes: it keeps that
+original expiry until the next authenticated Started or the actual process-handle
+exit. Thus a hung end sync cannot escape the original external cutoff. The same
+conservative fence can refuse during inter-call Core/body retention, compilation
+or final source rechecks after an actual end sync; this stricter observed-execution
+refusal is separate from the measured p95 sample interval. Prospective Started
+markers never prove an FFI dispatch or fabricate an NN count.
+
+Old image/measurement identities and /1 receipts remain immutable and are
+never retagged. Existing software-v2 NN0 metadata/reference input provenance is
+retained under its original source manifest; a later patched execution image
+needs its own actual build/source custody and explicit compatibility review.
+No whole-source group, process image or source manifest is silently rewritten.
+Unix source clocks remain portable; this Windows watcher does not itself
+qualify a Neo external-observer implementation or any model/platform outcome.
+
+
+When a native operation returns an error and any later clock, sequence or end
+retention observation also fails, retain the original typed native error as the
+cause and add the complete observation failure context. Failure remains closed;
+no duration is invented when a clock fails and no subsequent call is admitted.
+A post-call observer failure after native success records that distinction.

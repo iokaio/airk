@@ -454,10 +454,14 @@ fn owned_execution(
             && stdout.contains("test result: ok. 1 passed; 0 failed;"),
         "actual native one-test success absent"
     );
+    committed(&owner["owned"], profile.memory_reservation_bytes)?;
+    Ok(())
+}
+fn committed(owned: &Value, reservation: u64) -> Result<()> {
     ensure!(
-        owner["owned"]["peak_host_committed_bytes"]
+        owned["peak_host_committed_bytes"]
             .as_u64()
-            .is_some_and(|peak| peak > 0 && peak <= profile.memory_reservation_bytes),
+            .is_some_and(|peak| peak > 0 && peak <= reservation),
         "actual owned committed-memory limit absent/exceeded"
     );
     Ok(())
@@ -862,3 +866,6 @@ mod tests;
 pub(super) fn refusal_cases() -> Result<Vec<Value>> {
     tests::refusal_cases()
 }
+
+#[cfg(test)]
+mod owned_projection;

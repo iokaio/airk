@@ -251,3 +251,76 @@ The separate original_s8 child selects exactly original-shipped-s8-ort130-evalua
 All12 exact original named cases and32/64/128/256 buckets must match full native IDs/masks/types. Fixed SAMEgraph component error stays<=1e-5; 384 finite normalized components and exact serialB1 mixed-length ordering remain required. Actual original-FP32 cosine/L2/component deltas are retained as observations, without imposing or claiming the trained-candidate .995/.1 admission floor. This does not promote trained weights.
 
 The actual native_parent_bag::private_control requires the reviewed current-SID-only protected anchor, then real ServiceLease and NativeInferenceOwner::run_encoder_evaluation retain actual native compute/evaluation authority throughout load, all forwards and cleanup. No serialized flag, fake role or generic temporary directory supplies ownership. The existing1800second/8GiB native job/phase bound and current anchor producer/observer/bridge remain unchanged. Root alone builds/releases/runs. Full pre/post source/model/oracle/runtime seals, natural process settlement and partial failure receipts remain required. Numeric preparation proves no task quality, composed admission, final platform/resource or release outcome.
+
+
+## Fresh same-query DiskANN baseline
+
+`ann_query` is a separate private test-support diagnostic for final-plan Step7.
+It does not reuse the retained self-vector probe, old DEV/FINAL captures or human
+labels. The input retains a separately frozen complete original query roster,
+all three lexical/vector/hybrid request slots per task, all alignment/extraction
+refusal metadata and full opaque canonical U110 envelopes. No successful-result
+subset supplies the task denominator. These are tiny ungraded infrastructure
+observations; no model-quality acceptance or promotion follows.
+
+Pre-stop canonical reads run through the existing real HTTPS/MCP fixture and its
+Rust-emitted operation/transport budget. Exact request text, mode, whole single
+index selection, native index/source metadata, publication, matched image and
+source/dirty identities remain bound. Native partial, unavailable, empty,
+fallback, error, readiness and delivery fields stay in original result bodies;
+Core's existing materializer supplies only derived identity checks. Mode-specific
+actual forward counts are unavailable in the existing API and remain explicitly
+unknown. Never substitute call counts or introduce a production observer merely
+to manufacture this metric. Component and original mode/end-to-end latency have
+distinct boundaries; no cold-cache or physical-I/O claim is made.
+
+Before the diagnostic opens an index, the actual original control root must have
+its canonical native StopComplete. The native Core LifecycleRecord must exactly
+match the same registry's terminal receipt, namespace, runtime and observed
+ServiceHealth instance/image/PID. That PID must be absent and the actual original
+ServiceLease must be acquired. Missing/abandoned/pending Stop, live/reused or
+unobservable PID, foreign namespace, catalog index/backing, source/data/control
+aliases and overlaps refuse. No second control namespace, writer, synthetic
+ledger, fake factory witness, service restart or cleanup-success receipt is used.
+One genuine lease remains held across synchronous native work and all fences.
+
+A zero-NN metadata entry emits the exact CurrentHead and ModelObjectSet after
+checking the frozen publication/source roster. Its bytes become a separately
+pinned input for the later comparison; actual comparison never refreshes pins.
+The profile is the exact current host-selected catalog U8 or S8 profile, with its
+actual ISA, assets, manifest, descriptor/pipeline and recipe. An alternate U8
+control on an S8 host needs its own legitimate private producer and evidence;
+it cannot relabel the selected S8 publication or override product admission.
+
+The owning authenticated codec exports every live vector from the exact current
+graph, including verification of all allocated seed/dead/live records. Existing
+bounds remain <=4096 live and <=4097 allocated records; exceeding either refuses
+without sampling or a larger limit. An independent scalar f64 squared-L2 oracle
+uses the actual stored f32 bits and all live IDs. Each original query performs
+exactly one measured uncached native embedding; both this oracle and ordinary
+MutableDiskIndex::search receive that same immutable vector and frozen census.
+The receipt retains full query input IDs/masks, vector bits, model execution
+statistics, all exact distances, actual ANN distances/bits/read counts/passes/
+partial state, default limits, rank overlap denominator, cutoff ties and strictly
+closer misses. No dense helper is reused to compute expected distances. Numeric
+f32/f64 differences and ties are observations, not an invented pass threshold.
+
+One original Core Budget::default deadline is captured at helper entry and shared
+by metadata, census, model load and all queries; no per-query or per-stage renewal
+is permitted. The existing1800second/8GiB controller capacity is a separate outer
+ceiling and cannot extend that native phase cutoff. The owning external launcher
+must enforce the same original native deadline because synchronous FFI cannot be
+cancelled by a post-call clock check. A timeout or first failure retains the full
+scheduled population, started/result/refusal events and not-run tail. Owned child
+exit/reaping and native lease release must be observed externally; a killed child
+is never a successful completion or cleanup proof. Source, model, input, complete
+publication and native identity pins are checked before/after successful delivery.
+
+Only a fresh externally verified private human-owned base supplies mutable state,
+control and output; source remains read-only. Existing private_base validation
+and actual same-user launcher producer/observer rules apply. JSONL evidence is
+create-new outside source/data/control/model inputs and never product state.
+The three cheap controls cover independent distances/ties/nonfinite/dimension/
+live-ID refusals, complete roster/scope/mode refusals and changed/missing/extra/
+non-directory/relative source refusals. They execute no model. Compilation and
+controls do not prove the ignored fresh baseline or platform qualification.

@@ -17,6 +17,7 @@ use std::{
     path::PathBuf,
 };
 
+mod acquisition;
 mod execution_observer;
 mod restart;
 mod warm_journal;

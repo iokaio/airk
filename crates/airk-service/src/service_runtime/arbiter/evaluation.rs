@@ -7,6 +7,9 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
 };
 
+#[cfg(test)]
+type FixtureDescriptorSource<'a> = &'a mut (dyn FnMut(&Asset) -> Result<File> + 'a);
+
 /// Native test-support observation only. The sink is attached before exact
 /// same-lease/same-gate fixture composition; no wire value attaches it.
 pub type ContextObservationSink = Arc<
@@ -196,6 +199,35 @@ impl EvaluationOwner {
         }
         transaction.finish()?;
         Ok(EvaluationResult::new(()))
+    }
+    /// Native ignored regression only. The opaque owner supplies the SAME
+    /// private execution capability, lease and stage state as the live service.
+    #[cfg(test)]
+    pub(in crate::service_runtime) fn actual_acquisition_fixture(
+        &self,
+        manifest: Sha256Digest,
+        source: Option<FixtureDescriptorSource<'_>>,
+    ) -> Result<super::lifecycle::acquisition_fixture::AcquisitionFixture> {
+        let execution = self.owner.context.execution_profile(manifest)?;
+        ensure!(
+            execution.evaluation() && !execution.release_qualified(),
+            "actual acquisition regression requires an opaque private evaluation capability"
+        );
+        let profile = execution.description().clone();
+        let sources = if let Some(source) = source {
+            let mut files = std::collections::BTreeMap::new();
+            for asset in &profile.assets {
+                files.insert(asset.name.clone(), source(asset)?);
+            }
+            Some(files)
+        } else {
+            None
+        };
+        super::lifecycle::acquisition_fixture::AcquisitionFixture::capture(
+            &self.owner.context,
+            profile,
+            sources,
+        )
     }
     pub async fn manage(
         &self,

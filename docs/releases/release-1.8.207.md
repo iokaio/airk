@@ -37,7 +37,10 @@ Scoped contract, regression and input-census results retain their exact source
 identities and counts in the ledger. They are not a completed workspace,
 transport, installed, platform or release gate. A packaged file is a candidate
 until its applicable installed journeys pass; this record does not claim that
-a new installer or VSIX has already been produced or installed.
+a qualified release has been installed. Provisional signed Windows EXE/native
+ZIP and universal VSIX candidates have been produced under commit1933; their
+exact hashes and live UI/transport checks are retained in the ledger. Rebuilt
+metadata/title candidate and platform checks remain in progress.
 
 Bundled MiniLM retains the selected original publisher weights. Optional Focus,
 Context Compact and Context Large remain separate downloads and require their

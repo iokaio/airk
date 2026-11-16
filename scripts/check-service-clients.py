@@ -530,6 +530,76 @@ def split_cli(binary, cli=None):
     return paired
 
 
+def original_pair_json(raw):
+    """Reject duplicate raw fields before the existing C7 object validator."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate original pair metadata field: " + key)
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def original_pair_metadata(path, maximum):
+    """A bounded read before parsing/hashing original fixture metadata."""
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
+        raise ValueError("Original metadata exceeds its native bound or is redirected: " + path.name)
+    with path.open("rb") as source:
+        raw = source.read(maximum + 1)
+    if len(raw) > maximum:
+        raise ValueError("Original metadata grew beyond its native bound: " + path.name)
+    return raw
+
+
+def original_pair_inputs(runtime):
+    return {name: original_pair_metadata(runtime / name, maximum) for name, maximum in (
+        ("airk-runtime.json", 4096), ("airk-install.json", 512 * 1024), ("airk-build.json", 16384))}
+
+
+def original_split_pair_payload(runtime):
+    """Opt-in U93 fixture source: verify and stage the original C7 pair unchanged.
+
+    This is an isolated legacy lifecycle fixture, never modern I4 setup.
+    The default split_fixture_payload adapter remains historical and unchanged.
+    """
+    runtime = runtime_root(runtime)
+    inputs = original_pair_inputs(runtime)
+    raw_metadata, raw_manifest, receipt_raw = (inputs[name] for name in
+        ("airk-runtime.json", "airk-install.json", "airk-build.json"))
+    metadata = original_pair_json(raw_metadata)
+    runtime_builder().split_receipts().validate_pair_metadata(metadata)
+    if not runtime_builder().split_pair_version(metadata["version"]):
+        raise ValueError("Original metadata fixture requires a complete current split pair")
+    manifest = original_pair_json(raw_manifest)
+    identity = {key: metadata[key] for key in ("version", "os", "arch")}
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if (set(manifest) != {"schema", "version", "os", "arch", "files"}
+            or manifest["schema"] != 1 or {key: manifest[key] for key in identity} != identity
+            or not isinstance(files, dict) or not 4 <= len(files) <= 2048):
+        raise ValueError("Original pair inventory does not match full metadata")
+    images = runtime_builder().split_receipts().IMAGES[metadata["os"]]
+    if (any(files.get(images[role]) != metadata[role + "_sha256"] for role in ("airk", "airkctl"))
+            or not {"airk-runtime.json", "airk-build.json"} <= set(files)):
+        raise ValueError("Original pair inventory omits image/build authority")
+    for name, expected in files.items():
+        parts = name.split("/")
+        if (not name or "\\" in name or ":" in name or Path(name).is_absolute()
+                or any(part in ("", ".", "..") for part in parts)):
+            raise ValueError("Unsafe original pair inventory path")
+        path = runtime.joinpath(*parts)
+        if path.is_symlink() or not path.is_file() or not path.resolve(strict=True).is_relative_to(runtime):
+            raise ValueError("Original pair inventory input redirected or missing")
+        if file_sha256(path) != expected:
+            raise ValueError("Original pair differs from sealed inventory: " + name)
+    receipt = original_pair_json(receipt_raw)
+    runtime_builder().split_receipts().validate_build_receipt(receipt)
+    if receipt["runtime"] != metadata:
+        raise ValueError("Original build receipt differs from complete pair metadata")
+    return runtime
+
+
 def split_fixture_payload(pair, destination):
     """U93 interim fixture payload for a split pair (schema 3); the source pair is never changed.
 
@@ -672,7 +742,8 @@ class Fixture:
     # A pre-split runtime has one image for user commands and the service.
     cli = None
 
-    def __init__(self, runtime, owner, command_timeout=120, job_timeout=180, cli=None):
+    def __init__(self, runtime, owner, command_timeout=120, job_timeout=180, cli=None,
+                 *, preserve_pair_metadata=False):
         self.runtime = runtime_root(runtime)
         self.owner = owner.resolve(strict=True)
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
@@ -684,7 +755,14 @@ class Fixture:
         self.answer_validator = None
         self.answer_comparisons = []
         self.answer_references = {}
+        if type(preserve_pair_metadata) is not bool:
+            raise ValueError("Original pair metadata requires explicit split fixture opt-in")
+        if preserve_pair_metadata:
+            original_pair_inputs(self.runtime)  # Before the existing initial classifier.
         self.compatibility = classify_runtime(self.runtime)
+        if preserve_pair_metadata and self.compatibility["topology"] != "split_pair":
+            raise ValueError("Original pair metadata requires explicit split fixture opt-in")
+        self.preserve_pair_metadata = preserve_pair_metadata
         # A split pair's airk is the same single service image; HTTPS only.
         self.single_image = self.compatibility["topology"] in ("single_image", "split_pair")
         if self.compatibility["topology"] == "split_pair":
@@ -776,8 +854,11 @@ class Fixture:
         if self.managed_installation:
             source = self.runtime
             if self.cli is not None:
-                # U93: the interim stage reads a schema-2 receipt; see split_fixture_payload.
-                source = split_fixture_payload(self.runtime, self.owner / "pair-fixture-payload")
+                if self.preserve_pair_metadata:
+                    source = original_split_pair_payload(self.runtime)
+                else:
+                    # Preserve the historical schema-2 fixture adapter by default.
+                    source = split_fixture_payload(self.runtime, self.owner / "pair-fixture-payload")
             identity = hashlib.sha256((source / "airk-install.json").read_bytes()).hexdigest()
             staged = json.loads(self.service_run("runtime", "stage", "--source", source, "--install-dir", self.install,
                 "--state-dir", self.owner / "state", "--approved-sha256", identity,

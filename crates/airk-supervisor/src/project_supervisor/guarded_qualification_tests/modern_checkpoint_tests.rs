@@ -217,6 +217,38 @@ pub(super) fn verify_modern_fixture_inputs(
         format!("{:x}", Sha256::digest(&build_bytes)) == install.files["airk-build.json"],
         "build receipt changed after inventory verification"
     );
+    #[derive(serde::Deserialize)]
+    struct ReceiptSchema {
+        schema: u32,
+    }
+    if serde_json::from_slice::<ReceiptSchema>(&build_bytes)?.schema == 2 {
+        let build = crate::runtime_metadata::split_build::decode(&build_bytes)?;
+        let observed = build.observation();
+        ensure!(
+            observed.source_sha256 == expected_source,
+            "crossed split build receipt source"
+        );
+        ensure!(
+            pair.split.as_ref() == Some(&build.runtime),
+            "split build receipt differs from verified full runtime pair"
+        );
+        for (name, expected) in [
+            (
+                build.runtime.service_relative_path()?,
+                build.runtime.airk_sha256,
+            ),
+            (
+                build.runtime.cli_relative_path()?,
+                build.runtime.airkctl_sha256,
+            ),
+        ] {
+            ensure!(
+                install.files.get(name) == Some(&expected.to_string()),
+                "split build image differs from verified fixture inventory"
+            );
+        }
+        return Ok(());
+    }
     let build: Build = serde_json::from_slice(&build_bytes)?;
     ensure!(
         build.schema == 1
@@ -858,5 +890,91 @@ fn accepted_vectors_checkpoint_phase(mut fixture: NativeFixture) -> Result<()> {
         job.id,
         count.load(Ordering::SeqCst)
     );
+    Ok(())
+}
+
+#[test]
+fn modern_checkpoint_fixture_accepts_only_complete_original_c7_build_and_pair() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().canonicalize()?;
+    let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/split/receipts/build_receipt_2.json"
+    )))?;
+    let mut build = document["base"].take();
+    let mut metadata = build["runtime"].clone();
+    metadata["version"] = env!("CARGO_PKG_VERSION").into();
+    metadata["os"] = std::env::consts::OS.into();
+    metadata["arch"] = std::env::consts::ARCH.into();
+    let preliminary: airk_core::runtime_metadata::SplitRuntimeMetadata =
+        serde_json::from_value(metadata.clone())?;
+    let main = runtime.join(preliminary.service_relative_path()?);
+    let cli = runtime.join(preliminary.cli_relative_path()?);
+    std::fs::create_dir_all(main.parent().context("fixture main parent")?)?;
+    std::fs::write(
+        &main,
+        b"modern original C7 fictional service image; never executed",
+    )?;
+    std::fs::write(
+        &cli,
+        b"modern original C7 fictional CLI image; never executed",
+    )?;
+    metadata["airk_sha256"] = airk_host::runtime_pair::digest_file(&main)?.into();
+    metadata["airkctl_sha256"] = airk_host::runtime_pair::digest_file(&cli)?.into();
+    build["runtime"] = metadata.clone();
+    build["profile"] = "release-local".into();
+    let source = "5".repeat(64);
+    std::fs::write(
+        runtime.join("airk-runtime.json"),
+        serde_json::to_vec(&metadata)?,
+    )?;
+    std::fs::write(runtime.join("LICENSE"), b"original fictional license")?;
+    std::fs::create_dir(runtime.join("notices"))?;
+    std::fs::write(
+        runtime.join("notices/original.txt"),
+        b"original fictional notice",
+    )?;
+    let reseal = |receipt: &serde_json::Value| -> Result<String> {
+        std::fs::write(
+            runtime.join("airk-build.json"),
+            serde_json::to_vec(receipt)?,
+        )?;
+        let mut files = BTreeMap::new();
+        for name in [
+            preliminary.service_relative_path()?,
+            preliminary.cli_relative_path()?,
+            "airk-runtime.json",
+            "airk-build.json",
+            "LICENSE",
+            "notices/original.txt",
+        ] {
+            files.insert(
+                name.to_owned(),
+                airk_host::runtime_pair::digest_file(&runtime.join(name))?,
+            );
+        }
+        let install = airk_installer::runtime_install::InstallManifest {
+            schema: 1,
+            version: env!("CARGO_PKG_VERSION").into(),
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            files,
+        };
+        std::fs::write(
+            runtime.join("airk-install.json"),
+            serde_json::to_vec(&install)?,
+        )?;
+        airk_host::runtime_pair::digest_file(&runtime.join("airk-install.json"))
+    };
+    let seal = reseal(&build)?;
+    verify_modern_fixture_inputs(&main, &runtime, &source, &seal)?;
+    assert!(verify_modern_fixture_inputs(&main, &runtime, &"9".repeat(64), &seal).is_err());
+    let mut changed = build.clone();
+    changed["runtime"]["airkctl_sha256"] = "9".repeat(64).into();
+    let seal = reseal(&changed)?;
+    assert!(verify_modern_fixture_inputs(&main, &runtime, &source, &seal).is_err());
+    std::fs::write(&cli, b"changed fictional CLI")?;
+    let seal = reseal(&build)?;
+    assert!(verify_modern_fixture_inputs(&main, &runtime, &source, &seal).is_err());
     Ok(())
 }

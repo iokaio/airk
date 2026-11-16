@@ -5360,3 +5360,280 @@ remain required. The canonical Admin C7 prebuild verifier passes the unchanged
 - `native-vector-owner-qualification-r2` passes8/8 (137.353s command;71.154s tests): three actual Kernel vector/cache/retrieval campaigns, three actual Retrieval native model campaigns, the component entry and existing thread-local authority control. Kernel component runs used the explicitly provided original U8 profile; the all-profile normalization case exercised both original catalog profiles from the verified provisioned root. This is Windows component evidence, not cross-platform/installed/task-quality qualification.
 - The existing quarantined projection quota test passes its single selected observation (`quarantined-projection-observation-r1`,16.435s command;6.338s tests). Its prior intermittent-failure record, owner and expiry remain unchanged; one pass does not resolve flakiness.
 - Independent reference source is reviewed/frozen and selected Qwen forwards remain zero. The fresh same-query/vector baseline proposal is retained privately and unapplied while the Windows candidate inputs freeze. Final publication-input qualification still lacks the genuine three-profile qualified publication catalog; the pre1.9 provisional candidate path does not waive that gate.
+
+
+### Arbiter final execution — first candidate milestone and actual transport/artifacts
+
+Recorded 2026-11-16T12:47Z; original execution cutoff unchanged. The primary
+reviewed and locally DCO-committed 276 public paths as
+`1933a3930959802c85fb2e99a6974871216d7482` (tree
+`b9a840c219e9dc6522752e7b67cbb9820674b031`). No push or publication.
+The exact stage/candidate bridge and DCO proof are in
+`artifacts/v190/final-plan/exec-20261116T052942Z/milestone-commit-r1.json`.
+The post-commit native group is
+`5f788569885d7b33b476f3c0381b55528f3981a000fe960d884b0128a997075c`;
+only two already-missing old Admin assets leave the pre-commit inventory.
+Existing passing coverage retains its original source identity.
+
+- The actual matched debug runtime build passes in168.973s, with embedded
+  Admin C7 source `1c6bc37600bba4123046d76d8836a8ffda8f3ebad229bbb5da7c236bffbe7e92`
+  across1913 source files. The1.8.207 pair is at
+  `artifacts/arbiter-1.8.207/windows-runtime-debug-r1`; airk SHA
+  `38abcc86a3fcb35d8542e26319b8c6ddbef7a51f6b3aa501670b76f78c1b13b7`,
+  airkctl SHA
+  `96482d9ef145e6ead504a258bd62ee9f56681e212bf2b596b85cd60e34d8ebc2`.
+  Exact command, static/model/admin inputs and timings:
+  `exec-20261116T052942Z/windows-matched-debug-build-r1.json`.
+- Current real service-client preflight passes140.605s (actual report135.012s):
+  two projects/16files, actual MiniLM, CLI/session/MCP, four cold clients,
+  metadata refusal/recovery, complete current Rust Answer comparison, actual
+  ManagedStopComplete and PID exit. The retained report and command receipt are
+  `windows-current-service-clients-r1-report.json` and
+  `windows-current-service-clients-r1.json` in that execution directory. This
+  does not qualify selected Qwen, many-open Admin or installed behavior.
+- The first raw HTTPS run fails37.424s at a stale positive QueryScope request
+  containing unsupported response_mode; strict advertised schema correctly
+  refuses it. A negative read_file row also omitted required line bounds.
+  `windows-raw-https-clients-r1-report.json` retains the failed outcome. The
+  original early case body was not persisted; no reconstruction is claimed.
+  The whole harness input/error capture class is being corrected before a new
+  identified run. Actual StopComplete and original PID18460 exit were observed.
+- Genuine detached candidate worktree1933 preserves all3479 raw public files,
+  223 compiled editor outputs and8787 locked dependency files. Its408 raw
+  CRLF/LF overlays have exact Git clean-filter blob equality; refreshing the
+  candidate index with those exact paths changes no staged blob/mode/tree or
+  raw source byte. Both worktrees are clean; Root index unchanged. Existing
+  artifact tests2/2 pass. Final independent transfer proof:
+  `candidate-overlay-preparation-r1/final-transfer-proof-r2.json`, SHA
+  `c2c945cb0da61003ce94251504c3cd1e31e67a5af7409ff9cc298ceefce3c80b`.
+- Canonical universal stable VSIX packaging passes14.235s from the clean
+  candidate (`candidate-worktree-r1/artifacts/vsix-candidate-r1-evidence/
+  universal-vsix-package-r1.json`). The canonical local Windows installer
+  producer passes179.024s, result=built/signed=true, version1.8.207, commit1933.
+  Candidate installer is72,150,648bytes; exact signed component/compiler/input
+  evidence is under `candidate-worktree-r1/artifacts/local-service-installer/
+  20261116-053728/receipt.json`. Packaging is not an installed journey. The
+  existing user's occupied1.8.206 installation and processes remain preserved.
+- Fresh immutable all-feature native test images were built/listed27.583s and
+  copied with exact SHA identities into `exec-20261116T052942Z/native-test-images-r1/`;
+  build receipt `current-test-image-build-inventory-r1.json` and image inventory
+  `native-test-images-r1.json` bind current NN0 emitters. Three metadata profiles,
+  three full tensor templates and three original publisher rosters emit
+  successfully without selected-model execution. A real flat23asset copy
+  preserves19 original objects and uses exactly4 new Context metadata objects;
+  24,130,011,811bytes, single-link destinations, reopened hashes/owners verified.
+  Concrete review `weights-v2/software-v2-independent-numeric-r1/
+  primary-concrete-review-r1.json` SHA
+  `2d5a542e243b60a02cf3f84a078daa93d3a3b90b3cb850071503b772e9e4f0ce`
+  authorizes sequential inference-only independent Torch references under the
+  previously frozen600/600/900second cards. No model acceptance, training,
+  resource/p95 qualification or public catalog follows from preparation.
+
+Windows identity was reverified as TYAI\tdotn SID1002 against active human
+session1; all operations use the same-user elevated path. Reviewed tracked
+content authorization preserves owners/ACLs; foreign ignored artifacts remain
+untouched. Mac Neo prerequisites, actual Workbench/private installed Explorer
+checks, signed native ZIP and corrected raw HTTPS are independent next work.
+Missing human software labels, current published Context metadata, final
+qualified catalog, unavailable Linux human identity and occupied Windows native
+installation remain explicit dependent blockers.
+
+
+### Arbiter final execution — live UI, signed ZIP and new gate findings
+
+Recorded 2026-11-16T13:04:19.049004+00:00. Canonical unsigned provenance
+packaging and adoption of the existing signed native images both pass. The
+canonical signed package then passes without re-signing, compilation or install:
+126.699s combined, unsigned22.049s/signed28.965s. Exact script/plan, fresh private
+C temp boundary, source/static/Admin/model/signature owners and clean candidate
+proof are in `exec-20261116T052942Z/signed-native-adoption-r2/`. The ZIP is
+98,968,772bytes SHA `cf2f5701287e69cfd31482c373b38de29b693c223199128693fc5e0364dade5c`.
+The actual signed EXE is SHA
+`b3b47a2dd2cdfe233e2df8fe9be6b5e6e9030eb2ae1a8972f5ef0a40ca9ad72f`.
+These retain original clean1933 source and debug runtime identity. Later harness
+overlays do not relabel them; provisional packages are not final qualification.
+
+- Actual compiled Workbench/native session gate passes49.299s:16 full result
+  comparisons, two automatic/explicit Answer routes and two actual source-open
+  fences. Source bytes preserved; original native PID69488 handle signals exit0
+  after original StopComplete. `ui-live-workbench-r1/` retains full proof.
+- Actual VSIX installed into fresh Code1.146 profile passes8.08s:12 singleton
+  opens, close/reopen and same-version CSS/controller handoff. Native execution
+  and auto-install remain disabled. Code exits0 with no profile-owned process.
+  `ui-installed-explorer-r1/` retains the actual artifact/profile result.
+- Actual embedded Admin/Edge r2 passes33.09s: full native resource Details,
+  clipboard and download; full Arbiter status; exact DOM manual text and all
+  three copied canonical entries;24 navigation clicks across12 accessible
+  distinct icons, wide/narrow layouts, divider and pinned Help. Served JS/CSS
+  hashes match sealed source. Issued requests and fully captured responses are
+  separate counts; aborted/in-flight navigation requests are not parity passes.
+  Native PID58016 StopComplete and retained-handle exit0; Edge33852 closes/exits0.
+  Evidence `ui-live-admin-r2/`. Original r1 failed on Windows clipboard LF→CRLF.
+  A separate five-case actual browser sentinel proves only that exact projection
+  (no trim, bare CR, field loss or trailing-line change); raw bytes/hashes retained
+  in `ui-admin-clipboard-control-r3/`. R2 restores prior current clipboard from
+  memory if still owned. R1 did not capture its predecessor clipboard, so those
+  pre-r1 contents cannot be restored; no unrelated clipboard text was persisted.
+- Added test-only same-query/all-live exact-vs-DiskANN owner compiles with scoped
+  all-target/all-feature Clippy (67.814s) and three controls pass (86.674s wrapper,
+  .043s tests). Genuine new image/source receipts are `ann-query-clippy-r1.json`,
+  `ann-query-controls-r1.json`, `native-test-images-ann-r1.json`. This changes no
+  shipped production path and does not establish actual fresh baseline results.
+- Raw HTTPS r2 correctly exercises positive reads, traversal path refusal and
+  scope-required across all three examples/raw MCP/CLI, then fails on an incorrect
+  newly introduced harness expectation for404. Actual Rust owner emits
+  `airk.local-api-error/1` / `read_tool_not_found`, not the guessed `unknown_tool`.
+  The complete original response is retained; StopComplete/PID45808 absence and
+  indexed/outside bytes are verified. A source-reviewed narrow correction and
+  19/19 cheap controls precede a fresh r3. Original r1/r2 remain failed.
+- First independent Torch reference attempt refuses a global pywin32 startup
+  source outside the frozen runtime before scoring. Child naturally exits1, Job
+  empty/handles settled. Cheap actual startup probes isolate the base interpreter
+  with only -S, retaining explicit pinned dependencies and all tensors/cards.
+  Additive parent/plans are separately primary-reviewed; originals preserved.
+  Fresh original Focus and W8-reference runs each pass12 full scoring cases with
+  natural child exit0. Compact original passes all17/128/8192-token rows, including
+  all-live8192/8 on GPU. These are independent reference arrays, not native CPU,
+  p95 or model acceptance. Full reference receipts/assembly remain under
+  `weights-v2/software-v2-independent-numeric-r1/runs-native-r1/revision-r2/`.
+- Actual isolated public Focus first attempt stops before optional status/index/NN
+  on Health.build=null. Original U93 fixture intentionally omits build metadata;
+  independent source review also finds a real Supervisor decoder accepting only
+  old build schema1 while the genuine C7 receipt emits2. Strict source gates are
+  preserved. A contract-first repair plus opt-in original whole-pair3 fixture is
+  being prepared. Actual native StopComplete and natural empty Job are retained;
+  original process handle was closed without an exit wait on the failure path,
+  so that specific handle exit observation is unavailable, not fabricated.
+- Neo current ORT1.30 source/build/static aggregate and owning read-only verify
+  pass on UID501, same original parallel2 attempt;890.343s build/3.425s verify,
+  total894.073s including model checks. All three MiniLM provision/reverify
+  commands pass from pinned cache. No Cargo yet; final source must include the
+  pending metadata correction before platform qualification. Original dirty
+  checkout and historical inputs remain untouched.
+
+Open independent issues: native numeric/resource execution requires an authentic
+per-operation start/return journal and external original120s watchdog for
+synchronous FFI; after-return timing alone cannot enforce that bound. The new
+test-only seam is under review. Suitable existing human labels and current
+qualified public Context sources/catalog remain unavailable. No gradients,
+terminal promotion, synthetic approval, publication or installed206 changes.
+
+
+### Arbiter final execution — source corrections and frozen reference closure
+
+Recorded 2026-11-16T13:29:24.727244+00:00. The corrected raw HTTPS
+qualification passes70/70 observations in84.301s on both endpoints with real
+Python/Node24.15/PowerShell examples plus raw/MCP/CLI full parity. Catalog,
+positive reads, exact traversal/path fence, missing scope, native404 and occupied
+port relocation pass. Both original Stops complete; finalPID30648 and fixture
+are absent; indexed/outside sources unchanged. Original r1/r2 remain failed.
+Evidence `exec-20261116T052942Z/windows-raw-https-clients-r3.json`, report and
+`raw-https-http-refusal-r3/actual-gate-summary.json`.
+
+The complete six-run independent Torch reference campaign passes36 full-input
+forwards; no owned Torch child remains. Exact immutable campaign summary
+`weights-v2/software-v2-independent-numeric-r1/runs-native-r1/revision-r2/
+reference-campaign-summary.json`, SHA
+`2aab78bc14070e79405c6ecea13c0ad0c3c8fb799ef2a538bc56ef55a24e72a1`.
+All three original/same-artifact producers and numeric fixtures remain
+unqualified; no native CPU/p95, semantic or promotion result is inferred. A new
+watchdog image needs its own actual Cargo compiler-artifact/static-link JSON,
+genuine source-bound build receipt and fresh native metadata/template equality.
+Old source manifests and old image receipts cannot be retagged. Neural/tokenizer
+source paths must stay exact because the reference consumer checks their seals.
+
+The literal page-title acceptance gap found in actual DOM review is corrected
+with three production lines deriving titles from the existing destination owner.
+Search/guided/Indexes headings remain unduplicated. Fresh Admin build/check and
+19/19 affected independent DOM tests pass; original575 consumed build inputs
+remain unchanged during that batch. One of223 compiled editor outputs changes;
+all originals remain preserved. Primary independently verifies449 public package
+source files, all five output hashes and canonical Admin block, then adopts the
+new assets. Existing files keep owners/ACLs/fileIDs; the old JS object is moved
+within the workspace with original fileID/hash to
+`ui-title-adoption-r1/preserved-original/`. Root ignored foreign editor outputs
+remain untouched. Transfer receipt
+`ui-title-build-r1/transfer.json` SHA
+`e0c377b733f4d21a1c8300b9b564d1270e83fe9ceaaec17de39cb3628e2c3163`;
+primary adoption receiptSHA
+`534a0ff7d97ace22af3efe13703e5e7c983b602d8954fc171882db4e7c0cc3f4`.
+New bundle `8e65febbf798774d0adbfe9ce8c757c7615390b9cd14fba8fa7cc1d987a4f7d1`;
+C7 inventory `ui-title-build-r1/admin-assets.json` SHA
+`d273da76c368047625031654c4a606d9cbd50b7c901ec315ca03714efff98705`.
+Actual rebuilt native/title and updated installed VSIX checks remain pending.
+
+Seven verified distributables are copied separately to
+`artifacts/arbiter-1.8.207/windows-candidate-r1/`: native ZIP/manifest/checksums,
+signed EXE only, universal VSIX/manifest/checksums. Native835entry and VSIX131entry
+censuses, complete notices, signatures and exact destination hashes pass. No
+private receipt/state/training source is copied. Immutable delivery census
+`exec-20261116T052942Z/delivery-census-r1.json` SHA
+`e2f50750b38a32a7ce02a7093f5c235e235e2c39eed691a5c5510b3caca7ddc1`.
+These remain provisional1933 artifacts while the new metadata/title source is
+being completed; no local install or public upload occurred.
+
+
+### Final-plan current repair milestone (16 November, 14:20 UTC)
+
+The C7 runtime observation repair accepts the original bounded schema-2 build
+receipt and matching runtime/installer metadata without changing the public
+RuntimeBuild shape or treating observations as installer authority. The owning
+contract, duplicate/unknown-member refusals, unchanged legacy branch and genuine
+checkpoint consumer are reviewed. Whole-workspace/all-target/all-feature Clippy
+passes (`current-c7-production-clippy-r1`,37.200s). The first seven-test batch
+retains one test-fixture failure: its duplicate-source mutation targeted an opaque
+embedded report field. A literal exact source-object mutation fixes that test;
+production decoding is unchanged. The corrected seven cases pass
+`current-c7-build-observation-controls-r2` (34.636s). Eight Python original-pair
+staging controls also pass. No failed run is relabeled.
+
+The real16GB acquisition/control regression now observes positive read/digest
+progress inside the owning Store and genuine finish/pin return. Its lexical,
+nonblocking test-support observer never waits or changes ordinary hashing. The
+Service fixture retains actual I/O, phase and cancellation results through early
+control failure; original I/O causes retain precedence. Same-lease private
+capability and actual control/worker/draining/lease fences remain strict. Primary
+and separate review close the proposal;14 files are applied with existing
+owner/ACL/fileID preserved. First combined Clippy refuses one complex test-only
+callback type; an equivalent private lifetime alias fixes it without a lint
+allowance. `current-combined-clippy-r2` passes11.313s, native source group
+39292f706deef586b052b41058edb0c5f9e766a7a79d8ecce0b83a96ee5a050c.
+The actual16GB storage run remains pending; no inference/public provisioning
+claim follows from these source checks.
+
+Native resource/numeric operation observations and the zero-NN canonical
+owner/typed Execution projection are applied as seven reviewed files. Durable
+original-operation events precede FFI, and end retention consumes the original
+120s allowance; the external Windows watcher never refreshes an expiry on a
+return event. Native failures cannot be hidden by observation failures. The
+existing20-sample/index18 p95 population and numerical tolerances are unchanged.
+R3 preparationSHA c218a11aa4bd1307cf5e73f9c7fe76dce89af7e7e6da411f4d6b673377bb4b9b;
+14 lightweight Python controls pass independently. Canonical projection grants
+no approval or promotion. Actual committed-memory and downstream source/image
+checks remain strict. Native controls and genuine Cargo-JSON image preservation
+are pending the combined batch. All older source/image/reference evidence stays
+immutable.
+
+Two private runners had final stdout hashing after their expiry observation.
+Both are corrected to hash remaining proof files before one final cutoff sample;
+late work refuses completion. Fresh baseline transport r3 stopped during
+preflight before owner/service/NN creation because the compiled-source inventory
+rejected a path. No9/27 baseline captures, Stop or cleanup evidence is invented;
+cheap exact-path diagnosis continues. R154 review also identified the old120s
+transport cap, unpinned preparation/question and missing real outer ownership;
+a fresh additive diagnostic will consume the actual Rust-emitted125s delivery
+fixture while native120s and whole360s deadlines remain unchanged. The original
+failed observer and one underlying closed record remain inaccessible; no ACL or
+account workaround is attempted. AIRK indexed status timed out; live files are
+used instead. T0 and all campaign cutoffs remain unchanged.
+
+The combined native regression batch passes39/39 across five binaries
+(`current-combined-controls-r1`,106.786s including build,0.538s tests), covering
+all eight operation observers, four owner/typed projection controls, six Store
+hash controls, three acquisition-result controls and the affected ownership and
+metadata siblings. The ANN three controls retain their earlier separately pinned
+pass; the grouped selector's nested ANN pattern selects none and is not counted
+as additional ANN evidence. Client harness controls pass86/86
+(`current-client-harness-controls-r1`,4.383s). Repository checks pass3494public
+files; format and whitespace pass. Existing contributors and branch are verified
+before the local DCO milestone; no push/PR/install/publication is performed.

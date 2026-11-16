@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Private qualification-only original-operation observations; never Scorer policy.
+use airk_core::{identity::Sha256Digest, read_attempt::ReadClock};
+use anyhow::{Context, Result, ensure};
+use serde::Serialize;
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
+    path::Path,
+};
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Kind {
+    Load,
+    Warmup,
+    Sample,
+    Numeric,
+}
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Phase {
+    Started,
+    Returned,
+    NotDispatched,
+}
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct Identity {
+    pub input_sha256: Sha256Digest,
+    pub profile: Sha256Digest,
+    pub process_id: u32,
+    pub native_binary_sha256: Sha256Digest,
+}
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct Event {
+    schema: &'static str,
+    sequence: u64,
+    identity: Identity,
+    kind: Kind,
+    ordinal: usize,
+    operation_input_digest: Option<Sha256Digest>,
+    phase: Phase,
+    clock: ReadClock,
+    started_monotonic_ns: u64,
+    expires_monotonic_ns: u64,
+    observed_monotonic_ns: u64,
+    native_call_elapsed_us: Option<u64>,
+    native_success: Option<bool>,
+}
+pub(super) struct Returned<T> {
+    pub value: Result<T>,
+    pub elapsed_us: u64,
+    pub native_call_elapsed_us: u64,
+    pub within_deadline: bool,
+}
+fn native_clock() -> ReadClock {
+    #[cfg(windows)]
+    {
+        ReadClock::WindowsPerformanceCounter
+    }
+    #[cfg(unix)]
+    {
+        ReadClock::UnixMonotonic
+    }
+}
+struct Attempt<'a> {
+    identity: &'a Identity,
+    kind: Kind,
+    ordinal: usize,
+    input: Option<Sha256Digest>,
+    deadline_ms: u64,
+}
+fn observe<T>(
+    attempt: Attempt<'_>,
+    sequence: &mut u64,
+    clock: &mut impl FnMut() -> Result<u64>,
+    publish: &mut impl FnMut(&Event) -> Result<()>,
+    call: impl FnOnce() -> Result<T>,
+) -> Result<Returned<T>> {
+    let Attempt {
+        identity,
+        kind,
+        ordinal,
+        input,
+        deadline_ms,
+    } = attempt;
+    ensure!(
+        (1..=120_000).contains(&deadline_ms),
+        "invalid original native operation allowance"
+    );
+    ensure!(
+        match kind {
+            Kind::Load | Kind::Warmup => ordinal == 0,
+            Kind::Sample => (1..=20).contains(&ordinal),
+            Kind::Numeric => (1..=12).contains(&ordinal),
+        },
+        "native operation ordinal differs"
+    );
+    ensure!(
+        (kind == Kind::Load) == input.is_none(),
+        "native operation input identity differs"
+    );
+    let started = clock()?;
+    let expires = started
+        .checked_add(
+            deadline_ms
+                .checked_mul(1_000_000)
+                .context("operation duration overflow")?,
+        )
+        .context("operation deadline overflow")?;
+    *sequence = sequence
+        .checked_add(1)
+        .context("operation sequence overflow")?;
+    let mut event = Event {
+        schema: "airk.arbiter.native-operation/1",
+        sequence: *sequence,
+        identity: identity.clone(),
+        kind,
+        ordinal,
+        operation_input_digest: input,
+        phase: Phase::Started,
+        clock: native_clock(),
+        started_monotonic_ns: started,
+        expires_monotonic_ns: expires,
+        observed_monotonic_ns: started,
+        native_call_elapsed_us: None,
+        native_success: None,
+    };
+    // The start is durable BEFORE the native operation. Publishing consumes the
+    // original allowance and can never renew the absolute expiry.
+    publish(&event)?;
+    let native_start = clock()?;
+    ensure!(native_start >= started, "operation clock moved backwards");
+    if native_start >= expires {
+        *sequence = sequence
+            .checked_add(1)
+            .context("operation sequence overflow")?;
+        event.sequence = *sequence;
+        event.phase = Phase::NotDispatched;
+        event.observed_monotonic_ns = native_start;
+        publish(&event)?;
+        anyhow::bail!("original native operation expired before dispatch");
+    }
+    let value = call();
+    let observation = (|| -> Result<(u64, u64)> {
+        let returned = clock()?;
+        ensure!(
+            returned >= native_start,
+            "operation return clock moved backwards"
+        );
+        let native_call_elapsed_us = (returned - native_start) / 1000;
+        *sequence = sequence
+            .checked_add(1)
+            .context("operation sequence overflow")?;
+        event.sequence = *sequence;
+        event.phase = Phase::Returned;
+        event.observed_monotonic_ns = returned;
+        event.native_call_elapsed_us = Some(native_call_elapsed_us);
+        event.native_success = Some(value.is_ok());
+        // A returned native error remains the primary typed cause if its
+        // retention also fails. No observer failure can admit another call.
+        publish(&event)?;
+        let retained = clock()?;
+        ensure!(
+            retained >= returned,
+            "operation retention clock moved backwards"
+        );
+        Ok((native_call_elapsed_us, retained))
+    })();
+    match observation {
+        Ok((native_call_elapsed_us, retained)) => Ok(Returned {
+            value,
+            elapsed_us: (retained - started).div_ceil(1000),
+            native_call_elapsed_us,
+            within_deadline: retained <= expires,
+        }),
+        Err(observation_error) => Err(match value {
+            Err(native_error) => native_error.context(format!(
+                "after-call observation also failed: {observation_error:#}"
+            )),
+            Ok(_) => observation_error.context(
+                "native operation returned successfully before after-call observation failed",
+            ),
+        }),
+    }
+}
+pub(super) struct Journal {
+    file: File,
+    identity: Identity,
+    deadline_ms: u64,
+    sequence: u64,
+}
+impl Journal {
+    pub fn create(output: &Path, identity: Identity, deadline_ms: u64) -> Result<Self> {
+        Ok(Self {
+            file: OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output.with_extension("operations.jsonl"))?,
+            identity,
+            deadline_ms,
+            sequence: 0,
+        })
+    }
+    pub fn observe<T>(
+        &mut self,
+        kind: Kind,
+        ordinal: usize,
+        input: Option<Sha256Digest>,
+        call: impl FnOnce() -> Result<T>,
+    ) -> Result<Returned<T>> {
+        let file = &mut self.file;
+        observe(
+            Attempt {
+                identity: &self.identity,
+                kind,
+                ordinal,
+                input,
+                deadline_ms: self.deadline_ms,
+            },
+            &mut self.sequence,
+            &mut airk_process::monotonic::now_ns,
+            &mut |event| {
+                let bytes = serde_json::to_vec(event)?;
+                file.write_all(&bytes)?;
+                file.write_all(b"\n")?;
+                file.flush()?;
+                file.sync_data()?;
+                Ok(())
+            },
+            call,
+        )
+    }
+}
+#[cfg(test)]
+mod tests;

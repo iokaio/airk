@@ -225,6 +225,141 @@ class ServiceClientTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "sealed inventory"):
                 CLIENTS.split_fixture_payload(runtime, root / "changed")
 
+    def original_c7_pair(self, root):
+        runtime, metadata = self.split_pair(root)
+        retained = Path(__file__).parents[2] / "fixtures/split/receipts/build_receipt_2.json"
+        receipt = json.loads(retained.read_text(encoding="utf-8"))["base"]
+        receipt["runtime"] = metadata
+        receipt["admin_assets"]["inventory_sha256"] = metadata["admin_inventory_sha256"]
+        (runtime / "airk-build.json").write_text(json.dumps(receipt), encoding="utf-8")
+        manifest_path = runtime / "airk-install.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"]["airk-build.json"] = CLIENTS.file_sha256(runtime / "airk-build.json")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return runtime, metadata
+
+    def test_original_pair_fixture_preserves_all_original_receipts_and_default_adapter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            runtime, metadata = self.original_c7_pair(root)
+            before = {name: (runtime / name).read_bytes() for name in
+                      ("airk-install.json", "airk-runtime.json", "airk-build.json")}
+            self.assertEqual(CLIENTS.original_split_pair_payload(runtime), runtime)
+            self.assertEqual({name: (runtime / name).read_bytes() for name in before}, before)
+            owner = root / "default-owner"; owner.mkdir()
+            default = CLIENTS.Fixture(runtime, owner)
+            try: self.assertFalse(default.preserve_pair_metadata)
+            finally: default.log.close()
+            legacy = CLIENTS.split_fixture_payload(runtime, root / "historical-payload")
+            self.assertEqual(json.loads((legacy / "airk-runtime.json").read_text())["schema"], 2)
+            self.assertFalse((legacy / "airk-build.json").exists())
+            self.assertEqual(json.loads(before["airk-runtime.json"]), metadata)
+
+    def test_original_pair_fixture_opt_in_stages_original_source_without_receipt_projection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            runtime, _ = self.original_c7_pair(root)
+            original = {name: (runtime / name).read_bytes() for name in
+                        ("airk-install.json", "airk-runtime.json", "airk-build.json")}
+            identity = CLIENTS.file_sha256(runtime / "airk-install.json")
+            owner = root / "owner"; owner.mkdir()
+            fixture = CLIENTS.Fixture(runtime, owner, preserve_pair_metadata=True)
+            installed = fixture.install / "runtimes" / identity
+            calls = []
+            def native(*args, **kwargs):
+                calls.append(args)
+                if args[:2] == ("runtime", "stage"):
+                    source = Path(args[args.index("--source") + 1])
+                    self.assertEqual(source, runtime)
+                    CLIENTS.shutil.copytree(source, installed)
+                    fixture.control.mkdir(parents=True)
+                    value = {}
+                elif args[:2] == ("runtime", "activate"):
+                    value = {}
+                else:
+                    self.assertEqual(args[:2], ("runtime", "inspect"))
+                    value = {"control_dir": str(fixture.control), "executable": str(installed / "airk.exe")}
+                return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
+            try:
+                with patch.object(fixture, "service_run", side_effect=native), patch.object(fixture, "rpc", return_value={
+                    "status":"health","observation":{"runtime_sha256":identity,
+                        "executable_sha256":CLIENTS.file_sha256(runtime / "airk.exe")}}), \
+                     patch.object(CLIENTS.subprocess, "Popen") as spawned:
+                    fixture.start()
+                spawned.assert_not_called()
+                self.assertEqual(len(calls), 3)
+                self.assertFalse((owner / "pair-fixture-payload").exists())
+                self.assertEqual({name: (installed / name).read_bytes() for name in original}, original)
+                self.assertEqual({name: (runtime / name).read_bytes() for name in original}, original)
+            finally: fixture.log.close()
+
+    def test_original_pair_fixture_refuses_unverified_mismatched_or_invented_build_authority(self):
+        for mutation in ("build_schema", "missing_report", "unknown_field", "foreign_pair", "unsealed_build", "image", "unsafe_path"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                runtime, _ = self.original_c7_pair(root)
+                manifest_path = runtime / "airk-install.json"
+                manifest = json.loads(manifest_path.read_text())
+                receipt = json.loads((runtime / "airk-build.json").read_text())
+                if mutation == "build_schema": receipt["schema"] = 1
+                if mutation == "missing_report": receipt.pop("airkctl_static_imports")
+                if mutation == "unknown_field": receipt["invented_source_authority"] = True
+                if mutation == "foreign_pair": receipt["runtime"]["airk_sha256"] = "f" * 64
+                if mutation == "unsealed_build": receipt["source"]["sha256"] = "f" * 64
+                (runtime / "airk-build.json").write_text(json.dumps(receipt))
+                if mutation != "unsealed_build":
+                    manifest["files"]["airk-build.json"] = CLIENTS.file_sha256(runtime / "airk-build.json")
+                if mutation == "image": (runtime / "airkctl.exe").write_bytes(b"tampered image")
+                if mutation == "unsafe_path": manifest["files"]["../foreign"] = "f" * 64
+                manifest_path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError): CLIENTS.original_split_pair_payload(runtime)
+                owner = root / "owner"; owner.mkdir()
+                with self.assertRaises(ValueError): CLIENTS.Fixture(runtime, owner, preserve_pair_metadata="yes")
+                self.assertFalse((owner / "service.stderr").exists())
+
+    def test_original_pair_raw_metadata_refuses_duplicates_before_object_validation(self):
+        for raw in ('{"source":{"files":0,"files":1834}}',
+                    '{"runtime":{"airkctl_sha256":"wrong","airkctl_sha256":"right"}}',
+                    '{"runtime":{},"runtime":{}}'):
+            with self.assertRaisesRegex(ValueError, "Duplicate"):
+                CLIENTS.original_pair_json(raw)
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime, _ = self.original_c7_pair(Path(temporary).resolve())
+            build = runtime / "airk-build.json"
+            raw = build.read_text()
+            raw = raw.replace('"runtime":', '"runtime":{},"runtime":', 1)
+            build.write_text(raw)
+            path = runtime / "airk-install.json"
+            manifest = json.loads(path.read_text())
+            manifest["files"]["airk-build.json"] = CLIENTS.file_sha256(build)
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "Duplicate"):
+                CLIENTS.original_split_pair_payload(runtime)
+
+    def test_original_pair_opt_in_bounds_before_any_metadata_parser_or_hasher(self):
+        for name, maximum in (("airk-runtime.json", 4096), ("airk-install.json", 512 * 1024),
+                              ("airk-build.json", 16384)):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                runtime, _ = self.original_c7_pair(root)
+                path = runtime / name
+                raw = path.read_bytes()
+                path.write_bytes(raw + b" " * (maximum + 1 - len(raw)))
+                if name != "airk-install.json":
+                    manifest_path = runtime / "airk-install.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["files"][name] = CLIENTS.file_sha256(path)
+                    manifest_path.write_text(json.dumps(manifest))
+                with patch.object(CLIENTS, "original_pair_json", side_effect=AssertionError("parsed before bound")), \
+                     patch.object(CLIENTS, "file_sha256", side_effect=AssertionError("hashed before bound")):
+                    with self.assertRaisesRegex(ValueError, "bound"):
+                        CLIENTS.original_split_pair_payload(runtime)
+                owner = root / "owner"; owner.mkdir()
+                with patch.object(CLIENTS, "classify_runtime", side_effect=AssertionError("classified before bound")):
+                    with self.assertRaisesRegex(ValueError, "bound"):
+                        CLIENTS.Fixture(runtime, owner, preserve_pair_metadata=True)
+                self.assertFalse((owner / "service.stderr").exists())
+
     def test_split_pair_routes_user_commands_to_airkctl_and_service_operations_to_airk(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

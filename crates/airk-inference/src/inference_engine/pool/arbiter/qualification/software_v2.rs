@@ -19,7 +19,6 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
 };
 
 struct Files(BTreeMap<String, String>);
@@ -170,9 +169,6 @@ impl std::fmt::Display for ObservedNativeFailure {
     }
 }
 impl std::error::Error for ObservedNativeFailure {}
-fn micros(start: Instant) -> Result<u64> {
-    Ok(u64::try_from(start.elapsed().as_micros())?)
-}
 fn flush(file: &mut File, receipt: &Value) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(receipt)?;
     file.seek(SeekFrom::Start(0))?;
@@ -321,7 +317,7 @@ fn software_v2_selected_native_resources() -> Result<()> {
         .write(true)
         .create_new(true)
         .open(&output)?;
-    let binary = std::env::current_exe()?;
+    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
     let mut receipt = json!({"schema":"airk.arbiter.native-resource/2","complete":false,
         "evaluation":true,"release_qualified":false,"candidate_resource_passed":false,
         "input_sha256":input_hash,"source_manifest":input.source_manifest,
@@ -329,57 +325,93 @@ fn software_v2_selected_native_resources() -> Result<()> {
         "resource_policy":input.policy,"resource_policy_digest":input.policy_digest,
         "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
         "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
-        "native_binary_sha256":file_hash(&binary)?,"resource":ResourceSeries::new(profile.memory_reservation_bytes)?,
+        "native_binary_sha256":binary_sha256,"resource":ResourceSeries::new(profile.memory_reservation_bytes)?,
+        "operation_journal":output.with_extension("operations.jsonl"),
+        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
         "numeric_status":"unavailable_in_resource_only_run",
         "scope":"Actual service-lease native score-return/clock/process-lifetime-RSS observations only. No task quality, composed service admission, cold end-to-end, calibrated action, platform transfer or publication claim."});
     flush(&mut file, &receipt)?;
+    let mut operations = operation::Journal::create(
+        &output,
+        operation::Identity {
+            input_sha256: input_hash,
+            profile: profile.manifest,
+            process_id: std::process::id(),
+            native_binary_sha256: binary_sha256,
+        },
+        input.policy.deadline_ms,
+    )?;
     let (_parent, control) = private_control()?;
     let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
         airk_store::service::ServiceLease::acquire(&control)?,
     ))?;
     let run = owner.run(|| -> Result<()> {
         verify_files(&files, &profile)?;
-        let started = Instant::now();
-        let loaded = Scorer::open(
-            ExecutionProfile::for_qualification(profile.clone())?,
-            &files,
-        );
-        receipt["load_us"] = json!(micros(started)?);
+        let loaded = operations.observe(operation::Kind::Load, 0, None, || {
+            Scorer::open(
+                ExecutionProfile::for_qualification(profile.clone())?,
+                &files,
+            )
+        })?;
+        receipt["load_us"] = json!(loaded.elapsed_us);
+        receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
         receipt["load_peak_process_rss_bytes"] = json!(peak_rss());
         flush(&mut file, &receipt)?;
-        let scorer = loaded?;
+        ensure!(
+            loaded.within_deadline,
+            "original native load deadline exceeded"
+        );
+        let scorer = loaded.value?;
         receipt["execution_identity"] = serde_json::to_value(scorer.execution_identity()?)?;
         let compiled = resource_input(&profile, &files, |state, question, candidates| {
             scorer.compile(state, question, candidates)
         })?;
         receipt["input"] = serde_json::to_value(&compiled)?;
-        let start = Instant::now();
-        let warmed = scorer.score(&compiled);
-        let warmup_us = micros(start)?;
+        let warmed = operations.observe(
+            operation::Kind::Warmup,
+            0,
+            Some(compiled.input_digest),
+            || scorer.score(&compiled),
+        )?;
         let peak = peak_rss().context("actual native process peak RSS unavailable")?;
-        receipt["warmup"] = json!({"elapsed_us":warmup_us,"peak_process_rss_bytes":peak,
-            "returned":true,"success":warmed.is_ok()});
+        receipt["warmup"] = json!({"elapsed_us":warmed.elapsed_us,
+            "native_call_elapsed_us":warmed.native_call_elapsed_us,"peak_process_rss_bytes":peak,
+            "returned":true,"success":warmed.value.is_ok()});
         flush(&mut file, &receipt)?;
-        warmed?;
         ensure!(
-            warmup_us <= input.policy.p95_limit_us && peak <= profile.memory_reservation_bytes,
+            warmed.within_deadline,
+            "original native warmup deadline exceeded"
+        );
+        warmed.value?;
+        ensure!(
+            warmed.elapsed_us <= input.policy.p95_limit_us
+                && peak <= profile.memory_reservation_bytes,
             "first warmup exceeded frozen native resource bound; no measured forward admitted"
         );
         let mut series = ResourceSeries::new(profile.memory_reservation_bytes)?;
+        let mut ordinal = 0;
         let result = observe_series(
             &mut series,
             &input.policy,
             || {
-                let started = Instant::now();
-                let scored = scorer.score(&compiled);
-                let elapsed_us = micros(started)?;
+                ordinal += 1;
+                let scored = operations.observe(
+                    operation::Kind::Sample,
+                    ordinal,
+                    Some(compiled.input_digest),
+                    || scorer.score(&compiled),
+                )?;
+                let elapsed_us = scored.elapsed_us;
                 let peak_process_rss_bytes = peak_rss().context("actual native RSS unavailable")?;
-                scored.map_err(|error| {
+                scored.value.map_err(|error| {
                     error.context(ObservedNativeFailure {
                         elapsed_us,
                         peak_process_rss_bytes,
                     })
                 })?;
+                // Original operation time includes both durable observer publications.
+                // A late return therefore enters the real partial series as overrun,
+                // and Core refuses the next forward without inventing a zero sample.
                 Ok(ResourceSample {
                     elapsed_us,
                     peak_process_rss_bytes,
@@ -594,7 +626,8 @@ fn software_v2_selected_native_numeric() -> Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(output)?;
+        .open(&output)?;
+    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
     let mut receipt = json!({"schema":"airk.arbiter.native-numeric-result/2","complete":false,"evaluation":true,
         "release_qualified":false,"input_sha256":input_hash,"profile":profile.manifest,
         "profile_source_sha256":input.profile.sha256,"fixture":pin,"source_manifest":input.source_manifest,
@@ -602,24 +635,49 @@ fn software_v2_selected_native_numeric() -> Result<()> {
         "resource_policy_digest":input.policy_digest,"resource_policy":input.policy,
         "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
         "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
-        "native_binary_sha256":file_hash(&std::env::current_exe()?)?,
+        "native_binary_sha256":binary_sha256,"operation_journal":output.with_extension("operations.jsonl"),
+        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
         "rows":[],"scope":"Actual native raw-logit/mass/argmax comparisons with separately pinned independent references; no semantic/calibration/composed-path/publication qualification."});
+    flush(&mut file, &receipt)?;
+    let mut operations = operation::Journal::create(
+        &output,
+        operation::Identity {
+            input_sha256: input_hash,
+            profile: profile.manifest,
+            process_id: std::process::id(),
+            native_binary_sha256: binary_sha256,
+        },
+        input.policy.deadline_ms,
+    )?;
     let (_parent, control) = private_control()?;
     let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
         airk_store::service::ServiceLease::acquire(&control)?,
     ))?;
     let run=owner.run(||->Result<()>{verify_files(&files,&profile)?;
-        let scorer=Scorer::open(ExecutionProfile::for_qualification(profile.clone())?,&files)?;
+        let loaded=operations.observe(operation::Kind::Load,0,None,|| {
+            Scorer::open(ExecutionProfile::for_qualification(profile.clone())?,&files)
+        })?;
+        receipt["load_us"]=json!(loaded.elapsed_us);
+        receipt["load_native_call_us"]=json!(loaded.native_call_elapsed_us);
+        receipt["load_peak_process_rss_bytes"]=json!(peak_rss());
+        flush(&mut file,&receipt)?;
+        ensure!(loaded.within_deadline,"original native numeric load deadline exceeded");
+        let scorer=loaded.value?;
         receipt["execution_identity"]=serde_json::to_value(scorer.execution_identity()?)?;
-        for row in &fixture.rows {
-            let started=Instant::now();let actual=scorer.score(&row.input)?;let elapsed_us=micros(started)?;
+        for (ordinal,row) in fixture.rows.iter().enumerate() {
+            let scored=operations.observe(operation::Kind::Numeric,ordinal+1,Some(row.input.input_digest),||scorer.score(&row.input))?;
+            let elapsed_us=scored.elapsed_us;
+            let native_call_elapsed_us=scored.native_call_elapsed_us;
+            let within_deadline=scored.within_deadline;
+            let actual=scored.value?;
             let(same_raw,same_mass,same_argmax)=comparison(&actual,row.reference_same_artifact.as_ref().context("same-artifact reference")?)?;
             let(original_raw,original_mass,original_argmax)=comparison(&actual,row.reference_original_fp32.as_ref().context("original FP32 reference")?)?;
             receipt["rows"].as_array_mut().context("numeric result rows")?.push(json!({"name":row.name,
                 "input_digest":row.input.input_digest,"tokens":row.input.input_ids.len(),"options":row.input.candidate_positions.len(),
-                "raw_scores":actual,"elapsed_us":elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,
+                "raw_scores":actual,"elapsed_us":elapsed_us,"native_call_elapsed_us":native_call_elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,
                 "original_fp32_raw_error":original_raw,"original_fp32_mass_error":original_mass,"argmax_matches":same_argmax&&original_argmax}));
             flush(&mut file,&receipt)?;
+            ensure!(within_deadline,"original native numeric score deadline exceeded; exact returned partial rows retained");
             let focus=profile.model==ModelChoice::FocusQwenReranker06B;
             ensure!(same_raw<=0.001&&same_mass<=if focus{0.00001}else{0.05}
                 &&original_raw<=if focus{0.25}else{0.001}&&original_mass<=0.05&&same_argmax&&original_argmax,
@@ -734,6 +792,7 @@ fn emit_software_v2_native_numeric_template() -> Result<()> {
     Ok(())
 }
 
+mod operation;
 mod original_sources;
 
 #[cfg(test)]

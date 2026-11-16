@@ -378,3 +378,30 @@ measurements remain distinct from actual composed/end-to-end observations.
 This is a private evidence-validator decision under existing D06, with no new
 wire fields or digest inputs. Native historical receipts stay unchanged; current
 limits flow only from the exact policy already approved by the final decision.
+
+## Retained current-policy owned execution projection
+
+A test-only native projection may consume a SHA-pinned immutable raw launcher
+execution and its actual retained native capture, original plan/input/Profile,
+stdout, journal and named input seals. It emits the existing
+`airk.private.software-v2-owned-execution/1` owner shape using the same
+`settled_owner` and committed-memory guard as the final consumer. It never runs
+a model, repairs a failed owner, emits a RecordedDecision, invents process
+settlement or grants source/target/promotion approval. Missing raw facts refuse.
+The original raw document remains separately pinned in the canonical owner.
+
+Job committed containment caps are distinct from native RSS measurements.
+Actual owned committed bytes must be positive and within the native Profile
+reservation even when RSS and all native measurements pass. An over-reservation
+execution stays a retained refusal, with its original model outputs preserved.
+Final `owned_execution`/`source_closure` still authenticate full source/image/
+selector/input custody and require separately recorded exact result approval.
+
+The same zero-NN emitter also serializes the existing native `Execution` type.
+It derives Gate from the retained native resource/2 or numeric-result/2 schema,
+and Binding through the existing native `binding(Profile, profile SHA, actual
+capture target)` owner. Input/capture/owner/preserved-image pins are the actual
+retained files. Both canonical outputs are create-new siblings of the original
+protected raw-run document. Emission does not populate any approved-SHA set;
+separate post-result source/metric review and RecordedDecision remain mandatory.
+Raw execution, stdout, journal and both canonical projections remain distinct.

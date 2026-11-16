@@ -8,6 +8,9 @@ use airk_store::service::arbiter_assets::{AssetStore, Phase, PinnedAssets};
 use airk_supervisor::project_supervisor::{ArbiterManagement, Supervisor};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(all(test, feature = "test-support"))]
+pub(in crate::service_runtime) mod acquisition_fixture;
+
 pub(super) struct State {
     serial: u64,
     accepted_configure_revision: u64,

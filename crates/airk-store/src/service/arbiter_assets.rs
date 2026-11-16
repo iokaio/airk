@@ -17,6 +17,9 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+#[cfg(feature = "test-support")]
+pub mod hash_observer;
+
 mod offline;
 pub use offline::OfflineBundle;
 
@@ -134,12 +137,16 @@ fn hash(file: &mut File, asset: &Asset) -> Result<()> {
     let mut digest = Sha256::new();
     let mut remaining = asset.bytes;
     let mut buffer = [0_u8; 65536];
+    #[cfg(feature = "test-support")]
+    let mut observed = hash_observer::HashScope::new(asset);
     while remaining > 0 {
         let limit = usize::try_from(remaining.min(buffer.len() as u64))?;
         let n = file.read(&mut buffer[..limit])?;
         ensure!(n > 0, "Arbiter asset shortened");
         digest.update(&buffer[..n]);
         remaining -= u64::try_from(n)?;
+        #[cfg(feature = "test-support")]
+        observed.after_digest(asset.bytes - remaining);
     }
     let mut extra = [0];
     ensure!(

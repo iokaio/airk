@@ -9,6 +9,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Native observation helpers for downstream tests; absent from production defaults.
+test-support = []
+
 [dependencies]
 airk-core.workspace = true
 anyhow.workspace = true
