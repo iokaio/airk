@@ -364,23 +364,42 @@ pub(crate) fn register_login(
             ),
         };
     }
-    let result = (|| -> Result<&'static str> {
+    let result = (|| -> Result<(&'static str, Option<String>)> {
         let manager = airk_installer::service_manager::ServiceManager::for_installation(
             state,
             airk,
             &install_id.to_string(),
         )?;
         if manager.owned_registration_exists()? {
-            return Ok("already_registered");
+            return Ok(("already_registered", None));
         }
-        manager.register()?;
-        Ok("registered")
+        // An OS entry with this installation's name but no ownership records
+        // is replaced only when proven to be AIRK's own login entry for this
+        // program image (any former install id); anything else is refused.
+        let replaced = manager.replace_orphaned_split_login()?;
+        let registered = manager.register();
+        match &replaced {
+            Some(old) => registered.with_context(|| {
+                format!("after removing the orphaned login entry of former install id {old}")
+            })?,
+            None => registered?,
+        };
+        Ok(match replaced {
+            Some(old) => ("replaced_orphaned", Some(old)),
+            None => ("registered", None),
+        })
     })();
     match result {
-        Ok(outcome) => (
+        Ok((outcome, replaced)) => (
             SetupPhase::LoginRegistered,
             outcome,
-            airk.display().to_string(),
+            match replaced {
+                Some(old) => format!(
+                    "{}; replaced the orphaned login entry of former install id {old}",
+                    airk.display()
+                ),
+                None => airk.display().to_string(),
+            },
         ),
         Err(error) => (
             SetupPhase::LoginFailed,

@@ -636,3 +636,80 @@ fn unbound_legacy_inventory_cannot_add_foreign_cleanup_targets() {
             .any(|(name, _, _)| name == "foreign-source.txt" || name == "payload-inventory.json")
     );
 }
+
+#[test]
+fn only_recognizable_unowned_airk_folders_are_set_aside_and_nothing_is_deleted()
+-> anyhow::Result<()> {
+    let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    // Real 1.8.202 layouts (data/state/logs) and an AIRK program folder.
+    assert!(plan::recognizably_airk(
+        "state",
+        &names(&["setup", "http-1", "service-1.4.owner.json"]),
+        &[]
+    ));
+    assert!(plan::recognizably_airk(
+        "state",
+        &names(&["index-catalog-genesis.json"]),
+        &[]
+    ));
+    assert!(plan::recognizably_airk(
+        "data",
+        &names(&["airk"]),
+        &names(&["collections-1.4", "service-data-1.4.owner.json"])
+    ));
+    assert!(plan::recognizably_airk(
+        "logs",
+        &names(&["logs-1.4", "logs-1.4.owner.json"]),
+        &[]
+    ));
+    assert!(plan::recognizably_airk(
+        "program",
+        &names(&["bin", "service", "payload-inventory.json"]),
+        &[]
+    ));
+    // Ordinary user folders, or AIRK-looking names in the wrong role, keep refusing.
+    assert!(!plan::recognizably_airk(
+        "state",
+        &names(&["notes.txt", "setup"]),
+        &[]
+    ));
+    assert!(!plan::recognizably_airk(
+        "data",
+        &names(&["airk"]),
+        &names(&["photos"])
+    ));
+    assert!(!plan::recognizably_airk(
+        "logs",
+        &names(&["service-1.4.owner.json"]),
+        &[]
+    ));
+    assert!(!plan::recognizably_airk("cache", &names(&["big.iso"]), &[]));
+    assert!(!plan::recognizably_airk(
+        "program",
+        &names(&["readme.md"]),
+        &[]
+    ));
+    assert!(!plan::recognizably_airk(
+        "state",
+        &names(&[".owner.json"]),
+        &[]
+    ));
+
+    let temporary = tempfile::tempdir()?;
+    let logs = temporary.path().join("logs");
+    std::fs::create_dir_all(logs.join("logs-1.4"))?;
+    std::fs::write(logs.join("logs-1.4.owner.json"), b"{}")?;
+    assert!(super::files::recognizably_airk("logs", &logs)?);
+    // 2026-11-15T23:58:20Z
+    let moved = super::files::set_aside(&logs, 1_794_787_100_000)?;
+    assert_eq!(moved.file_name().unwrap(), "logs.previous-20261115-235820");
+    assert!(!logs.exists());
+    assert!(moved.join("logs-1.4.owner.json").is_file());
+    std::fs::create_dir_all(logs.join("logs-1.4"))?;
+    let again = super::files::set_aside(&logs, 1_794_787_100_000)?;
+    assert_eq!(
+        again.file_name().unwrap(),
+        "logs.previous-20261115-235820-1"
+    );
+    Ok(())
+}

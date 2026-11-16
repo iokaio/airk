@@ -1483,6 +1483,34 @@ unconsumed or reuse it to select the new path. New MiniLM recovery training and
 its required export/quality/regeneration qualification remain separate from the
 selected optional-model path.
 
+### 15 November 2026: self-healing setup after a failed or abandoned install
+
+A 1.8.202 setup defect left the user's machine in three states that no later
+installer could resolve, each needing hand edits. The user decided that setup
+must resolve them itself:
+
+1. **Abandoned setup takeover.** An unsettled setup owner of another operation
+   whose own receipt is closed with a failure, or whose operation lifetime has
+   expired (crash, power loss), no longer blocks every later installer. Under
+   the installation lock, a different verified, signed placing operation archives
+   the owner's exact bytes under `setup-history/superseded/` and takes over. Its
+   published I4 pair, if any, stays current and becomes the existing
+   installation. A live owner (unexpired, not failed) still refuses. The review
+   page discloses the takeover.
+2. **Orphaned login entry.** An OS login entry with this installation's derived
+   name but no ownership records is replaced only when it provably runs this
+   installation's `airk` image as exactly `__airk_role service-login
+   --install-id <id>`. Anything else keeps refusing and names the difference.
+3. **Unowned AIRK folders.** A fresh admission renames non-empty data, state,
+   logs, cache or program locations that no installation owns, but that are
+   recognizably AIRK's, to `<folder>.previous-<UTC date-time>`, disclosed on the
+   review page before anything changes. Nothing is deleted and old indexes are
+   not reused. Unrecognized folders keep the "choose an empty folder" refusal.
+
+No persisted format changes: the archive reuses the private record shape, the
+setup receipt records these as leftovers (`superseded:`/`set_aside:`), and the
+plan JSON gains additive `takeover`/`set_aside` keys.
+
 ## 13. References
 
 | Area | Starting points |

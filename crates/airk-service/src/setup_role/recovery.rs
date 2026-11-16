@@ -180,6 +180,7 @@ pub(super) fn review(request: &SetupRequest, clock: Clock) -> Result<Setup> {
         host: Host::current(),
         readiness: None,
         owner,
+        takeover: None,
         retained: None,
         receipt,
     })

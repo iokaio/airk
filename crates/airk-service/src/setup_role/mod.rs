@@ -201,6 +201,18 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     } else {
         Some(files::lock()?)
     };
+    // Recorded decision 15 Nov 2026: an abandoned owner of another operation
+    // (its receipt closed with a failure, or its lifetime expired) no longer
+    // blocks every later installer. Under the lock it is archived and this
+    // verified operation is admitted (setup_role CONTRACT "Abandoned setup
+    // takeover"); Plan only reports it.
+    let takeover = if plan::removes(operation.kind) {
+        None
+    } else if request.mode == SetupMode::Plan {
+        transaction::abandoned_owner(&pointer_path, &operation, clock())?.map(|(found, _)| found)
+    } else {
+        transaction::supersede_abandoned(&pointer_path, &operation, clock())?
+    };
     let owner = if request.mode == SetupMode::Plan {
         None
     } else {
@@ -242,8 +254,23 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         host: Host::current(),
         readiness: None,
         owner,
+        takeover,
         retained: None,
     };
+    if let Some(found) = setup
+        .takeover
+        .as_ref()
+        .filter(|_| request.mode != SetupMode::Plan)
+    {
+        setup.receipt.leftovers.push(Leftover {
+            item: format!("setup operation {}", found.operation_id),
+            reason: format!(
+                "superseded: the {}; it was archived under setup-history/superseded and this setup took over",
+                found.describe()
+            ),
+            restarts_old_service: false,
+        });
+    }
     if request.mode == SetupMode::Plan {
         if setup.existing.is_none() {
             setup.retained = transaction::retained_for(&pointer_path, &setup.operation.locations)?;
@@ -304,10 +331,25 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         setup.verify_payload()?;
     }
     if setup.owner.is_none() {
-        let admission_roots = transaction::admission_roots(&setup.operation.locations)?;
         if setup.existing.is_none() && !plan::removes(setup.operation.kind) {
             setup.retained = transaction::retained_for(&pointer_path, &setup.operation.locations)?;
         }
+        if request.mode == SetupMode::Prepare && !plan::removes(setup.operation.kind) {
+            // Unowned AIRK folders disclosed on the review page are renamed
+            // aside before the admission snapshot; nothing is deleted.
+            for (role, path) in setup.set_aside_candidates()? {
+                let moved = files::set_aside(&path, clock())?;
+                setup.receipt.leftovers.push(Leftover {
+                    item: moved.display().to_string(),
+                    reason: format!(
+                        "set_aside: the earlier AIRK {role} folder {} belonged to no installation and was renamed here; delete it when it is no longer needed",
+                        path.display()
+                    ),
+                    restarts_old_service: false,
+                });
+            }
+        }
+        let admission_roots = transaction::admission_roots(&setup.operation.locations)?;
         setup.compatibility_preflight()?;
         let problems = setup.location_problems()?;
         ensure!(
@@ -417,10 +459,26 @@ pub(crate) fn leftover_notice(leftovers: &[Leftover]) -> Option<String> {
     if leftovers.is_empty() {
         return None;
     }
-    let mut text = String::from(
+    // Recovery records (set aside / superseded) were handled, not left running.
+    let handled = |leftover: &&Leftover| {
+        leftover.reason.starts_with("set_aside:") || leftover.reason.starts_with("superseded:")
+    };
+    let mut text = String::new();
+    let recovered: Vec<&Leftover> = leftovers.iter().filter(handled).collect();
+    if !recovered.is_empty() {
+        text.push_str("Setup recovered from an earlier AIRK installation that could not finish:\n");
+        for leftover in &recovered {
+            text.push_str(&format!("  - {}: {}\n", leftover.item, leftover.reason));
+        }
+    }
+    let remaining: Vec<&Leftover> = leftovers.iter().filter(|item| !handled(item)).collect();
+    if remaining.is_empty() {
+        return Some(text);
+    }
+    text.push_str(
         "AIRK Service is installed, but setup could not remove these earlier AIRK items. They are still installed and may still be running:\n",
     );
-    for leftover in leftovers {
+    for leftover in remaining {
         text.push_str(&format!("  - {}: {}\n", leftover.item, leftover.reason));
         if leftover.restarts_old_service {
             text.push_str("    (this can start the old AIRK service again at sign-in)\n");
@@ -524,6 +582,9 @@ fn verify_existing(pointer: &Path) -> Result<()> {
     }
 }
 
+/// Location problems, and unowned AIRK folders to set aside (role, path).
+type LocationReview = (Vec<String>, Vec<(&'static str, PathBuf)>);
+
 /// One running setup operation.
 struct Setup {
     operation: SetupOperation,
@@ -538,6 +599,9 @@ struct Setup {
     /// independent steps, never hidden (§9.6.4).
     readiness: Option<(String, String)>,
     owner: Option<transaction::Owner>,
+    /// An abandoned owner of another operation this setup takes over (Plan:
+    /// what would be taken over).
+    takeover: Option<transaction::Abandoned>,
     retained: Option<airk_core::install_record::setup_recovery::RetainedInstallation>,
 }
 
@@ -665,15 +729,30 @@ impl Setup {
     /// U39/U50 location checks (placing kinds) or the installation match
     /// (removing kinds); problems are returned, not raised.
     fn location_problems(&self) -> Result<Vec<String>> {
+        Ok(self.review_locations()?.0)
+    }
+
+    /// Non-empty locations no installation owns that AIRK evidently made; a
+    /// fresh admission sets them aside instead of refusing (recorded decision
+    /// 15 Nov 2026, setup_role CONTRACT "Unowned AIRK folders").
+    fn set_aside_candidates(&self) -> Result<Vec<(&'static str, PathBuf)>> {
+        Ok(self.review_locations()?.1)
+    }
+
+    fn review_locations(&self) -> Result<LocationReview> {
+        let mut set_aside = Vec::new();
         let locations = &self.operation.locations;
         if plan::removes(self.operation.kind) {
-            return Ok(match &self.existing {
-                Some(installed) if installed.record.locations != *locations => vec![format!(
-                    "operation_installation_mismatch: the operation names other locations than the installation at {}",
-                    installed.pointer.program
-                )],
-                _ => Vec::new(),
-            });
+            return Ok((
+                match &self.existing {
+                    Some(installed) if installed.record.locations != *locations => vec![format!(
+                        "operation_installation_mismatch: the operation names other locations than the installation at {}",
+                        installed.pointer.program
+                    )],
+                    _ => Vec::new(),
+                },
+                set_aside,
+            ));
         }
         let mut problems =
             plan::location_conflicts(locations, &effects::reserved_roots()?, cfg!(windows));
@@ -760,14 +839,22 @@ impl Setup {
                 }),
                 _ => files::absent_or_empty(&path)?,
             };
-            if !acceptable {
-                problems.push(format!(
-                    "{role} location {} is not empty and is not this installation's; choose an empty folder",
-                    path.display()
-                ));
+            if acceptable {
+                continue;
             }
+            if self.owner.is_none()
+                && self.mode == Mode::Prepare
+                && files::recognizably_airk(role, &path)?
+            {
+                set_aside.push((role, path));
+                continue;
+            }
+            problems.push(format!(
+                "{role} location {} is not empty and is not this installation's; choose an empty folder",
+                path.display()
+            ));
         }
-        Ok(problems)
+        Ok((problems, set_aside))
     }
 
     fn lock(&mut self) -> Result<()> {
@@ -1727,7 +1814,7 @@ impl Setup {
         let operation = effects::retirement_operation(self.operation.operation_id);
         let predecessors = effects::predecessors(&candidate, &operation)?;
         let mut unretired = effects::unretired_items()?;
-        let problems = self.location_problems()?;
+        let (problems, set_aside) = self.review_locations()?;
         let blockers: Vec<String> = if plan::removes(self.operation.kind) {
             Vec::new()
         } else {
@@ -1777,6 +1864,18 @@ impl Setup {
                 text.push_str(&format!("  - {}: {}\r\n", item.item, item.reason));
             }
         }
+        if let Some(found) = &self.takeover {
+            text.push_str(&format!(
+                "The {}. It cannot finish, so this setup will take over; its record is kept in the setup history.\r\n",
+                found.describe()
+            ));
+        }
+        if !set_aside.is_empty() {
+            text.push_str("These earlier AIRK folders belong to no installation. They will be renamed to <folder>.previous-<date> and kept; this installation starts with new, empty folders (indexes must be added again):\r\n");
+            for (role, path) in &set_aside {
+                text.push_str(&format!("  - {role}: {}\r\n", path.display()));
+            }
+        }
         if !problems.is_empty() {
             text.push_str("The chosen locations cannot be used:\r\n");
             for problem in &problems {
@@ -1796,6 +1895,8 @@ impl Setup {
             "predecessors": found,
             "leftovers": unretired,
             "location_problems": problems,
+            "set_aside": set_aside.iter().map(|(role, path)| json!({"role": role, "path": path.display().to_string()})).collect::<Vec<_>>(),
+            "takeover": self.takeover.as_ref().map(transaction::Abandoned::describe),
             "blockers": blockers,
             "existing_installation": self.existing.as_ref().map(|installed| json!({
                 "install_id": installed.record.install_id,

@@ -802,6 +802,67 @@ impl ServiceManager {
         self.check_owned()
     }
 
+    /// Split login only: remove an orphaned OS login entry with this
+    /// installation's derived name before `register`. The entry is replaced
+    /// only when no owned registration exists and the OS entry is provably
+    /// AIRK's own split login entry for this installation's program image:
+    /// exactly one command, this manager's `airk` executable, and exactly
+    /// `__airk_role service-login --install-id <32 lowercase hex>` (any install
+    /// id). Returns the replaced entry's install id; `None` when nothing was
+    /// registered, an owned registration exists, or the platform (macOS) uses
+    /// another adapter. A same-named foreign entry is refused, naming what
+    /// differed.
+    pub fn replace_orphaned_split_login(&self) -> Result<Option<String>> {
+        if !self.is_split_login() || self.platform == Platform::Macos || self.check_owned()? {
+            return Ok(None);
+        }
+        let expected = self
+            .executable
+            .to_str()
+            .context("service executable must be UTF-8")?;
+        let refusal = || {
+            format!(
+                "login_startup_ownership_unproven: OS startup entry {} exists without this installation's ownership records and is not its AIRK login entry; inspect OS startup configuration",
+                self.id
+            )
+        };
+        match self.platform {
+            Platform::Windows => {
+                // A leftover local definition is not an orphan of this rule;
+                // registration keeps refusing it unchanged.
+                if self.definition.try_exists()? {
+                    return Ok(None);
+                }
+                let output = execute(&self.query(false)?)?;
+                match self.observed_state(&output).0 {
+                    Some(false) => return Ok(None),
+                    Some(true) => (),
+                    None => bail!("service manager status is unavailable: {}", output.text),
+                }
+                let old = windows_observed_entry(&output.text)
+                    .and_then(|observed| orphaned_split_login(expected, &observed, true))
+                    .with_context(refusal)?;
+                checked(&self.schtasks(&["/Delete", "/TN", &self.id, "/F"])?)?;
+                Ok(Some(old))
+            }
+            Platform::Linux => {
+                let Some(unit) = read_config(&self.definition)? else {
+                    return Ok(None);
+                };
+                let old = String::from_utf8(unit)
+                    .context("unit file is not UTF-8")
+                    .and_then(|unit| systemd_observed_entry(&unit))
+                    .and_then(|observed| orphaned_split_login(expected, &observed, false))
+                    .with_context(refusal)?;
+                checked(&self.systemctl(&["disable", &self.unit()]))?;
+                fs::remove_file(&self.definition)?;
+                self.reload_user_manager()?;
+                Ok(Some(old))
+            }
+            Platform::Macos => Ok(None),
+        }
+    }
+
     fn require_registration_adapter(&self) -> Result<()> {
         ensure!(
             !(self.id.starts_with("airksvc-") && self.platform == Platform::Macos),
@@ -1263,6 +1324,240 @@ fn checked(invocation: &Invocation) -> Result<()> {
     );
     Ok(())
 }
+
+/// The commands an existing OS startup entry runs, as the OS reports them.
+#[derive(Debug)]
+struct ObservedEntry {
+    /// Each command action: executable and its argument tokens.
+    exec: Vec<(String, Vec<String>)>,
+    /// Actions that are not commands (Task Scheduler e-mail/message/COM
+    /// handlers; systemd `Exec*` hooks other than `ExecStart`).
+    other_actions: usize,
+}
+
+/// Split login orphan proof: the install id named by an entry that runs this
+/// installation's `airk` image as exactly `__airk_role service-login
+/// --install-id <id>`. Any difference is an error naming it.
+fn orphaned_split_login(
+    expected_executable: &str,
+    observed: &ObservedEntry,
+    case_insensitive: bool,
+) -> Result<String> {
+    ensure!(
+        observed.other_actions == 0,
+        "it has {} non-command action(s)",
+        observed.other_actions
+    );
+    let [(executable, arguments)] = observed.exec.as_slice() else {
+        bail!(
+            "it has {} command actions, not exactly one",
+            observed.exec.len()
+        );
+    };
+    let (found, expected) = (
+        comparable_executable(executable),
+        comparable_executable(expected_executable),
+    );
+    ensure!(
+        if case_insensitive {
+            found.eq_ignore_ascii_case(&expected)
+        } else {
+            found == expected
+        },
+        "it runs `{executable}`, not this installation's `{expected_executable}`"
+    );
+    match arguments.as_slice() {
+        [role, name, flag, id]
+            if role == "__airk_role"
+                && name == "service-login"
+                && flag == "--install-id"
+                && id.len() == 32
+                && id
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) =>
+        {
+            Ok(id.clone())
+        }
+        _ => bail!(
+            "its arguments {arguments:?} are not `__airk_role service-login --install-id <32 lowercase hex>`"
+        ),
+    }
+}
+
+/// An absolute existing path resolves to its canonical, unprefixed form;
+/// anything else compares as written.
+fn comparable_executable(path: &str) -> String {
+    let unquoted = path
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or(path);
+    let candidate = Path::new(unquoted);
+    match candidate.is_absolute().then(|| candidate.canonicalize()) {
+        Some(Ok(resolved)) => windows_path(&resolved.to_string_lossy()),
+        _ => windows_path(unquoted),
+    }
+}
+
+/// The Task Scheduler adapter's report of a loaded task's actions.
+fn windows_observed_entry(report: &str) -> Result<ObservedEntry> {
+    let value: serde_json::Value =
+        serde_json::from_str(report).context("Task Scheduler report is unreadable")?;
+    let other_actions = value
+        .get("other_actions")
+        .and_then(serde_json::Value::as_u64)
+        .context("Task Scheduler did not report the task's actions")?;
+    let actions = match value.get("exec") {
+        Some(serde_json::Value::Array(actions)) => actions.as_slice(),
+        Some(action @ serde_json::Value::Object(_)) => std::slice::from_ref(action),
+        _ => bail!("Task Scheduler did not report the task's command actions"),
+    };
+    let exec = actions
+        .iter()
+        .map(|action| {
+            let path = action
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .context("Task Scheduler command action has no executable")?;
+            let arguments = match action.get("arguments") {
+                None | Some(serde_json::Value::Null) => Vec::new(),
+                Some(text) => windows_command_arguments(
+                    text.as_str()
+                        .context("Task Scheduler command arguments are not text")?,
+                )?,
+            };
+            Ok((path.to_owned(), arguments))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ObservedEntry {
+        exec,
+        other_actions: usize::try_from(other_actions)?,
+    })
+}
+
+/// Task Scheduler argument text as tokens: whitespace-separated, each plain or
+/// wholly double-quoted. Escaped or embedded quotes are not an AIRK shape and
+/// are refused rather than interpreted.
+fn windows_command_arguments(text: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut chars = text.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let Some(first) = chars.next() else {
+            return Ok(tokens);
+        };
+        let mut token = String::new();
+        if first == '"' {
+            loop {
+                match chars.next() {
+                    None => bail!("command arguments have an unterminated quote"),
+                    Some('"') => break,
+                    Some('\\') if chars.peek() == Some(&'"') => {
+                        bail!("command arguments contain an escaped quote")
+                    }
+                    Some(c) => token.push(c),
+                }
+            }
+            ensure!(
+                chars.peek().is_none_or(|c| c.is_whitespace()),
+                "command arguments contain an embedded quote"
+            );
+        } else {
+            token.push(first);
+            while let Some(c) = chars.next_if(|c| !c.is_whitespace()) {
+                token.push(c);
+            }
+            ensure!(
+                !token.contains('"'),
+                "command arguments contain an embedded quote"
+            );
+        }
+        tokens.push(token);
+    }
+}
+
+/// A systemd user unit's commands. Only `ExecStart=` is a command action;
+/// every other `Exec*` key counts as another action.
+fn systemd_observed_entry(unit: &str) -> Result<ObservedEntry> {
+    let mut exec = Vec::new();
+    let mut other_actions = 0;
+    for line in unit.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        ensure!(!line.ends_with('\\'), "unit uses line continuations");
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "ExecStart" => exec.push(systemd_command(value.trim())?),
+            key if key.starts_with("Exec") => other_actions += 1,
+            _ => (),
+        }
+    }
+    Ok(ObservedEntry {
+        exec,
+        other_actions,
+    })
+}
+
+/// One `ExecStart=` value: optional `:` (no environment expansion), then
+/// plain or double-quoted words with `\\`, `\"` and `%%` escapes. Other
+/// prefixes, specifiers or escapes are not an AIRK shape and are refused.
+fn systemd_command(value: &str) -> Result<(String, Vec<String>)> {
+    let (literal, command) = match value.strip_prefix(':') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    ensure!(
+        !command.starts_with(['-', '@', '+', '!', '|', ':']),
+        "ExecStart uses an execution prefix"
+    );
+    ensure!(
+        literal || !command.contains('$'),
+        "ExecStart expands environment variables"
+    );
+    let mut words = Vec::new();
+    let mut chars = command.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let Some(first) = chars.next() else {
+            break;
+        };
+        let mut word = String::new();
+        let quoted = first == '"';
+        let mut next = if quoted { chars.next() } else { Some(first) };
+        loop {
+            match next {
+                None if quoted => bail!("ExecStart has an unterminated quote"),
+                None => break,
+                Some('"') if quoted => {
+                    ensure!(
+                        chars.peek().is_none_or(|c| c.is_whitespace()),
+                        "ExecStart has an embedded quote"
+                    );
+                    break;
+                }
+                Some(c) if !quoted && c.is_whitespace() => break,
+                Some('\\') => match chars.next() {
+                    Some(c @ ('\\' | '"')) => word.push(c),
+                    _ => bail!("ExecStart uses an unsupported escape"),
+                },
+                Some('%') => {
+                    ensure!(chars.next() == Some('%'), "ExecStart uses a unit specifier");
+                    word.push('%');
+                }
+                Some('"' | '\'') if !quoted => bail!("ExecStart has an embedded quote"),
+                Some(c) => word.push(c),
+            }
+            next = chars.next();
+        }
+        words.push(word);
+    }
+    let mut words = words.into_iter();
+    let executable = words.next().context("ExecStart is empty")?;
+    Ok((executable, words.collect()))
+}
+
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn verify_macos_login_intent(
     root: &Path,
@@ -2109,7 +2404,266 @@ $airkFixtureScheduler | Add-Member ScriptMethod NewTask { param($flags) return $
             assert_eq!(result["loaded"], true);
             assert_eq!(result["running"], serde_json::to_value(running)?);
             assert_eq!(result["definition_matches"], matches);
+            // The same report carries the registered commands as data.
+            let observed = windows_observed_entry(&output.text)?;
+            assert_eq!(observed.other_actions, 0);
+            assert!(!observed.exec.is_empty());
         }
+        Ok(())
+    }
+
+    const ORPHAN_ID: &str = "fea7aa5fb3e96425b381d59a7c64168e";
+
+    fn login_entry(executable: &str, arguments: &[&str]) -> ObservedEntry {
+        ObservedEntry {
+            exec: vec![(
+                executable.into(),
+                arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect(),
+            )],
+            other_actions: 0,
+        }
+    }
+
+    #[test]
+    fn orphaned_split_login_accepts_only_the_exact_login_shape_of_this_image() -> Result<()> {
+        let image = r"C:\Users\fixture\AIRK Service\program\service\airk.exe";
+        let exact = ["__airk_role", "service-login", "--install-id", ORPHAN_ID];
+        assert_eq!(
+            orphaned_split_login(image, &login_entry(image, &exact), true)?,
+            ORPHAN_ID
+        );
+        let other_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            orphaned_split_login(
+                image,
+                &login_entry(
+                    &image.to_uppercase(),
+                    &["__airk_role", "service-login", "--install-id", other_id]
+                ),
+                true
+            )?,
+            other_id
+        );
+        assert_eq!(
+            orphaned_split_login(image, &login_entry(&format!("\"{image}\""), &exact), true)?,
+            ORPHAN_ID
+        );
+        // Case differs only where the platform compares case-insensitively.
+        assert!(
+            orphaned_split_login(image, &login_entry(&image.to_uppercase(), &exact), false)
+                .is_err()
+        );
+        let refusals: [(ObservedEntry, &str); 9] = [
+            (
+                login_entry(r"C:\Users\fixture\other\airk.exe", &exact),
+                "not this installation's",
+            ),
+            (
+                login_entry(image, &["__airk_role", "service-login", "--install-id"]),
+                "are not",
+            ),
+            (
+                login_entry(
+                    image,
+                    &[
+                        "__airk_role",
+                        "service-login",
+                        "--install-id",
+                        ORPHAN_ID,
+                        "--x",
+                    ],
+                ),
+                "are not",
+            ),
+            (
+                login_entry(
+                    image,
+                    &["__airk_role", "service", "--install-id", ORPHAN_ID],
+                ),
+                "are not",
+            ),
+            (
+                login_entry(
+                    image,
+                    &[
+                        "__airk_role",
+                        "service-login",
+                        "--install-id",
+                        "FEA7AA5FB3E96425B381D59A7C64168E",
+                    ],
+                ),
+                "are not",
+            ),
+            (
+                login_entry(
+                    image,
+                    &[
+                        "__airk_role",
+                        "service-login",
+                        "--install-id",
+                        "fea7aa5fb3e96425b381d59a7c64168",
+                    ],
+                ),
+                "are not",
+            ),
+            (
+                login_entry(
+                    image,
+                    &[
+                        "__airk_role",
+                        "service-login",
+                        "--install-id",
+                        "gea7aa5fb3e96425b381d59a7c64168e",
+                    ],
+                ),
+                "are not",
+            ),
+            (
+                ObservedEntry {
+                    exec: vec![
+                        login_entry(image, &exact).exec.remove(0),
+                        (image.into(), Vec::new()),
+                    ],
+                    other_actions: 0,
+                },
+                "2 command actions",
+            ),
+            (
+                ObservedEntry {
+                    other_actions: 1,
+                    ..login_entry(image, &exact)
+                },
+                "1 non-command action",
+            ),
+        ];
+        for (observed, reason) in refusals {
+            let error = orphaned_split_login(image, &observed, true)
+                .expect_err("a different entry must be refused")
+                .to_string();
+            assert!(error.contains(reason), "{error}");
+        }
+        assert!(
+            orphaned_split_login(
+                image,
+                &ObservedEntry {
+                    exec: Vec::new(),
+                    other_actions: 0
+                },
+                true
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn task_scheduler_arguments_and_report_parse_only_plain_or_wholly_quoted_tokens() -> Result<()>
+    {
+        assert_eq!(
+            windows_command_arguments(&format!(
+                "\"__airk_role\" \"service-login\" \"--install-id\" \"{ORPHAN_ID}\""
+            ))?,
+            ["__airk_role", "service-login", "--install-id", ORPHAN_ID]
+        );
+        assert_eq!(
+            windows_command_arguments(&format!(
+                "  __airk_role service-login\t--install-id {ORPHAN_ID} "
+            ))?,
+            ["__airk_role", "service-login", "--install-id", ORPHAN_ID]
+        );
+        assert_eq!(windows_command_arguments("\"a b\" c")?, ["a b", "c"]);
+        assert!(windows_command_arguments("")?.is_empty());
+        for refused in ["\"open", "\"a\"b", "a\"b\"", "\"a\\\"b\""] {
+            assert!(windows_command_arguments(refused).is_err(), "{refused}");
+        }
+        let report = format!(
+            r#"{{"exec":[{{"arguments":"\"__airk_role\" \"service-login\" \"--install-id\" \"{ORPHAN_ID}\"","path":"C:\\AIRK\\airk.exe"}}],"loaded":true,"running":false,"definition_matches":false,"other_actions":0}}"#
+        );
+        let observed = windows_observed_entry(&report)?;
+        assert_eq!(observed.other_actions, 0);
+        assert_eq!(
+            observed.exec,
+            [(
+                r"C:\AIRK\airk.exe".to_owned(),
+                vec![
+                    "__airk_role".to_owned(),
+                    "service-login".into(),
+                    "--install-id".into(),
+                    ORPHAN_ID.into()
+                ]
+            )]
+        );
+        let single = windows_observed_entry(
+            r#"{"exec":{"arguments":null,"path":"a.exe"},"other_actions":2}"#,
+        )?;
+        assert_eq!(single.exec, [("a.exe".to_owned(), Vec::new())]);
+        assert_eq!(single.other_actions, 2);
+        // A report without actions (an adapter that predates them) proves nothing.
+        assert!(
+            windows_observed_entry(r#"{"loaded":true,"running":false,"definition_matches":false}"#)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn systemd_unit_exec_start_parses_the_rendered_login_command_only() -> Result<()> {
+        let unit = format!(
+            "# AIRK managed per-user scheduler airk-service-x\n[Unit]\nDescription=AIRK\n\n[Service]\nType=simple\nExecStart=:\"/home/fixture/AIRK Service/100%%/airk\" \"__airk_role\" \"service-login\" \"--install-id\" \"{ORPHAN_ID}\"\nRestart=on-failure\n"
+        );
+        let observed = systemd_observed_entry(&unit)?;
+        assert_eq!(observed.other_actions, 0);
+        assert_eq!(
+            observed.exec,
+            [(
+                "/home/fixture/AIRK Service/100%/airk".to_owned(),
+                vec![
+                    "__airk_role".to_owned(),
+                    "service-login".into(),
+                    "--install-id".into(),
+                    ORPHAN_ID.into()
+                ]
+            )]
+        );
+        assert_eq!(
+            orphaned_split_login("/home/fixture/AIRK Service/100%/airk", &observed, false)?,
+            ORPHAN_ID
+        );
+        assert_eq!(
+            systemd_command(r#"/usr/bin/airk plain "q \" \\ x" "it's""#)?,
+            (
+                "/usr/bin/airk".to_owned(),
+                vec!["plain".to_owned(), "q \" \\ x".into(), "it's".into()]
+            )
+        );
+        let hooked = systemd_observed_entry(&format!(
+            "{unit}ExecStartPre=/bin/true\nExecStopPost=/bin/true\n"
+        ))?;
+        assert_eq!(hooked.other_actions, 2);
+        assert_eq!(
+            systemd_observed_entry(&format!("{unit}ExecStart=/bin/true\n"))?
+                .exec
+                .len(),
+            2
+        );
+        for refused in [
+            "-/usr/bin/airk",
+            "@/usr/bin/airk name",
+            "/usr/bin/airk $HOME",
+            "/usr/bin/airk %h",
+            "/usr/bin/airk \"open",
+            "/usr/bin/airk \"a\"b",
+            "/usr/bin/airk \\n",
+            "/usr/bin/airk it's",
+            "",
+        ] {
+            assert!(systemd_command(refused).is_err(), "{refused}");
+        }
+        assert_eq!(systemd_command(":/usr/bin/airk $HOME")?.1, ["$HOME"]);
+        assert!(systemd_observed_entry("[Service]\nExecStart=/a \\\n  b\n").is_err());
         Ok(())
     }
 }

@@ -435,6 +435,82 @@ pub(crate) fn list_files(folder: &Path) -> Result<Vec<String>> {
     Ok(found)
 }
 
+/// Whether a non-empty `folder` was evidently made by AIRK for `role`
+/// (`plan::recognizably_airk`), from bounded top-level names and, for data,
+/// the names inside its `airk` folder. Links and reparse points never count.
+pub(crate) fn recognizably_airk(role: &str, folder: &Path) -> Result<bool> {
+    fn names(folder: &Path) -> Result<Vec<String>> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(folder)? {
+            ensure!(
+                found.len() < 256,
+                "folder holds too many entries to classify"
+            );
+            found.push(entry?.file_name().to_string_lossy().into_owned());
+        }
+        Ok(found)
+    }
+    let metadata = std::fs::symlink_metadata(folder)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Ok(false);
+        }
+    }
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let top = names(folder)?;
+    let child = folder.join("airk");
+    let airk_child = match std::fs::symlink_metadata(&child) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => names(&child)?,
+        _ => Vec::new(),
+    };
+    Ok(super::plan::recognizably_airk(role, &top, &airk_child))
+}
+
+/// Rename `folder` to an unused sibling `<name>.previous-<UTC date-time>`
+/// and return the new path. Nothing is copied or deleted.
+pub(crate) fn set_aside(folder: &Path, now_unix_ms: u64) -> Result<PathBuf> {
+    let name = folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("folder name missing")?;
+    let parent = folder.parent().context("folder parent missing")?;
+    let at = time::OffsetDateTime::from_unix_timestamp(i64::try_from(now_unix_ms / 1000)?)?;
+    let stamp = format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second()
+    );
+    for attempt in 0..100u32 {
+        let target = parent.join(if attempt == 0 {
+            format!("{name}.previous-{stamp}")
+        } else {
+            format!("{name}.previous-{stamp}-{attempt}")
+        });
+        if std::fs::symlink_metadata(&target).is_ok() {
+            continue;
+        }
+        std::fs::rename(folder, &target).with_context(|| {
+            format!(
+                "location_refused: the earlier AIRK folder {} could not be set aside (is an AIRK service or another program still using it?)",
+                folder.display()
+            )
+        })?;
+        return Ok(target);
+    }
+    bail!(
+        "location_refused: no free name to set aside {}",
+        folder.display()
+    )
+}
+
 /// Whether `folder` is absent or an empty folder.
 pub(crate) fn absent_or_empty(folder: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(folder) {

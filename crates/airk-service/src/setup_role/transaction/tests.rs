@@ -634,3 +634,95 @@ fn pointer_saved_resume_reseals_same_original_missing_custody_and_refuses_foreig
     );
     Ok(())
 }
+
+fn failed_receipt(operation: &SetupOperation) -> SetupReceipt {
+    SetupReceipt {
+        schema: SETUP_RECEIPT_SCHEMA.into(),
+        operation_id: operation.operation_id,
+        operation_sha256: files::digest_bytes(&canonical(operation)),
+        kind: operation.kind,
+        expires_unix_ms: operation.expires_unix_ms,
+        steps: vec![SetupStep {
+            phase: SetupPhase::Complete,
+            at_unix_ms: operation.created_unix_ms,
+            outcome: "closed".into(),
+            detail: String::new(),
+        }],
+        retired: vec![],
+        leftovers: vec![],
+        failure: Some(airk_core::install_record::SetupFailure {
+            code: "setup_failed".into(),
+            message: "verified runtime pair manifest is missing".into(),
+            at_unix_ms: operation.created_unix_ms,
+        }),
+        closed: true,
+    }
+}
+
+#[test]
+fn a_failed_owner_of_another_operation_is_archived_and_released_under_takeover() -> Result<()> {
+    // 1.8.202: a failed setup left its owner unsettled; only its own broken
+    // image could resume it. Decision 15 Nov 2026: another verified operation
+    // archives it and takes over.
+    let f = fixture(false)?;
+    let mut owner = admit(&f, false)?;
+    owner.ensure_roots()?;
+    owner.advance(Stage::Prepared)?;
+    drop(owner);
+    let active_path = f.pointer.parent().unwrap().join(ACTIVE_FILE);
+    let active_bytes = std::fs::read(&active_path)?;
+    let mut next = f.operation.clone();
+    next.operation_id = Incarnation::from_bytes([0x0f; 16]);
+    let live = f.operation.created_unix_ms;
+    // A live owner (not failed, not expired) still blocks; the same operation is not a takeover.
+    assert!(abandoned_owner(&f.pointer, &next, live)?.is_none());
+    assert!(supersede_abandoned(&f.pointer, &next, live)?.is_none());
+    assert!(abandoned_owner(&f.pointer, &f.operation, u64::MAX)?.is_none());
+    assert!(active_path.exists());
+    files::write_receipt(
+        &OpenedDirectory::open(Path::new(&f.operation.locations.state))?,
+        &failed_receipt(&f.operation),
+    )?;
+    let taken = supersede_abandoned(&f.pointer, &next, live)?.expect("failed owner taken over");
+    assert_eq!(
+        taken,
+        Abandoned {
+            operation_id: f.operation.operation_id,
+            stage: Stage::Prepared,
+            failed: true,
+        }
+    );
+    assert!(!active_path.exists());
+    let archive = f
+        .pointer
+        .parent()
+        .unwrap()
+        .join("setup-history/superseded")
+        .join(format!(
+            "{}-{}.json",
+            f.operation.operation_id,
+            files::digest_bytes(&active_bytes)
+        ));
+    assert_eq!(std::fs::read(archive)?, active_bytes);
+    assert!(Owner::observe(&f.pointer)?.is_none());
+    assert!(supersede_abandoned(&f.pointer, &next, live)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn an_expired_owner_without_a_readable_receipt_is_taken_over_only_after_expiry() -> Result<()> {
+    // A crash or a moved state folder leaves no failure receipt; expiry proves it.
+    let f = fixture(false)?;
+    let mut owner = admit(&f, false)?;
+    owner.ensure_roots()?;
+    drop(owner);
+    let mut next = f.operation.clone();
+    next.operation_id = Incarnation::from_bytes([0x0f; 16]);
+    let expiry = f.operation.expires_unix_ms;
+    assert!(supersede_abandoned(&f.pointer, &next, expiry - 1)?.is_none());
+    let taken = supersede_abandoned(&f.pointer, &next, expiry)?.expect("expired owner");
+    assert!(!taken.failed);
+    assert_eq!(taken.stage, Stage::Admitted);
+    assert!(Owner::observe(&f.pointer)?.is_none());
+    Ok(())
+}

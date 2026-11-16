@@ -55,6 +55,129 @@ pub(super) fn admission_time(
     Ok(Some(active.admitted_unix_ms))
 }
 
+/// An unsettled setup owner of another operation that can no longer finish:
+/// its own receipt is closed with a failure, or its operation lifetime has
+/// expired (a crash or power loss). Recorded decision 15 Nov 2026
+/// (setup_role CONTRACT "Abandoned setup takeover").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Abandoned {
+    pub operation_id: Incarnation,
+    pub stage: Stage,
+    pub failed: bool,
+}
+
+impl Abandoned {
+    pub fn describe(&self) -> String {
+        format!(
+            "earlier setup {} {} at stage {:?}",
+            self.operation_id,
+            if self.failed {
+                "failed"
+            } else {
+                "was interrupted"
+            },
+            self.stage
+        )
+    }
+}
+
+/// Read-only classification (no lock): the active owner's exact bytes when it
+/// belongs to another operation and is abandoned. A settled owner, this same
+/// operation and a live (unexpired, unfailed) owner all return `None`; the
+/// ordinary owner admission then applies unchanged.
+pub(super) fn abandoned_owner(
+    pointer: &Path,
+    operation: &SetupOperation,
+    now_unix_ms: u64,
+) -> Result<Option<(Abandoned, Vec<u8>)>> {
+    let folder = pointer.parent().context("pointer parent")?;
+    let Some(bytes) = optional(&folder.join(ACTIVE_FILE), MAX_RECOVERY_BYTES)? else {
+        return Ok(None);
+    };
+    let active: ActiveSetup = serde_json::from_slice(&bytes)?;
+    active.validate().map_err(refusal)?;
+    ensure!(
+        canonical(&active) == bytes,
+        "setup_owner_refused: noncanonical active owner"
+    );
+    if active.operation == *operation || active.stage == Stage::Settled {
+        return Ok(None);
+    }
+    // The receipt may be unreadable or gone with its state folder; then only
+    // expiry can prove abandonment.
+    let failed = files::read_receipt(
+        Path::new(&active.operation.locations.state),
+        &active.operation.operation_id,
+    )
+    .ok()
+    .flatten()
+    .is_some_and(|receipt| {
+        receipt.closed
+            && receipt.failure.is_some()
+            && receipt.operation_id == active.operation.operation_id
+            && receipt.operation_sha256 == active.operation_sha256
+    });
+    if !failed && now_unix_ms < active.operation.expires_unix_ms {
+        return Ok(None);
+    }
+    Ok(Some((
+        Abandoned {
+            operation_id: active.operation.operation_id,
+            stage: active.stage,
+            failed,
+        },
+        bytes,
+    )))
+}
+
+/// Under the installation lock, archive an abandoned owner of another
+/// operation to `setup-history/superseded/` and remove it, so this verified
+/// operation can be admitted. Its published I4 pair (if any) stays current and
+/// becomes this operation's existing installation; nothing else is changed.
+pub(super) fn supersede_abandoned(
+    pointer: &Path,
+    operation: &SetupOperation,
+    now_unix_ms: u64,
+) -> Result<Option<Abandoned>> {
+    let Some((abandoned, bytes)) = abandoned_owner(pointer, operation, now_unix_ms)? else {
+        return Ok(None);
+    };
+    let folder = pointer.parent().context("pointer parent")?;
+    let authority = OpenedDirectory::open(folder)?;
+    airk_ipc::endpoint::require_private_directory_handle(authority.as_file())?;
+    let active: ActiveSetup = serde_json::from_slice(&bytes)?;
+    ensure!(
+        native(&authority)? == active.authority_root,
+        "setup_owner_refused: authority changed"
+    );
+    let history = private_child(&authority, "setup-history")?;
+    let superseded = private_child(&history, "superseded")?;
+    let name = format!(
+        "{}-{}.json",
+        abandoned.operation_id,
+        files::digest_bytes(&bytes)
+    );
+    match airk_ipc::private_record::read_private_at(&superseded, &name, MAX_RECOVERY_BYTES)? {
+        Some(previous) => ensure!(
+            previous == bytes,
+            "setup_owner_refused: superseded archive changed"
+        ),
+        None => {
+            airk_ipc::private_record::write_private_at(
+                &superseded,
+                &name,
+                &bytes,
+                MAX_RECOVERY_BYTES,
+                false,
+            )?;
+            superseded.sync_all()?;
+        }
+    }
+    airk_ipc::private_record::remove_private_at(&authority, ACTIVE_FILE, &bytes)?;
+    authority.sync_all()?;
+    Ok(Some(abandoned))
+}
+
 /// A published candidate may start while its own completing setup holds the
 /// installation lock. All other starts retain that lock through readiness.
 pub(super) fn startup_allowed(pointer: &Path, control: &Path) -> Result<bool> {

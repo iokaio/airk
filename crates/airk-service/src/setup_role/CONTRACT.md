@@ -167,6 +167,45 @@ from portable locations. Its retained external recovery runtime includes the
 full approved payload inventory/bundle, so removing tracked program files does
 not erase the setup executable's dependencies or original request.
 
+### Recovery from failed or abandoned installs (decision 15 Nov 2026)
+
+Recorded in docs/split/split-plan.md ("self-healing setup").
+
+- **Abandoned setup takeover** (`transaction::abandoned_owner` /
+  `supersede_abandoned`). Before owner admission, a placing operation that holds
+  the installation lock archives an unsettled owner of another operation
+  when that owner's own receipt is closed with a failure, or `now >=` its
+  operation's `expires_unix_ms`. The exact owner bytes go to
+  `<pointer folder>/setup-history/superseded/<operation>-<sha256>.json`, then
+  `active-setup.json` is removed. The pointer and record are untouched, so a
+  published candidate becomes the existing installation. A settled owner, the
+  same operation and a live owner are unchanged. `--plan` only reports it
+  (`takeover`). The new receipt records a `superseded:` leftover.
+- **Unowned AIRK folders** (`plan::recognizably_airk`, `files::set_aside`). For
+  a fresh admission (`--plan`/`--prepare`, no owner), a non-empty location that
+  is not adopted (existing, retained or owner) and whose names show AIRK made it
+  for that role is listed under `set_aside`, not `location_problems`.
+  `--prepare` renames it to a sibling `<name>.previous-<UTC yyyymmdd-hhmmss>`
+  before the admission snapshot and records a `set_aside:` leftover. Rename
+  failure refuses with `location_refused`. Markers: state
+  `index-catalog-genesis.json`, `service-*.owner.json`, or `setup`+`http-1`;
+  data `airk/service-data-*.owner.json`; logs `logs-*.owner.json` or
+  `job-errors-*.owner.json`; cache `service-*`/`cache-*.owner.json`; program
+  `payload-inventory.json` or `install-record.json`.
+- **Orphaned login entry** (`ServiceManager::replace_orphaned_split_login`,
+  Windows Task Scheduler and Linux systemd user). When no owned registration
+  exists but the OS has an entry with this installation's derived name, it is
+  removed and re-registered only when it has exactly one command: this
+  installation's `airk` image with arguments `__airk_role service-login
+  --install-id <32 lowercase hex>`. Otherwise registration refuses with
+  `login_startup_ownership_unproven` naming the difference. The outcome is
+  `replaced_orphaned`.
+
+Regressions: `a_failed_owner_of_another_operation_is_archived_and_released_under_takeover`,
+`an_expired_owner_without_a_readable_receipt_is_taken_over_only_after_expiry`,
+`only_recognizable_unowned_airk_folders_are_set_aside_and_nothing_is_deleted`,
+and the `service_manager` orphan-shape tests.
+
 ## Transaction (§5.6)
 
 Pure in `plan.rs`, tested against `fixtures/split/i4/interruptions.json`.

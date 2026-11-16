@@ -23,6 +23,19 @@ if ($null -ne $airkTask) {
         default { $null }
     }
     $airkResult.definition_matches = $false
+    # Registered commands as data (Type 0 = exec), for orphaned-entry proof.
+    # Task Scheduler bounds a task to 32 actions.
+    $airkExec = New-Object System.Collections.ArrayList
+    $airkOther = 0
+    foreach ($airkAction in @($airkTask.Definition.Actions)) {
+        if ([int] $airkAction.Type -eq 0) {
+            [void] $airkExec.Add(@{ path = [String] $airkAction.Path; arguments = [String] $airkAction.Arguments })
+        } else {
+            $airkOther += 1
+        }
+    }
+    $airkResult.exec = @($airkExec)
+    $airkResult.other_actions = $airkOther
     if (-not [String]::IsNullOrEmpty($airkExpectedXml)) {
         # Ask the OS schema implementation to expand the same defaults on both
         # definitions. Registration-generated metadata does not identify execution.
@@ -59,7 +72,7 @@ if ($null -ne $airkTask) {
         $airkResult.definition_matches = ((Convert-AirkDefinition $airkExpectedTask.XmlText) -ceq (Convert-AirkDefinition $airkTask.Definition.XmlText))
     }
 }
-$airkBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($airkResult | ConvertTo-Json -Compress))
+$airkBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($airkResult | ConvertTo-Json -Compress -Depth 4))
 $airkOutput = [Console]::OpenStandardOutput()
 $airkOutput.Write($airkBytes, 0, $airkBytes.Length)
 $airkOutput.Flush()

@@ -348,6 +348,36 @@ pub(crate) fn roles(locations: &Locations) -> [(&'static str, PathBuf); 5] {
     ]
 }
 
+/// Whether a non-empty location that no installation owns was evidently made
+/// by AIRK for `role`, from its top-level entry names and (for data) the names
+/// inside its `airk` folder. Recognized folders are set aside instead of
+/// refused (recorded decision 15 Nov 2026, setup_role CONTRACT "Unowned AIRK
+/// folders"); anything else keeps the "choose an empty folder" refusal.
+pub(crate) fn recognizably_airk(role: &str, top: &[String], airk_child: &[String]) -> bool {
+    let has =
+        |names: &[String], wanted: &str| names.iter().any(|name| name.eq_ignore_ascii_case(wanted));
+    let shaped = |names: &[String], prefix: &str, suffix: &str| {
+        names.iter().any(|name| {
+            let name = name.to_ascii_lowercase();
+            name.len() > prefix.len() + suffix.len()
+                && name.starts_with(prefix)
+                && name.ends_with(suffix)
+        })
+    };
+    match role {
+        "program" => has(top, "payload-inventory.json") || has(top, "install-record.json"),
+        "state" => {
+            has(top, "index-catalog-genesis.json")
+                || shaped(top, "service-", ".owner.json")
+                || (has(top, "setup") && has(top, "http-1"))
+        }
+        "data" => has(top, "airk") && shaped(airk_child, "service-data-", ".owner.json"),
+        "logs" => shaped(top, "logs-", ".owner.json") || shaped(top, "job-errors-", ".owner.json"),
+        "cache" => shaped(top, "service-", ".owner.json") || shaped(top, "cache-", ".owner.json"),
+        _ => false,
+    }
+}
+
 /// A path as compared for nesting: case-folded on Windows.
 fn folded(path: &Path, fold_case: bool) -> PathBuf {
     if fold_case {
