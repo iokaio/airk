@@ -1,8 +1,12 @@
 # Release records
 
-- [1.9.0 advanced split source candidate](release-1.9.0.md): synchronized native/extension source versions, shared Help/UI, native Admin custody, portable setup/recovery and optional default-off Arbiter controls. Unpublished; exact implementation and qualification status remain in the active plan and ledger.
+**Current source version: 1.8.207.** The [Arbiter final plan](../arbiter/final-plan.md) is in progress; the [execution ledger](../simplify/one-process-ledger.md) identifies local candidate artifacts and their actual qualification limits. Version 1.9.0 is reserved for final delivery after its gates pass.
 
-The following notices retain historical candidate status and do not stop the currently authorized advanced-split work.
+- [1.8.207 local source candidate](release-1.8.207.md): canonical manual agent setup, open-read and Workbench repairs, shared 8192-token/120-second defaults, Service/Agents navigation and additive qualification contracts. Artifact, installed and model qualification remain separately recorded.
+
+- [Historical 1.9.0 source candidate and planned promotion](release-1.9.0.md): retained development checkpoints for shared Help/UI, native Admin custody, portable setup/recovery and optional default-off Arbiter controls. This is neither the current manifest version nor a qualified or published release.
+
+The following notices retain historical candidate status and do not stop the currently authorized Arbiter final implementation work.
 
 The 1.8.23 manual installation reported an HTTP cleanup refusal. Its subsequent
 native fix is an untested source checkpoint; no replacement installer was built.

@@ -20,7 +20,7 @@ fn allocations(count: usize) -> Vec<Option<PartitionAllowance>> {
         Incarnation::from_bytes([9; 16]),
         Sha256Digest::from_bytes([8; 32]),
         &ids(count),
-        &Budget::default(),
+        &historical_budget(),
     )
     .unwrap()
 }
@@ -30,7 +30,7 @@ fn summary() -> CombinedContextSummary {
         schema: SUMMARY_SCHEMA.into(),
         attempt: Incarnation::from_bytes([9; 16]),
         selection: Sha256Digest::from_bytes([8; 32]),
-        budget: Budget::default(),
+        budget: historical_budget(),
         members: allowances
             .into_iter()
             .enumerate()
@@ -41,9 +41,23 @@ fn summary() -> CombinedContextSummary {
             })
             .collect(),
         known_used: Resources::default(),
-        unknown_held: Resources::budget(&Budget::default()),
+        unknown_held: Resources::budget(&historical_budget()),
         termination: Termination::Partial,
         delivery_bindings: Vec::new(),
+    }
+}
+
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
     }
 }
 
@@ -236,7 +250,7 @@ fn combined_context_accounting_overflow_and_noncanonical_rosters_refuse() {
                 Incarnation::from_bytes([9; 16]),
                 Sha256Digest::from_bytes([8; 32]),
                 &members,
-                &Budget::default()
+                &historical_budget()
             )
             .is_err()
         );
@@ -419,7 +433,7 @@ fn context_delivery_known_cannot_hide_unknown_work_or_actual_charged_ordinal() {
         Incarnation::from_bytes([9; 16]),
         Sha256Digest::from_bytes([8; 32]),
         &[index],
-        &Budget::default(),
+        &historical_budget(),
     )
     .unwrap()
     .remove(0);
@@ -427,7 +441,7 @@ fn context_delivery_known_cannot_hide_unknown_work_or_actual_charged_ordinal() {
         schema: SUMMARY_SCHEMA.into(),
         attempt: Incarnation::from_bytes([9; 16]),
         selection: Sha256Digest::from_bytes([8; 32]),
-        budget: Budget::default(),
+        budget: historical_budget(),
         members: vec![PartitionReport {
             index_id: index,
             allowance,
@@ -461,7 +475,7 @@ fn context_delivery_known_cannot_hide_unknown_work_or_actual_charged_ordinal() {
     packet["assessment"]["termination"] = json!("deadline");
     packet["assessment"]["coverage"] = json!({"status":"unassessed","reason":"deadline"});
     packet["gaps"] = json!([]);
-    let typed = ContextResponseV2::from_canonical(&packet, &Budget::default()).unwrap();
+    let typed = ContextResponseV2::from_canonical(&packet, &historical_budget()).unwrap();
     let used = Resources::from_packet(&typed).unwrap();
     summary.known_used = used.clone();
     if let PartitionOutcome::Known { used: observed, .. } = &mut summary.members[0].outcome {

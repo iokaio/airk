@@ -691,7 +691,10 @@ impl Owner {
                 "login_startup_owner_unproven: removal registration not authorized"
             ),
         }
-        self.existing(&files::pointer_path()?)?;
+        // The retained authority owns this transaction's pointer. Consulting
+        // the process-global installation here could authenticate another
+        // installation when this owner was loaded from an isolated location.
+        self.existing(&self.folder.join("current.json"))?;
         self.revalidate()
     }
 

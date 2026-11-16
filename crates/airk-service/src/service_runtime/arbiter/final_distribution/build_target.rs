@@ -53,7 +53,7 @@ fn actual_image(value: &Value, expected: Sha256Digest) -> Result<()> {
     );
     Ok(())
 }
-fn build(value: &Value, source: &Value) -> Result<()> {
+pub(super) fn build(value: &Value, source: &Value) -> Result<()> {
     ensure!(
         value["schema"] == "airk-readiness-command/1"
             && value["exit_code"] == 0
@@ -103,12 +103,18 @@ fn cargo(value: &Value, actual: &Value, library: &str) -> Result<()> {
     );
     Ok(())
 }
+#[derive(Default)]
+pub(super) struct NativeImages {
+    pub targets: BTreeMap<Sha256Digest, String>,
+    pub source_groups: BTreeMap<Sha256Digest, BTreeSet<Sha256Digest>>,
+    pub build_receipts: BTreeMap<Sha256Digest, BTreeSet<Sha256Digest>>,
+}
 fn validate_inner(
     input: &PinnedFile,
     decision: &RecordedDecision,
     target: &str,
     depth: usize,
-) -> Result<(BTreeMap<Sha256Digest, String>, String)> {
+) -> Result<(NativeImages, String)> {
     ensure!(depth < 8, "native target evidence ancestry bound");
     ensure!(
         decision
@@ -125,7 +131,7 @@ fn validate_inner(
         "unknown/incomplete/foreign actual target evidence"
     );
     let basis = &evidence["target_basis"];
-    let (mut targets, library) = if let Some(parent) =
+    let (mut native_images, library) = if let Some(parent) =
         basis.get("retained_original_target_evidence")
     {
         let path = PathBuf::from(
@@ -216,7 +222,7 @@ fn validate_inner(
         {
             bytes(record)?;
         }
-        (BTreeMap::new(), library)
+        (NativeImages::default(), library)
     };
     let images = evidence["images"]
         .as_array()
@@ -303,17 +309,37 @@ fn validate_inner(
             }
             _ => anyhow::bail!("unknown native target evidence selector"),
         }
-        if let Some(prior) = targets.insert(digest, target.into()) {
+        let receipt_field =
+            if image["evidence_kind"] == "materialized_current_PE_and_recorded_build" {
+                "build_receipt"
+            } else {
+                "original_build_receipt"
+            };
+        let build_receipt: Sha256Digest =
+            serde_json::from_value(image[receipt_field]["sha256"].clone())?;
+        native_images
+            .build_receipts
+            .entry(digest)
+            .or_default()
+            .insert(build_receipt);
+        let source_group: Sha256Digest =
+            serde_json::from_value(image["native_source_group"].clone())?;
+        native_images
+            .source_groups
+            .entry(digest)
+            .or_default()
+            .insert(source_group);
+        if let Some(prior) = native_images.targets.insert(digest, target.into()) {
             ensure!(prior == target, "conflicting ancestor target evidence");
         }
     }
-    Ok((targets, library))
+    Ok((native_images, library))
 }
 pub(super) fn validate(
     input: &PinnedFile,
     decision: &RecordedDecision,
     target: &str,
-) -> Result<BTreeMap<Sha256Digest, String>> {
+) -> Result<NativeImages> {
     Ok(validate_inner(input, decision, target, 0)?.0)
 }
 #[cfg(test)]

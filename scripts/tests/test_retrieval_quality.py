@@ -21,6 +21,197 @@ SPEC.loader.exec_module(QUALITY)
 
 
 class RetrievalQualityTests(unittest.TestCase):
+    def combined_session(self):
+        value, sources = self.combined()
+        value["members"] = value["members"][:1]
+        value["ranking"] = value["ranking"][:1]
+        value["publication_vector"]["members"] = value["publication_vector"]["members"][:1]
+        value["publication_vector"]["authority"] = "native-authority"
+        key = next(iter(sources))
+        sources = {key: {**sources[key], "virtual_path": "same.rs"}}
+        value["partial"] = True
+        body = value["members"][0]["result"]["structuredContent"]
+        body.update(execution={"requested": "hybrid", "served": "lexical", "fallback": {"reason": "partial_graph"}},
+                    semantic_readiness={"state": "partial", "selected_artifacts": 7, "completed_artifacts": 2})
+        session = QUALITY.Session.__new__(QUALITY.Session)
+        session.publication = None
+        session.source_oracle = {"sources": sources, "virtual": {"same.rs": key}}
+        session.request = lambda *_: {"content": [{"type": "text", "text": json.dumps(value)}], "structuredContent": value}
+        return session, value, key
+
+    def test_current_combined_scoring_retains_complete_native_result_and_static_sibling(self):
+        session, value, _ = self.combined_session()
+        case = {"name": "qualified", "query": "needle", "mode": "hybrid", "expected": "same.rs",
+                "source_sha256": "a"*64, "grades": {"same.rs": 3}, "project_ids": ["prj_"+"03"*16]}
+        graded = session.judged_search(case, {"same.rs": "a"*64})
+        self.assertEqual(graded["recall_at_10"], 1)
+        self.assertTrue(graded["partial"])
+        self.assertEqual(graded["native_result"], value)
+        self.assertEqual(session.last_attempt["native_result"], value)
+        self.assertEqual(session.last_attempt["request"]["arguments"]["project_ids"], case["project_ids"])
+        self.assertEqual(session.last_attempt["responses"][0]["structuredContent"], value)
+        fixed = session.search(case)
+        self.assertEqual(fixed["reciprocal_rank_at_5"], 1)
+        self.assertEqual(fixed["native_result"], value)
+        self.assertEqual(fixed["input"], case)
+        self.assertEqual(session.publication, value["publication_vector"]["members"][0]["publication"]["token"])
+
+    def test_empty_scoped_results_keep_native_member_identity_and_negative_denominator(self):
+        session, value, _ = self.combined_session()
+        value["ranking"] = []
+        value["members"][0]["result"]["structuredContent"]["hits"] = []
+        result = session.judged_search({"query": "absent", "mode": "lexical", "path_prefix": "missing/", "grades": {}}, {"same.rs":"a"*64})
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["negative_empty"])
+        self.assertEqual(result["native_result"], value)
+
+    def test_current_route_refuses_forged_origin_hash_scope_or_unavailable_member(self):
+        for mutation in ("root", "project", "hash", "scope", "unavailable", "missing-member"):
+            with self.subTest(mutation=mutation):
+                session, value, _ = self.combined_session()
+                case = {"query": "needle", "mode": "vector", "grades": {"same.rs": 3}}
+                if mutation == "root": value["ranking"][0]["origin"]["source_root_id"] = "src_"+"09"*16
+                if mutation == "project": value["ranking"][0]["origin"]["project_ids"] = ["prj_"+"09"*16]
+                if mutation == "hash": value["members"][0]["result"]["structuredContent"]["hits"][0]["citation"]["content_hash"] = "b"*64
+                if mutation == "scope": case["path_prefix"] = "other/"
+                if mutation == "unavailable": value["members"][0]["result"]["isError"] = True
+                if mutation == "missing-member": value["members"].clear(); value["publication_vector"]["members"].clear()
+                with self.assertRaises((AssertionError, KeyError)):
+                    session.judged_search(case, {"same.rs": "a"*64})
+                self.assertEqual(session.last_attempt["native_result"], value)
+
+    def test_historical_single_result_keeps_full_fallback_and_readiness(self):
+        session = self.session([self.hit("wanted.txt")])
+        response = session.request()
+        value = json.loads(response["content"][0]["text"])
+        value.update(partial=True, truncated=True, execution={"fallback": {"reason": "partial_vectors"}},
+                     semantic_readiness={"state": "partial"}, future_native_field={"bytes": [1, 2, 3]})
+        response = {"content": [{"text": json.dumps(value)}], "structuredContent": value}
+        session.request = lambda *_: response
+        result = session.judged_search({"query": "needle", "mode": "hybrid", "grades": {"wanted.txt": 3}}, {"wanted.txt": "a"*64})
+        self.assertEqual(result["native_result"], value)
+        self.assertTrue(result["partial"]); self.assertTrue(result["truncated"])
+        self.assertEqual(session.last_attempt["responses"], [response])
+
+    def test_native_refusal_and_inconsistent_structured_body_remain_complete(self):
+        session, value, _ = self.combined_session()
+        refusal = {"isError": True, "content": [{"type": "text", "text": json.dumps({"error": {
+            "code": "scope_refused", "retryable": False, "query_submitted": False,
+            "readiness": {"state": "unavailable"}}})}], "structuredContent": {"future_refusal_field": 9}}
+        session.request = lambda *_: refusal
+        with self.assertRaises(AssertionError): session.query({"query": "needle", "mode": "hybrid"}, 10)
+        self.assertEqual(session.last_attempt["responses"], [refusal])
+        session.request = lambda *_: {"content": [{"text": json.dumps(value)}], "structuredContent": {"different": True}}
+        with self.assertRaisesRegex(AssertionError, "text and structured"):
+            session.query({"query": "needle", "mode": "hybrid"}, 10)
+        self.assertEqual(session.last_attempt["native_result"], value)
+
+    def test_rust_emitted_deadline_has_no_python_fallback_or_mirror(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)/"budget.json"
+            fixture.write_text(json.dumps({"schema": "airk.i2-transport-budget/1", "protocol": 2,
+                                          "operation_deadline_ms": 700, "max_invoke_deadline_ms": 800}))
+            QUALITY.native_read_budget.cache_clear()
+            try:
+                with patch.object(QUALITY, "BUDGET_FIXTURE", fixture):
+                    session = self.session([self.hit("wanted.txt")])
+                    original = session.request
+                    until = []
+                    def capture(*args): until.append(args[2]); return original()
+                    session.request = capture
+                    with patch.object(QUALITY.time, "monotonic", return_value=10):
+                        session.query({"query": "needle", "mode": "lexical"}, 10)
+                    self.assertEqual(until, [10.7])
+                    self.assertEqual(session.last_attempt["budget"]["operation_deadline_ms"], 700)
+                    QUALITY.native_read_budget.cache_clear(); fixture.unlink()
+                    with self.assertRaises(FileNotFoundError): QUALITY.native_read_budget()
+            finally: QUALITY.native_read_budget.cache_clear()
+        self.assertEqual(QUALITY.native_read_budget()["operation_deadline_ms"], 120000)
+
+    def test_source_oracle_comes_from_frozen_native_catalog_before_candidate_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(); (root/"same.rs").write_text("original source")
+            selected = {"namespace": "native", "context_key": "context", "index_id": "idx_one", "project_ids": ["prj_one"]}
+            page = {"namespace": "native", "revision": 7, "continuation": None, "items": [{"kind": "source", "value": {
+                "index_id": "idx_one", "id": "src_one", "canonical_path": str(root), "enabled": True}}]}
+            service = SimpleNamespace(single_image=True, catalog_authority=True, scopes={"fixture": selected}, rpc=Mock(side_effect=[
+                {"descriptor": {"namespace": "native", "catalog_revision": 7}}, {"page": page}]))
+            oracle = QUALITY.freeze_source_oracle(service, "fixture", [(root, "")])
+            self.assertEqual(oracle["virtual"]["same.rs"], ("idx_one", "src_one", "same.rs"))
+            self.assertEqual(oracle["sources"][("idx_one", "src_one", "same.rs")], {
+                "sha256": QUALITY.digest(root/"same.rs"), "project_ids": [], "virtual_path": "same.rs"})
+            self.assertEqual(oracle["request_scope"], {"index_ids": ["idx_one"]})
+            self.assertEqual(oracle["selection"]["project_ids"], ["prj_one"], "management grant retained without borrowing its authority")
+            self.assertEqual(oracle["native_catalog"], {"page": page})
+            self.assertEqual(service.rpc.call_args_list[1].args[0]["catalog_page"]["request"]["expected_catalog_revision"], 7)
+            page["items"][0]["value"]["index_id"] = "foreign"
+            service.rpc.side_effect = [{"descriptor": {"namespace": "native", "catalog_revision": 7}}, {"page": page}]
+            with self.assertRaises(AssertionError): QUALITY.freeze_source_oracle(service, "fixture", [(root, "")])
+
+    def test_static_sibling_retains_all_planned_slots_and_native_refusal_without_replay(self):
+        measurement = QUALITY.static_measurement(32, 2)
+        self.assertEqual(measurement["scheduled_attempts"], 46)
+        self.assertEqual(len(measurement["attempts"]), 46)
+        refusal = {"isError": True, "content": [{"text": "native refusal"}], "future": {"unknown": True}}
+        session = SimpleNamespace(last_attempt=None)
+        def fail(case):
+            session.last_attempt = {"request": {"name": "airk_search", "arguments": {"query": case["query"]}}, "responses": [refusal]}
+            raise AssertionError("nonretryable native refusal")
+        session.search = Mock(side_effect=fail)
+        row = measurement["attempts"][0]
+        with self.assertRaises(AssertionError): QUALITY.capture_static_search(session, QUALITY.CASES[0], row)
+        self.assertEqual(row["status"], "error")
+        self.assertEqual(row["native_attempt"]["responses"], [refusal])
+        self.assertEqual(sum(item["status"] == "not_run" for item in measurement["attempts"]), 45)
+        session.search.assert_called_once()
+        self.assertFalse(measurement["complete"])
+
+    def test_representative_keeps_native_refusals_and_all_original_mode_trial_rows(self):
+        class Service:
+            catalog_authority = False
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            register = Mock(); job = Mock(); configure = Mock()
+            published_status = Mock(return_value={"full_native_readiness": {"future": True}})
+        session = SimpleNamespace(publication="fixed", close=Mock(), last_attempt=None)
+        refusal = {"isError": True, "content": [{"text": "native scope refusal"}], "complete_retry_details": {"retryable": False}}
+        def judge(case, _hashes):
+            session.last_attempt = {"request": {"query": case["query"], "mode": case["mode"]}, "responses": [refusal]}
+            if case["mode"] == "vector": raise AssertionError("native refusal")
+            return {"status": "ok", "latency_ms": 3, "ndcg_at_10": 0, "recall_at_10": 0, "negative_empty": None}
+        session.judged_search = Mock(side_effect=judge)
+        corpus = {"sources": {"source.txt": "original"}, "ranking_unit": "chunks", "judgment_scope": "original",
+                  "queries": [{"id": "first", "query": "one", "family": "code", "split": "development",
+                               "modes": ["lexical", "vector"], "grades": {"source.txt": 3}}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)/"fixture"; base.mkdir()
+            model = Path(temporary)/"model"; model.mkdir(); (model/"model.json").write_text('{"fixture":true}')
+            with patch.object(QUALITY.clients, "Fixture", return_value=Service()),                  patch.object(QUALITY.clients, "semantic_readiness", return_value={"state":"ready", "completed_artifacts":1}),                  patch.object(QUALITY, "open_session", return_value=session), contextlib.redirect_stdout(io.StringIO()):
+                result = QUALITY.representative_fixture(Path("airk"), base, corpus, "frozen", 2, "balanced", model)
+            self.assertEqual(result["scheduled_attempts"], 4)
+            self.assertEqual([row["status"] for row in result["attempts"]], ["ok", "error", "ok", "error"])
+            self.assertEqual(result["attempts"][1]["native_attempt"]["responses"], [refusal])
+            self.assertEqual(result["scores"]["vector/development"]["attempts"], 2)
+            self.assertEqual(result["scores"]["vector/development"]["failures"], 2)
+            self.assertEqual(result["semantic_status"], {"full_native_readiness": {"future": True}})
+            self.assertFalse(result["complete"])
+            session.close.assert_called_once()
+
+    def test_setup_failure_retains_all_original_scheduled_task_mode_trial_rows(self):
+        corpus = {"sources": {"source.txt": "original"}, "queries": [
+            {"id": "first", "query": "one", "family": "code", "split": "development", "modes": ["lexical", "vector"], "grades": {}},
+            {"id": "second", "query": "two", "family": "docs", "split": "held_out", "modes": ["hybrid"], "grades": {}}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            measurement = {}
+            with patch.object(QUALITY.clients, "Fixture", side_effect=RuntimeError("native setup refusal")):
+                with self.assertRaises(RuntimeError): QUALITY.representative_fixture(Path("airk"), Path(temporary), corpus, "frozen", 2, "balanced", Path("model"), measurement)
+            self.assertEqual(measurement["scheduled_attempts"], 6)
+            self.assertEqual(len(measurement["attempts"]), 6)
+            self.assertTrue(all(row["status"] == "not_run" for row in measurement["attempts"]))
+            self.assertEqual([row["case"] for row in measurement["attempts"]], ["first", "first", "second"]*2)
+            self.assertEqual(measurement["attempts"][0]["input"], corpus["queries"][0])
+            self.assertFalse(measurement["complete"])
+
     def test_additional_root_requires_native_review_and_updated_grant_without_legacy_fallback(self):
         selected = {"grant_id": "original", "index_id": "same-index"}
         service = SimpleNamespace(single_image=True, catalog_authority=True, scopes={"qualification": selected}, configure=Mock())
@@ -73,37 +264,32 @@ class RetrievalQualityTests(unittest.TestCase):
         selected = {"namespace": "native", "expected_catalog_revision": 3, "grant_id": "exact", "index_id": "one"}
         health = {"instance": "owner"}
         service = SimpleNamespace(single_image=True, scopes={"fixture": selected}, control=Path("control"), managed_health=health)
-        requests = []
-        def rpc(method):
-            self.assertEqual(method, "health")
-            return {"observation": health}
-        def enroll(selection, identity):
-            requests.append(selection)
-            return {"connection_id": identity, "selection": {"kind": "scoped", "selection": {**selected, "expected_catalog_revision": 4}}}
-        service.rpc = rpc
-        service.enroll_http = enroll
+        endpoint = {"url": "https://127.0.0.1:57421/mcp"}
+        service.http_endpoint = Mock(return_value=endpoint)
+        service.enroll_http = Mock(side_effect=AssertionError("No credential enrollment"))
+        service.rpc = Mock(return_value={"observation": health})
         network = Mock()
         network.connection = SimpleNamespace(timeout=None, sock=Mock())
         network.session = "actual-session"
         def receive(identifier):
             return {"jsonrpc": "2.0", "id": identifier, "result": {"content": [{"text": json.dumps({"publication": {"token": "fixed"}, "hits": [self.hit("wanted.txt")]})}]}}
         network.receive.side_effect = receive
-        with patch.object(QUALITY.http_fixture, "McpClient", return_value=network), patch.object(QUALITY.http_fixture, "validate_native_identity") as validate, patch.object(QUALITY.subprocess, "Popen", side_effect=AssertionError("no stdio child")):
+        with patch.object(QUALITY.http_fixture, "McpClient", return_value=network) as constructor, patch.object(QUALITY.http_fixture, "validate_native_identity") as validate, patch.object(QUALITY.subprocess, "Popen", side_effect=AssertionError("no stdio child")):
             session = QUALITY.open_session(service, "fixture")
             self.assertEqual(session.search(self.case())["recall_at_5"], 1)
             session.close(); session.close()
-        self.assertEqual(requests, [{"kind": "scoped", "selection": selected}])
+        constructor.assert_called_once_with(endpoint, service.control, scope={"index_ids": ["one"]})
+        service.enroll_http.assert_not_called()
         validate.assert_called_once()
         network.close.assert_called_once()
         self.assertTrue(all(call.args[0].get("params", {}).get("arguments", {}).get("response_mode", "full") == "full" for call in network.send.call_args_list))
 
-    def test_http_enrollment_cannot_silently_change_reviewed_grant(self):
-        selected = {"expected_catalog_revision": 1, "grant_id": "original"}
-        service = SimpleNamespace(scopes={"fixture": selected})
-        def enroll(selection, identity):
-            return {"connection_id": identity, "selection": {"kind": "scoped", "selection": {"expected_catalog_revision": 2, "grant_id": "broader"}}}
-        service.enroll_http = enroll
-        with patch.object(QUALITY.http_fixture, "McpClient") as network, self.assertRaisesRegex(AssertionError, "changed reviewed scope"):
+    def test_http_endpoint_cannot_cross_the_owned_service(self):
+        service = SimpleNamespace(scopes={"fixture": {"index_id": "one"}},
+            http_endpoint=Mock(return_value={"url": "checked"}),
+            rpc=Mock(return_value={"observation": {"instance": "other"}}),
+            managed_health={"instance": "expected"})
+        with patch.object(QUALITY.http_fixture, "validate_native_identity"), patch.object(QUALITY.http_fixture, "McpClient") as network, self.assertRaisesRegex(AssertionError, "owner changed"):
             QUALITY.HttpSession(service, "fixture")
         network.assert_not_called()
 

@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "id": "context_source",
+      "mutated": "b7b41164823a50c5f19798c04105b3ee2563dc5f619025f0ff734903ad984759",
+      "old_identity_accepted": false,
+      "original": "465f4c8c67328de5d6744a51b40fbe8ce7edba2aff6e3375b6599b21104db91a"
+    },
+    {
+      "id": "class_admission_source",
+      "mutated": "79efe21eb673800eb64b3deeddf2a9ca119a209ba629b9c1082d259ddf819ba1",
+      "old_identity_accepted": false,
+      "original": "465f4c8c67328de5d6744a51b40fbe8ce7edba2aff6e3375b6599b21104db91a"
+    },
+    {
+      "id": "terminal_global_winner_source",
+      "mutated": "f87ca1d9d38ede88010bb4334c50482e6fd709845629bf57c377241f701c7faa",
+      "old_identity_accepted": false,
+      "original": "465f4c8c67328de5d6744a51b40fbe8ce7edba2aff6e3375b6599b21104db91a"
+    }
+  ],
+  "crlf_canonicalization_preserved": true,
+  "lone_CR_refused": true,
+  "original": "465f4c8c67328de5d6744a51b40fbe8ce7edba2aff6e3375b6599b21104db91a",
+  "qualification_granted": false,
+  "schema": "airk.arbiter.context-terminal-semantic-source-cases/1",
+  "source_paths": [
+    "arbiter/context_action.rs",
+    "arbiter/context_action/calibration.rs",
+    "arbiter/context_action/calibration/terminal.rs"
+  ],
+  "synthetic_mutations_only": true
+}

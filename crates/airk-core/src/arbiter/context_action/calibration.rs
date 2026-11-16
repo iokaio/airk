@@ -3,6 +3,21 @@
 use super::*;
 
 pub const CALIBRATION_SCHEMA: &str = "airk.arbiter.context-action.calibration/1";
+pub const CALIBRATION_SCHEMA_V2: &str = "airk.arbiter.context-action.calibration/2";
+pub mod terminal;
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ClassSupport {
+    Unsupported { reason: String },
+    Supported { qualification: Option<Sha256Digest> },
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClassDisposition {
+    pub action: ContextActionClass,
+    pub support: ClassSupport,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +77,9 @@ pub struct JointCalibration {
     #[serde(deserialize_with = "unique_assets")]
     pub assets: BTreeMap<String, JointAssetBinding>,
     pub rules: Vec<JointRule>,
+    /// Absent on historical /1; /2 explicitly accounts for all four classes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_support: Option<Vec<ClassDisposition>>,
 }
 impl JointCalibration {
     /// The caller authenticates these exact raw bytes against the selected
@@ -78,8 +96,10 @@ impl JointCalibration {
     }
     pub fn validate(&self, profile: &Profile, task_policy: Sha256Digest) -> Result<()> {
         ensure!(
-            self.schema == CALIBRATION_SCHEMA
-                && self.model == profile.model
+            matches!(
+                self.schema.as_str(),
+                CALIBRATION_SCHEMA | CALIBRATION_SCHEMA_V2
+            ) && self.model == profile.model
                 && self.compiler == profile.compiler
                 && self.task_policy == task_policy
                 && profile.tasks.contains(&Task::ContextAction)
@@ -89,6 +109,7 @@ impl JointCalibration {
                 && self.rules.len() <= 32,
             "joint calibration profile/task/ABI binding mismatch"
         );
+        self.validate_class_support()?;
         let mut expected = BTreeMap::new();
         for asset in &profile.assets {
             if matches!(
@@ -142,8 +163,84 @@ impl JointCalibration {
         }
         Ok(())
     }
+    pub fn validate_class_support(&self) -> Result<()> {
+        if self.schema == CALIBRATION_SCHEMA {
+            ensure!(
+                self.class_support.is_none(),
+                "historical calibration cannot claim /2 class support"
+            );
+            return Ok(());
+        }
+        ensure!(
+            self.schema == CALIBRATION_SCHEMA_V2,
+            "unknown joint calibration schema"
+        );
+        let classes = self
+            .class_support
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("complete class dispositions required"))?;
+        ensure!(
+            classes.len() == 4,
+            "exactly four class dispositions required"
+        );
+        let mut seen = Vec::new();
+        let mut terminal_pins = BTreeSet::new();
+        for class in classes {
+            ensure!(!seen.contains(&class.action), "duplicate class disposition");
+            seen.push(class.action);
+            let has_rule = self.rules.iter().any(|rule| rule.action == class.action);
+            match &class.support {
+                ClassSupport::Unsupported { reason } => ensure!(
+                    !has_rule && !reason.trim().is_empty() && reason.len() <= 1024,
+                    "unsupported class cannot carry a rule or lack a reason"
+                ),
+                ClassSupport::Supported { qualification } => {
+                    ensure!(has_rule, "supported class lacks its whole-card rule");
+                    if class.action == ContextActionClass::Read {
+                        ensure!(
+                            qualification.is_none(),
+                            "Read cannot inherit terminal qualification"
+                        );
+                    } else {
+                        ensure!(
+                            qualification.is_some_and(|digest| digest
+                                .as_bytes()
+                                .iter()
+                                .any(|byte| *byte != 0)),
+                            "terminal qualification pin required"
+                        );
+                        ensure!(
+                            terminal_pins.insert(qualification.unwrap()),
+                            "terminal classes cannot share one class-specific proof"
+                        );
+                        ensure!(
+                            self.rules
+                                .iter()
+                                .filter(|rule| rule.action == class.action)
+                                .count()
+                                == 1,
+                            "one independently qualified terminal rule per class required"
+                        );
+                    }
+                }
+            }
+        }
+        ensure!(
+            self.rules.iter().all(|rule| seen.contains(&rule.action)),
+            "unaccounted class rule"
+        );
+        Ok(())
+    }
     pub fn accepts(&self, card: &ContextActionCard, margin: f32) -> bool {
         margin.is_finite()
+            && (self.schema == CALIBRATION_SCHEMA
+                || self.schema == CALIBRATION_SCHEMA_V2
+                    && self.class_support.as_ref().is_some_and(|classes| {
+                        classes.iter().any(|class| {
+                            class.action == ContextActionClass::of(card.action)
+                                && matches!(class.support, ClassSupport::Supported { .. })
+                        })
+                    }))
             && self
                 .rules
                 .iter()
@@ -228,6 +325,7 @@ mod tests {
             task_policy: digest,
             score_abi: profile.abi.clone(),
             assets,
+            class_support: None,
             rules: vec![JointRule {
                 action: ContextActionClass::Sufficient,
                 allowed_gaps: vec![Gap::Sufficient],

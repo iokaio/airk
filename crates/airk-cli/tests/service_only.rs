@@ -42,8 +42,17 @@ fn no_arguments_without_airkctl_reports_it_and_starts_nothing() {
     let output = Command::new(&airk).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Historical selector: a lone temporary copy is neither the verified I4
+    // image nor the explicit `debug` development layout. Native discovery may
+    // observe this human's installed product; it must never borrow that CLI.
+    let refusal = stderr.trim();
+    assert!(output.stdout.is_empty());
     assert!(
-        stderr.contains("airkctl was not found beside airk"),
+        refusal
+            == "This airk image is not the verified installed service. Run the airk executable named by the AIRK Service installation."
+            || refusal
+                == "AIRK Service is not installed for this image. Use the AIRK Service installer or the portable setup instructions."
+            || refusal.starts_with("AIRK Service installation could not be verified ("),
         "{stderr}"
     );
     assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);

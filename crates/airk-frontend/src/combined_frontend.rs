@@ -166,6 +166,10 @@ trait Session: Send + Sync + 'static {
     fn requested(&self) -> Value;
     /// The frozen `(project_ids, index_ids)` an unnarrowed call reads.
     fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>);
+    /// Explicit admitted authority for native Workbench validation/catalogs.
+    fn workbench_basis(&self) -> airk_kernel::workbench::combined::AuthorityBasis {
+        airk_kernel::workbench::combined::AuthorityBasis::Projects
+    }
     /// The shape a call's selection must have: Projects, except for an
     /// open read, which names indexes only (U106(d)).
     fn check_query(&self, selection: &QuerySelection) -> Result<()> {
@@ -501,6 +505,9 @@ impl Session for OpenScope {
     }
     fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>) {
         (&[], Some(&self.index_ids))
+    }
+    fn workbench_basis(&self) -> airk_kernel::workbench::combined::AuthorityBasis {
+        airk_kernel::workbench::combined::AuthorityBasis::OpenIndexes
     }
     fn check_query(&self, selection: &QuerySelection) -> Result<()> {
         selection.validate_open()?;
@@ -1580,10 +1587,11 @@ impl<S: Session> Backend<S> {
             .unwrap_or(30)
             .min(30);
         let deadline = deadline.min(Instant::now() + Duration::from_secs(seconds));
-        let result = airk_kernel::workbench::combined::execute(
+        let result = airk_kernel::workbench::combined::execute_with_basis(
             request,
             selected.clone(),
             before.identity,
+            self.selection.workbench_basis(),
             |tool, mut args| {
                 if tool == "__airk_verify_projection" {
                     return self.verify_final_callback(
@@ -2433,7 +2441,9 @@ impl<S: Session> Backend<S> {
             }
         }
         if tool == "airk_capabilities" {
-            value["workbench"] = airk_kernel::workbench::combined::operation_catalog();
+            value["workbench"] = airk_kernel::workbench::combined::operation_catalog_for(
+                self.selection.workbench_basis(),
+            );
         }
         if properties.contains_key("cursor") {
             if resumable && child_cursors.len() == before.members.len() {

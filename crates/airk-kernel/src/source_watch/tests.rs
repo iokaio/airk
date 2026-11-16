@@ -684,6 +684,52 @@ fn four_project_plans_exceed_old_directory_limit_and_keep_scope_budgets_independ
 }
 
 #[test]
+fn missing_root_is_reported_before_ignore_metadata_and_recovers_independently() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let source = base.join("source");
+    let missing = base.join("missing");
+    let data = base.join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let (healthy_project, mut plan) = directory_plan(&source, &data)?;
+    let missing_project = binding(&missing, &data, "missing")?.registration.binding;
+    let task = || RootTask {
+        policy: None,
+        project: missing_project,
+        index: 0,
+        root: missing.clone(),
+        data: data.clone(),
+    };
+    plan.failures.insert(missing_project, vec![None]);
+    plan.tasks.push_back(task());
+    while !plan.step()? {}
+    assert_eq!(plan.failures[&healthy_project], vec![None]);
+    assert_eq!(plan.wanted, BTreeSet::from([source.clone()]));
+    assert_eq!(
+        plan.failures[&missing_project],
+        vec![Some(WatchFailure::RootUnavailable)]
+    );
+    let traversal = &plan.usage[&missing_project].traversal;
+    traversal.validate()?;
+    assert_eq!(traversal.incomplete_roots, vec![0]);
+    assert_eq!(traversal.unreadable.len(), 1);
+    assert_eq!(traversal.unreadable[0].path, missing.to_string_lossy());
+    assert_eq!(traversal.unreadable[0].reason, "not_found");
+    fs::create_dir(&missing)?;
+    // Replan explicitly; recovery does not depend on a native watcher or sleep.
+    plan.failures.insert(missing_project, vec![None]);
+    plan.usage.remove(&missing_project);
+    plan.tasks.push_back(task());
+    while !plan.step()? {}
+    assert_eq!(plan.failures[&healthy_project], vec![None]);
+    assert_eq!(plan.failures[&missing_project], vec![None]);
+    assert_eq!(plan.wanted, BTreeSet::from([source, missing]));
+    assert!(!plan.usage[&missing_project].traversal.unavailable());
+    Ok(())
+}
+
+#[test]
 fn native_nested_events_are_acknowledged_without_changing_sources_and_missing_roots_are_independent()
 -> Result<()> {
     let owner = tempfile::tempdir()?;

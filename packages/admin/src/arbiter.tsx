@@ -60,11 +60,11 @@ export function createArbiterWorkspace(deps: ArbiterDependencies) {
   let session = deps.session(), generation = 0, disposed = false;
   let observation: Status | null = null, drafts: Record<Stage, Draft> | null = null;
   let outcome: CallState = { phase: 'idle' }, originalRequest: ManagementRequest | null = null;
-  let sending = false, unresolved = false, problem = '', legacyDigest = '', observationRevision = 0;
+  let sending = false, unresolved = false, problem = '', legacyDigest = '', observationRevision = 0, lastObservedAt: number | null = null, statusStale = false;
   const synchronize = () => {
     if (session === deps.session()) return;
     session = deps.session(); generation++; observation = null; drafts = null; outcome = { phase: 'idle' };
-    originalRequest = null; sending = false; unresolved = false; problem = ''; legacyDigest = '';
+    originalRequest = null; sending = false; unresolved = false; problem = ''; legacyDigest = ''; lastObservedAt = null; statusStale = false;
   };
   const valid = (review: Review | undefined, stage?: Stage) => {
     synchronize();
@@ -72,7 +72,7 @@ export function createArbiterWorkspace(deps: ArbiterDependencies) {
       && review.revision === observation.configuration.revision && (stage === undefined || review.draft === drafts[stage].revision);
   };
   const adopt = (next: Status, request: ManagementRequest) => {
-    observation = next; observationRevision++;
+    observation = next; observationRevision++; lastObservedAt = Date.now(); statusStale = false;
     if (next.initialization) {
       drafts = null; legacyDigest = next.initialization.actual_legacy_digest ?? ''; return;
     }
@@ -90,7 +90,7 @@ export function createArbiterWorkspace(deps: ArbiterDependencies) {
     const capturedSession = session, ticket = generation;
     const current = () => !disposed && generation === ticket && deps.session() === capturedSession;
     const operation = operations[request.operation];
-    originalRequest = structuredClone(request); sending = true; problem = ''; outcome = { phase: 'pending', operation }; deps.changed();
+    originalRequest = structuredClone(request); if (request.operation === 'status') statusStale = true; sending = true; problem = ''; outcome = { phase: 'pending', operation }; deps.changed();
     try {
       const result = await deps.run(operation, { arbiter: { request: structuredClone(request) } });
       if (!current()) return;
@@ -118,7 +118,7 @@ export function createArbiterWorkspace(deps: ArbiterDependencies) {
     synchronize();
     const reviews = observation && drafts ? Object.fromEntries(stages.map(stage => [stage, { generation, revision: observation!.configuration.revision, draft: drafts![stage].revision }])) as Record<Stage, Review> : null;
     return { observation: observation && structuredClone(observation), drafts: drafts && structuredClone(drafts), reviews,
-      generation, observationRevision, sending, unresolved, problem, outcome, originalRequest: originalRequest && structuredClone(originalRequest), legacyDigest,
+      generation, observationRevision, lastObservedAt, statusStale, sending, unresolved, problem, outcome, originalRequest: originalRequest && structuredClone(originalRequest), legacyDigest,
       canSend: !disposed && session !== null && deps.visible() && !sending && !unresolved };
   };
   return {
@@ -177,20 +177,22 @@ export function Arbiter(): JSX.Element {
     run: call, changed: () => changed(value => value + 1) });
   const workspace = owner.current;
   useEffect(() => { const stop = onSessionChange(() => workspace.sync()); return () => { stop(); workspace.dispose(); }; }, [workspace]);
+  useEffect(() => { if (visible) void workspace.readStatus(); }, [workspace, visible, currentSession()]);
   const view = workspace.view();
   return <Panel title="Optional local Arbiter stages">
     <p>Arbiter Focus ranks retrieved evidence. Arbiter Context gathers and organizes additional context. Both stages are off by default and have separate model selection and index consent. Either stage can run while the other is off. Ordinary retrieval remains available when both are off.</p>
-    <button type="button" disabled={view.sending || !visible} onClick={() => void workspace.readStatus()}>Read native stage status</button>
-    {!view.observation ? <p>No current native stage status has been read. No model, enrollment, hardware fit or readiness is assumed.</p> : !view.drafts ? <p>Native configuration requires initialization. The reported disabled configuration is a placeholder and cannot be edited or saved.</p> : stages.map(stage => {
+    <button type="button" disabled={view.sending || !visible} onClick={() => void workspace.readStatus()}>{view.sending ? 'Reading Arbiter status...' : 'Refresh Arbiter status'}</button>
+    {view.observation && view.statusStale ? <p role="status">Showing retained Arbiter status{view.lastObservedAt ? ` from ${new Date(view.lastObservedAt).toLocaleTimeString()}` : ''}. {view.sending ? 'Refreshing...' : 'The last refresh did not return current status. Use Refresh Arbiter status to try again.'}</p> : null}
+    {!view.observation ? <p>{view.sending ? 'Loading Focus and Context status...' : 'Arbiter status is unavailable. Use Refresh Arbiter status to try again.'}</p> : !view.drafts ? <p>Native configuration requires initialization. The reported disabled configuration is a placeholder and cannot be edited or saved.</p> : stages.map(stage => {
       const status = view.observation![stage], draft = view.drafts![stage], review = view.reviews![stage];
       const title = stageTitles[stage], tasks = [...new Set(status.profiles.filter(entry => !!stageProfileTitle(stage, entry.model)).flatMap(entry => entry.tasks))];
       const validEnabled = !draft.configuration.enabled || draft.configuration.indexes.length > 0 && status.profiles.some(entry => entry.profile === draft.configuration.selected_profile && selectableStageProfile(stage, entry));
       return <section aria-label={title} key={stage}>
         <h3>{title}</h3>
-        <p>Native availability: <Text value={status.availability} />. <Text value={status.reason} /></p>
-        <p>Saved stage: {view.observation!.configuration[stage].enabled ? 'enabled' : 'off'}. Selected profile: <Text value={nativeProfileTitle(stage, status.profiles, status.selected_profile)} />. Active profile: <Text value={nativeProfileTitle(stage, status.profiles, status.active_profile)} />. Queued: {status.queued}; running: {status.running}.</p>
+        <p>Status: <Text value={status.availability} />. <Text value={status.reason} /></p>
+        <p>Turned {view.observation!.configuration[stage].enabled ? 'on' : 'off'}. Selected model: <Text value={nativeProfileTitle(stage, status.profiles, status.selected_profile)} />. Active model: <Text value={nativeProfileTitle(stage, status.profiles, status.active_profile)} />. Queued: {status.queued}; running: {status.running}.</p>
         <label><input type="checkbox" checked={draft.configuration.enabled} disabled={!view.canSend} onChange={event => workspace.enable(stage, event.currentTarget.checked)} /> Enable {title}</label>
-        <h4>Model selection and explicit provisioning</h4>
+        <h4>Choose and download a model</h4>
         <p>Selection changes this draft only. Provisioning is a separate explicit action. Verified cached assets can be used offline; this page offers no file import. Missing assets are never downloaded by an ordinary read or a checkbox.</p>
         <label><input type="radio" name={`arbiter-${stage}-profile`} checked={!draft.configuration.selected_profile} disabled={!view.canSend} onChange={() => workspace.select(stage, null)} /> No model selected</label>
         {!status.profiles.length ? <p>No native model choices are available for this stage.</p> : null}
@@ -198,24 +200,24 @@ export function Arbiter(): JSX.Element {
           return <article key={entry.model}>
             <h4><Text value={name ?? 'Unsupported native model choice'} /></h4>
             <p><Text value={entry.availability} />: <Text value={entry.reason} /></p>
-            <p>Native download size: {entry.download_bytes ?? 'not reported'} bytes. Native memory reservation: {entry.memory_reservation_bytes ?? 'not reported'} bytes. A reservation is not a measurement of currently available memory.</p>
+            <p>Download size: {entry.download_bytes ?? 'not reported'} bytes. Provisional memory reservation: {entry.memory_reservation_bytes ?? 'not reported'} bytes. A reservation is not a measurement of currently available memory.</p>
             {entry.cpu_fit ? <p>Declared CPU fit: {entry.cpu_fit.minimum_physical_cores} physical cores; intra-op threads {entry.cpu_fit.intra_threads}; inter-op threads {entry.cpu_fit.inter_threads}. These are native profile requirements, not a measurement of this host.</p> : <p>No native CPU fit was reported.</p>}
             <p>Use the native availability and reason above for this host; model names or sizes do not establish fit or qualification.</p>
             <label><input type="radio" name={`arbiter-${stage}-profile`} checked={!!entry.profile && draft.configuration.selected_profile === entry.profile} disabled={!view.canSend || !selectable} onChange={() => workspace.select(stage, entry.profile ?? null)} /> Select <Text value={name ?? entry.model} /></label>
-            <div class="actions"><button type="button" disabled={!view.canSend || !selectable} onClick={() => entry.profile && void workspace.model(stage, 'provision', entry.profile, review)}>Provision <Text value={name ?? entry.model} /> explicitly</button>
+            <div class="actions"><button type="button" disabled={!view.canSend || !selectable} onClick={() => entry.profile && void workspace.model(stage, 'provision', entry.profile, review)}>Download <Text value={name ?? entry.model} /></button>
               <button type="button" class="danger" disabled={!view.canSend || !name || !entry.profile} onClick={() => entry.profile && void workspace.model(stage, 'remove', entry.profile, review)}>Remove local <Text value={name ?? entry.model} /> model</button></div>
             <details><summary>Complete native profile status and qualification</summary><pre><Text value={JSON.stringify(entry, null, 2)} /></pre></details>
           </article>;
         })}
-        <h4>Explicit {title} index consent</h4>
+        <h4>Choose which indexes {title} may read</h4>
         {!draft.configuration.indexes.length ? <p>No indexes are enrolled in this stage. Enablement never enrolls indexes automatically.</p> : draft.configuration.indexes.map(entry => <div class="row" key={entry.index_id}><Text value={entry.index_id} /><span><Text value={entry.tasks.map(taskTitle).join(', ')} /></span>
           <button type="button" disabled={!view.canSend} onClick={() => workspace.removeIndex(stage, entry.index_id)}>Remove {title} enrollment</button></div>)}
         <Field label={`${title}: immutable index ID from Index library`} value={draft.index} onInput={value => workspace.indexInput(stage, value)} invalid={draft.index !== '' && !isCatalogId('idx_', draft.index)} />
         {tasks.map(task => <label key={task}><input type="checkbox" checked={draft.tasks.includes(task)} disabled={!view.canSend} onChange={event => workspace.taskInput(stage, task, event.currentTarget.checked)} /><Text value={taskTitle(task)} /></label>)}
         <button type="button" class="secondary" disabled={!view.canSend || !isCatalogId('idx_', draft.index) || !draft.tasks.length || draft.configuration.indexes.some(entry => entry.index_id === draft.index)} onClick={() => workspace.addIndex(stage)}>Add explicit {title} enrollment to draft</button>
         {!validEnabled ? <p role="status">Before enabling this stage, select its available native model and explicitly enroll at least one index. Turning it off does not change the other stage.</p> : null}
-        <p>This draft uses native configuration revision {review.revision}. A concurrent native change is refused. Unsaved changes in the other stage are retained.</p>
-        <div class="actions"><button type="button" disabled={!view.canSend || !validEnabled} onClick={() => void workspace.save(stage, review)}>Save {title} configuration</button>
+        <p class="muted">Changes apply only to this stage. Review the selected model and enrolled indexes before applying.</p>
+        <div class="actions"><button type="button" disabled={!view.canSend || !validEnabled} onClick={() => void workspace.save(stage, review)}>Apply {title} choices</button>
           <button type="button" class="secondary" disabled={!view.canSend} onClick={() => workspace.reset(stage)}>Reset {title} draft to saved native state</button>
           <button type="button" class="secondary" disabled={!view.canSend} onClick={() => void workspace.lifecycle(stage, 'cancel', review)}>Cancel {title} model operation</button>
           <button type="button" class="secondary" disabled={!view.canSend} onClick={() => void workspace.lifecycle(stage, 'recover', review)}>Recover {title} model state</button></div>
@@ -227,6 +229,6 @@ export function Arbiter(): JSX.Element {
     {view.unresolved ? <p class="error" role="alert">The original management outcome is unknown. Read current native stage status and review its revision before another change. No automatic retry occurs.</p> : null}
     {view.problem ? <p role="alert"><Text value={view.problem} /></p> : null}
     {view.originalRequest ? <details><summary>Complete original native management request</summary><pre><Text value={JSON.stringify(view.originalRequest, null, 2)} /></pre></details> : null}
-    <Outcome state={view.outcome} />
+    <details><summary>Details and complete management outcome</summary><Outcome state={view.outcome} /></details>
   </Panel>;
 }

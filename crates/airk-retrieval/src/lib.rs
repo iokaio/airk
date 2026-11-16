@@ -2,6 +2,8 @@
 //! Local persistent candidate engines and bounded evidence responses.
 pub mod arbiter;
 pub mod bounded;
+#[cfg(all(test, feature = "local-inference"))]
+mod context_census;
 pub mod embedding_batch;
 pub mod embedding_worker;
 pub mod intent;

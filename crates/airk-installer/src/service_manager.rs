@@ -1694,9 +1694,13 @@ fn verify_split_mac_job(text: &str, main: &Path, bundle: &Path, channel: &str) -
         matches!(channel, "stable" | "preview"),
         "invalid Mac channel"
     );
-    let plist = bundle
-        .join("Contents/Library/LaunchAgents")
-        .join(format!("io.iokaio.airk.service.{channel}.plist"));
+    // This verifies a macOS observation, including in tests on other hosts.
+    // Build its POSIX path without importing the test host's separator rules.
+    let bundle = bundle.to_str().context("Mac bundle path is not UTF-8")?;
+    let plist = PathBuf::from(format!(
+        "{}/Contents/Library/LaunchAgents/io.iokaio.airk.service.{channel}.plist",
+        bundle.trim_end_matches('/'),
+    ));
     crate::runtime_install::macos_login::verify_job_scope(
         text,
         main,

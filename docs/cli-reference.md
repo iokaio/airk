@@ -18,6 +18,7 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl agents info`](#airkctl-agents-info)
 - [`airkctl agents launch`](#airkctl-agents-launch)
 - [`airkctl agents list`](#airkctl-agents-list)
+- [`airkctl agents manual`](#airkctl-agents-manual)
 - [`airkctl agents remove`](#airkctl-agents-remove)
 - [`airkctl agents repair`](#airkctl-agents-repair)
 - [`airkctl agents revoke`](#airkctl-agents-revoke)
@@ -438,6 +439,7 @@ Usage: airkctl agents [OPTIONS] <COMMAND>
 
 Commands:
   endpoint    Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)
+  manual      Print exact manual setup text for a selected client and file, without editing it
   info        Legacy (pre-U110): read an existing connection's verified references; agents no longer use connections
   credential  Legacy (pre-U110): print an existing connection's bearer header. The MCP endpoint ignores it
   list        Classify AIRK's entries in agent configuration files; read-only
@@ -962,6 +964,73 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## airkctl agents manual
+
+```text
+Print exact manual setup text for a selected client and file, without editing it
+
+Usage: airkctl agents manual [OPTIONS] --client <CLIENT>
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+
+
+      --client <CLIENT>
+          [possible values: claude, codex, vscode]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --user
+          Use this user's configuration file instead of the project file
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --project <PROJECT>
+          The project folder (default: the current directory)
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --server-key <SERVER_KEY>
+          [default: airk]
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
 ```
 
 ## airkctl agents remove

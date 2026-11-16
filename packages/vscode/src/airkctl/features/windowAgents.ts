@@ -13,7 +13,8 @@
 //! reported on this screen and in the AIRK log; it never fails the scope change.
 //! Every read returns the complete native reports.
 import type { AgentClient } from '../../explorerContracts';
-import type { Entry } from '../../generated/i2';
+import type { Entry, AgentManualEntry, AgentConfigRefusal } from '../../generated/i2';
+import { AirkctlCommandError } from '../session';
 import {
     agentEndpoint, agentEntries as nativeEntries, connectAgent, defaultFor, listAgents, removeAgentEntries, setWorkspaceDefault,
     workspaceDefaultEntries, workspaceDefaults, type AgentDefaultScope, type AgentsRunner, type WorkspaceDefault,
@@ -43,6 +44,7 @@ export interface AgentsView {
     /** Every folder of this window; each receives the window's applied scope as its workspace default. */
     readonly folders: string[];
     readonly entries: AgentEntryView[]; readonly report: unknown;
+    readonly manual: AgentManualEntry[]; readonly manualErrors?: FailureView[];
     /** The MCP endpoint (`agents endpoint`), or why it could not be read. */
     readonly endpoint: { readonly url: string; readonly state?: string } | null;
     readonly endpointReport?: unknown; readonly endpointError?: FailureView;
@@ -55,7 +57,9 @@ export interface AgentsView {
     readonly followError?: FailureView;
 }
 export interface ConnectOutcome {
-    readonly status: 'connected';
+    readonly status: 'connected' | 'refused';
+    readonly refusal?: AgentConfigRefusal;
+    readonly manual?: AgentManualEntry;
     readonly client: AgentClient;
     /** The complete `agents connect` answer. */
     readonly connected: unknown;
@@ -94,6 +98,21 @@ export function endpointOf(answer: unknown): { url: string; state?: string } | u
     return typeof inner.url === 'string' && ENDPOINT_URL.test(inner.url)
         ? { url: inner.url, ...(typeof inner.state === 'string' ? { state: inner.state } : {}) } : undefined;
 }
+/** Narrow native DTOs without constructing or rewriting their text. */
+export function manualEntryOf(value: unknown): AgentManualEntry | undefined {
+    const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    return ['claude', 'codex', 'vscode'].includes(String(row.client)) && ['project', 'user'].includes(String(row.scope))
+        && ['json', 'toml'].includes(String(row.format)) && typeof row.file === 'string' && typeof row.text === 'string'
+        ? value as AgentManualEntry : undefined;
+}
+function refusalOf(error: unknown): AgentConfigRefusal | undefined {
+    const native = error instanceof AirkctlCommandError ? error.result.error?.native : undefined;
+    const row = native && typeof native === 'object' ? native as Record<string, unknown> : {};
+    if (!['automatic_policy', 'conflict_retained', 'outcome_unknown'].includes(String(row.reason))
+        || typeof row.detail !== 'string' || typeof row.file !== 'string'
+        || !(row.manual === null || manualEntryOf(row.manual))) return;
+    return native as AgentConfigRefusal;
+}
 function failure(error: unknown): FailureView {
     const code = (error as { code?: unknown })?.code;
     return { code: typeof code === 'string' && /^[A-Za-z0-9_]{1,128}$/.test(code) ? code : 'agent_command_failed',
@@ -131,12 +150,21 @@ export class WindowAgents {
         const report = await listAgents(this.runner, [folder], false);
         let endpointReport: unknown, endpointError: FailureView | undefined;
         try { endpointReport = await agentEndpoint(this.runner); } catch (error) { endpointError = failure(error); }
+        const manual: AgentManualEntry[] = [], manualErrors: FailureView[] = [];
+        for (const client of ['claude', 'codex', 'vscode'] as const) {
+            try {
+                const entry = manualEntryOf(await this.runner.session.json(['agents', 'manual', '--client', client, '--project', folder]));
+                if (!entry || entry.client !== client) throw new Error('The native manual entry is unavailable or malformed.');
+                manual.push(entry);
+            } catch (error) { manualErrors.push(failure(error)); }
+        }
         let defaultsReport: unknown, defaultsError: FailureView | undefined, stored: WorkspaceDefault[] = [];
         try { defaultsReport = await workspaceDefaults(this.runner); stored = workspaceDefaultEntries(defaultsReport); }
         catch (error) { defaultsError = failure(error); }
+        if (this.folders()[0] !== folder) throw Object.assign(new Error('Workspace folder changed while reading agent setup. Refresh Agents.'), { code: 'STALE_BINDING' });
         await this.options.scope?.loadChoices?.();
         const scope = this.options.scope?.agentDefaultScope();
-        return { folder, folders, entries: agentEntries(report), report,
+        return { folder, folders, entries: agentEntries(report), report, manual, ...(manualErrors.length ? { manualErrors } : {}),
             endpoint: endpointOf(endpointReport) ?? null,
             ...(endpointReport !== undefined ? { endpointReport } : {}), ...(endpointError ? { endpointError } : {}),
             workspaceDefaults: folders.map(item => {
@@ -153,12 +181,20 @@ export class WindowAgents {
     async connect(client: AgentClient): Promise<ConnectOutcome> {
         this.requireReady();
         const folder = this.requireFolder();
-        const connected = await connectAgent(this.runner, client, folder);
+        let connected: unknown;
+        try { connected = await connectAgent(this.runner, client, folder); }
+        catch (error) {
+            const refusal = refusalOf(error);
+            if (!refusal) throw error;
+            return { status: 'refused', client, connected: (error as AirkctlCommandError).result, refusal,
+                ...(refusal.manual ? { manual: refusal.manual } : {}), file: refusal.file, scope: null };
+        }
         const answer = connected && typeof connected === 'object' ? connected as Record<string, unknown> : {};
         this.log(`AIRK: agents connect --client ${client} --project ${folder} completed.`);
         const scope = this.options.scope?.agentDefaultScope();
         if (scope) { await this.followScope(scope, true); }
         return { status: 'connected', client, connected,
+            ...(manualEntryOf(answer.manual) ? { manual: manualEntryOf(answer.manual) } : {}),
             ...(typeof answer.file === 'string' ? { file: answer.file } : {}),
             ...(typeof answer.url === 'string' ? { url: answer.url } : {}),
             ...(typeof answer.changed === 'boolean' ? { changed: answer.changed } : {}),

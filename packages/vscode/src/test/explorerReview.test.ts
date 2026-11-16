@@ -110,7 +110,7 @@ test('the report deadline stops further reads instead of starting another full a
     let now = 0, calls = 0;
     t.mock.method(performance, 'now', () => now);
     const result = await review.reviewTests({ root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()), session: { call: async (_tool: string, _args: unknown, options: any) => {
-        calls++; assert.ok(options.timeout <= 30000); now = 90001;
+        calls++; assert.ok(options.timeout <= 90000); now = 90001;
         return { publication: 'p', payload: { items: [] } };
     } } as any });
     assert.equal(calls, 1); assert.equal(result.analysis, 'unavailable'); assert.match(result.analysisError!, /time budget/);

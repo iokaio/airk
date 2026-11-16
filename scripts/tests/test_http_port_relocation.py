@@ -7,7 +7,8 @@ from pathlib import Path
 import ssl
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 
 def module(name):
@@ -48,15 +49,11 @@ class PortRelocationContractTests(unittest.TestCase):
             self.assertEqual(list((owner / "data").iterdir()), [])
 
     def connections(self):
-        before = {'connection_id': '11' * 16, 'selection': {'kind':'scoped', 'selection':{
-            'namespace':'22' * 16, 'grant_id':'grt_fixed', 'expected_grant_revision':1,
-            'index_id':'idx_fixed', 'project_ids':['prj_fixed'], 'expected_catalog_revision':1}},
-            'endpoint': {'installation':'33'*32, 'user':'fictional-user', 'namespace':'22'*16,
-                'ca_sha256':'44'*32, 'executable_sha256':'55'*32, 'generation':1,
-                'service_instance':'66'*16, 'url':'https://127.0.0.1:43111/mcp'}}
+        before = {'installation':'33'*32, 'user':'fictional-user', 'namespace':'22'*16,
+            'ca_sha256':'44'*32, 'executable_sha256':'55'*32, 'generation':1,
+            'service_instance':'66'*16, 'url':'https://127.0.0.1:43111/mcp'}
         after = copy.deepcopy(before)
-        after['endpoint'].update(generation=2, service_instance='77'*16, url='https://127.0.0.1:43112/mcp')
-        after['selection']['selection']['expected_catalog_revision'] = 2
+        after.update(generation=2, service_instance='77'*16, url='https://127.0.0.1:43112/mcp')
         old = {'instance':'66'*16,'runtime_sha256':'88'*32,'executable_sha256':'55'*32}
         new = {**old, 'instance':'77'*16}
         return before, after, old, new
@@ -65,26 +62,35 @@ class PortRelocationContractTests(unittest.TestCase):
         GATE.validate_relocation(*self.connections())
         for key in ('installation','user','namespace','ca_sha256','executable_sha256','generation','url','service_instance'):
             before, after, old, new = self.connections()
-            after['endpoint'][key] = before['endpoint'][key] if key in ('generation','url','service_instance') else 'changed'
+            after[key] = before[key] if key in ('generation','url','service_instance') else 'changed'
             with self.subTest(endpoint=key), self.assertRaises(AssertionError):
                 GATE.validate_relocation(before, after, old, new)
-        for key in ('namespace','grant_id','expected_grant_revision','index_id','project_ids'):
+        for field in ('runtime_sha256', 'executable_sha256'):
             before, after, old, new = self.connections()
-            after['selection']['selection'][key] = 'changed'
-            with self.subTest(authority=key), self.assertRaises(AssertionError):
+            new[field] = '99'*32
+            with self.subTest(runtime=field), self.assertRaises(AssertionError):
                 GATE.validate_relocation(before, after, old, new)
-        before, after, old, new = self.connections()
-        after['connection_id'] = '99'*16
-        with self.assertRaises(AssertionError):
-            GATE.validate_relocation(before, after, old, new)
-        before, after, old, new = self.connections()
-        new['runtime_sha256'] = '99'*32
-        with self.assertRaises(AssertionError):
-            GATE.validate_relocation(before, after, old, new)
-        before, after, old, new = self.connections()
-        after['selection']['selection']['expected_catalog_revision'] = 0
-        with self.assertRaises(AssertionError):
-            GATE.validate_relocation(before, after, old, new)
+        # U110 has no enrolled authority in an endpoint. The exact read scope
+        # is separately exercised by read_marker below, with MCP roots absent.
+
+    def test_read_marker_carries_the_same_explicit_index_to_both_transports(self):
+        endpoint = self.connections()[0]
+        scope = {'index_ids': ['idx_fixed']}
+        body = {'hits': [{'text': 'Port relocation preserves this fictional authority.'}]}
+        envelope = {'content': [{'type': 'text', 'text': json.dumps(body)}]}
+        network = Mock()
+        network.receive.side_effect = [
+            {'result': {'serverInfo': {'name': 'airk'}}}, {'result': envelope}]
+        network.api_read.return_value = envelope
+        transport = SimpleNamespace(McpClient=Mock(return_value=network))
+        result = GATE.read_marker(transport, endpoint, Path('owned-control'), scope)
+        transport.McpClient.assert_called_once_with(endpoint, Path('owned-control'), scope=scope)
+        self.assertEqual(network.send.call_args_list[0].args[0]['params']['capabilities'], {})
+        self.assertEqual(network.send.call_args_list[-1].args[0]['params']['arguments'],
+                         {'path': 'sentinel.txt', 'start_line': 1, 'end_line': 1, 'response_mode': 'full'})
+        network.api_read.assert_called_once_with('read_file', network.send.call_args_list[-1].args[0]['params']['arguments'])
+        network.close.assert_called_once()
+        self.assertEqual(result['mcp']['result'], result['api'])
 
     def test_owned_port_collision_is_unavailable_without_contacting_existing_listener(self):
         foreign = GATE.ForeignListener(0)
@@ -125,18 +131,15 @@ class PortRelocationContractTests(unittest.TestCase):
             self.skipTest('A normal public trust anchor is needed for the real TLS client fixture')
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            ca = root / 'ca.pem'; token = root / 'credential.token'
+            private = root / 'http-1'; private.mkdir()
+            ca = private / 'ca.pem'
             ca.write_text(ssl.DER_cert_to_PEM_cert(roots[0]), encoding='ascii')
-            token.write_text('airk1.' + '11'*16 + '.' + '22'*32, encoding='ascii')
-            ca.chmod(0o600); token.chmod(0o600)
+            ca.chmod(0o600)
             foreign = GATE.ForeignListener(0)
             try:
-                connection = {'schema':1, 'connection_id':'11'*16,
-                    'selection': {'kind':'scoped','selection': {'namespace':'33'*16}},
-                    'endpoint': {'schema':1,'state':'ready','namespace':'33'*16,
-                        'url':f'https://127.0.0.1:{foreign.port}/mcp',
-                        'ca_sha256':hashlib.sha256(roots[0]).hexdigest(), 'certificate_sha256':'44'*32},
-                    'ca_certificate_file':str(ca),'credential_file':str(token)}
+                connection = {'schema':1,'state':'ready','namespace':'33'*16,
+                    'url':f'https://127.0.0.1:{foreign.port}/mcp',
+                    'ca_sha256':hashlib.sha256(roots[0]).hexdigest(), 'certificate_sha256':'44'*32}
                 result = GATE.stale_probe(HTTP, connection, root, foreign)
                 self.assertTrue(result['tls_refused_before_client_construction'])
                 self.assertEqual(len(result['occupant_observations']), 1)

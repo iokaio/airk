@@ -590,10 +590,10 @@ impl Default for Budget {
             calls: 8,
             rounds: 3,
             fanout: 8,
-            input_tokens: 2048,
+            input_tokens: 8192,
             candidates: 32,
             max_bytes: 262_144,
-            deadline_ms: 30_000,
+            deadline_ms: 120_000,
         }
     }
 }
@@ -905,9 +905,13 @@ pub use downloads::{DownloadOrigin, download_origin};
 
 pub mod context_action;
 pub mod literal;
+pub mod resource_policy;
 pub mod schema;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod budget_tests;
 
 #[cfg(test)]
 pub(crate) mod stage_tests;

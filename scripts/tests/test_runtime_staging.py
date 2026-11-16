@@ -22,7 +22,7 @@ def load(name):
 
 
 class LocalStagingTests(unittest.TestCase):
-    def run_driver(self, drift=None):
+    def run_driver(self, drift=None, *, consume=False, signed=False):
         runtime = load("build-service-runtime")
         local = load("build-local-service-installer")
         base = json.loads((ROOT / "fixtures/split/receipts/build_receipt_2.json").read_text())["base"]
@@ -30,6 +30,8 @@ class LocalStagingTests(unittest.TestCase):
             root = Path(temporary)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.8.35"\n')
             (root / "Cargo.lock").write_text("frozen fixture lock")
+            (root / "scripts").mkdir()
+            (root / "scripts/signing-identity.json").write_bytes((ROOT / "scripts/signing-identity.json").read_bytes())
             for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
                 (root / name).write_text("retained legal fixture " + name)
             images = root / "images"
@@ -38,9 +40,44 @@ class LocalStagingTests(unittest.TestCase):
                 (images / name).write_bytes(b"signed image fixture " + name.encode())
             observations = {"source": dict(base["source"]), "static": dict(base["static_ort"]), "admin": dict(base["admin_assets"])}
             calls = []
+            package = None
+            original_files = None
+            inventory_file = root / "checked-admin.json"
+            inventory_file.write_text("{}", encoding="utf-8")
+            if consume:
+                # Real canonical validator over a complete fictional C7 pair.
+                fixtures = load("tests/test_package_native")
+                package = fixtures.package
+                pair, tested_build = fixtures.split_runtime(images, local.TARGET, dict(base["source"]),
+                    version="1.8.35", admin=dict(base["admin_assets"]))
+                observations["static"] = dict(tested_build["static_ort"])
+                original_files = package.inventory(images)
+                if drift == "consume-missing":
+                    (images / "airkctl.exe").unlink()
+                elif drift == "consume-mixed":
+                    (images / "airkctl.exe").write_bytes(b"client from another build")
+                elif drift == "consume-source":
+                    observations["source"]["sha256"] = "f" * 64
+                elif drift == "consume-admin":
+                    observations["admin"]["bundle_sha256"] = "f" * 64
+                elif drift == "consume-static":
+                    observations["static"]["build_receipt_sha256"] = "f" * 64
+                elif drift == "consume-extra":
+                    (images / "unreviewed.dat").write_bytes(b"not an allowed payload")
+                    fixtures.seal_split(images, pair, tested_build)
+                elif drift == "consume-platform":
+                    pair["os"] = "linux"
+                    fixtures.seal_split(images, pair, tested_build)
+                elif drift == "consume-profile":
+                    tested_build["profile"] = "unreviewed"
+                    fixtures.seal_split(images, pair, tested_build)
+                elif drift == "consume-notice":
+                    (images / "notices/static-onnx-runtime/inventory.json").write_text("{}", encoding="utf-8")
+                    fixtures.seal_split(images, pair, tested_build)
             class Admin:
                 @staticmethod
                 def check(output, runner=None):
+                    calls.append(("npm",))
                     output.write_text("{}")
                 @staticmethod
                 def block_from_inventory(inventory):
@@ -49,6 +86,8 @@ class LocalStagingTests(unittest.TestCase):
                 def digests():
                     return {name: observations["admin"][name] for name in ("inventory_sha256", "bundle_sha256")}
             def native_pair(profile):
+                if consume:
+                    raise AssertionError("consume mode must never invoke Cargo")
                 calls.append(("cargo", profile))
                 return images / "airk.exe", images / "airkctl.exe"
             def metadata_command(command, **kwargs):
@@ -81,13 +120,32 @@ class LocalStagingTests(unittest.TestCase):
                     observations["source"]["sha256"] = "f" * 64
                 elif drift == "probe-image":
                     (args[0] / "airk.exe").write_bytes(b"changed during model probe")
-            def compile_installer(steps, iscc, layout, output, artifact):
+            def compile_installer(steps, iscc, layout, output, artifact, uninstallers=None, name="iscc", allow_failure=False):
                 calls.append(("iscc",))
+                if allow_failure:
+                    (uninstallers / "fixture.e64").write_bytes(b"unsigned uninstaller fixture")
+                    return False
                 (output / (artifact + ".exe")).write_bytes(b"compiled installer fixture")
                 if drift == "packaging-source":
                     observations["source"]["sha256"] = "f" * 64
                 elif drift == "payload":
                     (layout / "service/airk.exe").write_bytes(b"changed after seal")
+                elif drift == "packaging-input":
+                    (images / "airk.exe").write_bytes(b"changed tested input")
+                elif drift == "packaging-copy":
+                    (layout.parent / "tested-runtime/airk.exe").write_bytes(b"changed signing input")
+                return True
+            class Signer:
+                def __init__(self, folder, commit):
+                    self.receipts = {}
+                    self.adapter = type("Adapter", (), {"provision": staticmethod(lambda: calls.append(("signing-client",)))})
+                def sign(self, name, source, output):
+                    calls.append(("sign", name))
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(source.read_bytes() + b" fictional Authenticode signature")
+                    self.receipts[name] = {"source_sha256": local.digest(source),
+                        "binary_sha256": local.digest(output), "identity": "fictional-signer"}
+                    return output
             def imports(*args):
                 calls.append(("cli-imports",))
                 if drift == "static":
@@ -105,9 +163,9 @@ class LocalStagingTests(unittest.TestCase):
                 return base["embedded_model_smoke"]
             for owner, key, value in [
                 (local, "ROOT", root), (local, "OUTPUT", root / "out"),
-                (local, "prerequisites", lambda iscc: None),
+                (local, "prerequisites", lambda iscc, **kwargs: None),
                 (local, "load_script", lambda name: {"build-admin-assets": Admin, "build-service-runtime": runtime,
-                    "split_receipts": runtime.split_receipts()}[name]),
+                    "split_receipts": runtime.split_receipts(), "package-native": package}[name]),
                 (local, "compile_installer", compile_installer),
                 (runtime, "source_identity", lambda: dict(observations["source"])),
                 (runtime, "verify_static_inputs", lambda: dict(observations["static"])),
@@ -123,13 +181,22 @@ class LocalStagingTests(unittest.TestCase):
                 (runtime, "load_script", lambda name: Admin),
             ]:
                 stack.enter_context(mock.patch.object(owner, key, value))
+            if signed:
+                stack.enter_context(mock.patch.object(local, "Signer", Signer))
             stack.enter_context(mock.patch.object(local.subprocess, "check_output", side_effect=metadata_command))
-            stack.enter_context(mock.patch.object(sys, "argv", ["build-local-service-installer.py", "--force-build", "--unsigned"]))
+            mode = ["--runtime-dir", str(images), "--admin-inventory", str(inventory_file)] if consume else ["--force-build"]
+            stack.enter_context(mock.patch.object(sys, "argv", ["build-local-service-installer.py", *mode,
+                *([] if signed else ["--unsigned"])]))
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 result = local.main()
             receipt_path, = (root / "out").glob("*/receipt.json")
             receipt = json.loads(receipt_path.read_text())
             if result == 0:
+                if consume:
+                    self.assertEqual(package.inventory(images), original_files, "original tested pair remains unchanged")
+                    self.assertEqual(receipt["input_runtime"]["images"],
+                        {name: original_files[name] for name in ("airk.exe", "airkctl.exe")})
+                    self.assertEqual(receipt["runtime_build"]["profile"], "release")
                 layout = receipt_path.parent / "layout"
                 self.assertEqual((layout / "notices/dependencies/static-ORT-LICENSE").read_text(), "actual retained static notice")
                 for name, key in [("service/airk.exe", "airk_sha256"), ("bin/airkctl.exe", "airkctl_sha256")]:
@@ -157,6 +224,45 @@ class LocalStagingTests(unittest.TestCase):
                 self.assertNotIn("installer", receipt)
                 self.assertEqual(calls.count(("cargo", "release-local")), 1)
                 if drift not in ("packaging-source", "payload"):
+                    self.assertNotIn(("iscc",), calls)
+
+
+    def test_existing_tested_pair_uses_canonical_validator_and_no_cargo_or_npm(self):
+        for signed in (False, True):
+            with self.subTest(signed=signed):
+                result, receipt, calls = self.run_driver(consume=True, signed=signed)
+                self.assertEqual(result, 0, receipt.get("error"))
+                self.assertFalse(any(row[0] in ("cargo", "npm", "dependency-proof") for row in calls), calls)
+                self.assertLess(calls.index(("cli-imports",)), calls.index(("iscc",)))
+                self.assertLess(calls.index(("model-smoke",)), calls.index(("iscc",)))
+                if signed:
+                    self.assertEqual([row[1] for row in calls if row[0] == "sign"],
+                        ["airk", "airkctl", "uninstaller", "installer"])
+                    self.assertTrue(receipt["signed"])
+                    self.assertEqual(receipt["signing"]["provenance"], "local")
+                    self.assertNotEqual(receipt["input_runtime"]["images"]["airk.exe"],
+                        receipt["files"]["service/airk.exe"]["sha256"])
+
+    def test_existing_pair_refuses_invalid_closure_before_signing_or_compilation(self):
+        for drift in ("consume-missing", "consume-mixed", "consume-source", "consume-admin", "consume-static",
+                      "consume-extra", "consume-platform", "consume-profile", "consume-notice"):
+            with self.subTest(drift=drift):
+                result, receipt, calls = self.run_driver(drift, consume=True, signed=True)
+                self.assertEqual(result, 1, receipt)
+                self.assertEqual(receipt["result"], "failed")
+                self.assertNotIn("installer", receipt)
+                self.assertFalse(any(row[0] in ("cargo", "npm", "sign", "signing-client", "iscc") for row in calls), calls)
+
+    def test_existing_pair_keeps_post_sign_probe_and_final_drift_checks(self):
+        for drift in ("source", "admin", "static", "cli-imports", "probe-image", "metadata-image", "metadata-static",
+                      "seal-image", "seal-static", "seal-admin", "packaging-source", "payload", "packaging-input", "packaging-copy"):
+            with self.subTest(drift=drift):
+                result, receipt, calls = self.run_driver(drift, consume=True, signed=True)
+                self.assertEqual(result, 1, receipt)
+                self.assertEqual(receipt["result"], "failed")
+                self.assertNotIn("installer", receipt)
+                self.assertFalse(any(row[0] in ("cargo", "npm", "dependency-proof") for row in calls), calls)
+                if not drift.startswith("packaging") and drift != "payload":
                     self.assertNotIn(("iscc",), calls)
 
 

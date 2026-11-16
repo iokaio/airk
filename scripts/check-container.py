@@ -170,6 +170,13 @@ def selected_scope(value, scope):
 
 
 def member_result(value, scope, allow_unpublished=False):
+    if scope.get("open_read"):
+        assert value.get("read_scope") == {"source": "named", "index_ids": scope["selection"]["index_ids"]}, value
+        assert value["collection"] == scope["collection"], value
+        if value.get("publication") is not None or not allow_unpublished:
+            token = value["publication"]["token"]
+            assert re.fullmatch(r"airk-r1:[0-9a-f]{32}:[1-9][0-9]*:[0-9a-f]{64}", token), value
+        return value
     assert value["schema"] == "airk.combined-read/1", value
     receipt = validate_delivery(value, scope)
     selected = selected_scope(value, scope)
@@ -190,6 +197,12 @@ def member_result(value, scope, allow_unpublished=False):
 
 
 def query_scope(value, scope, view):
+    if scope.get("open_read"):
+        assert value["schema"] == "airk.query-scope/1", value
+        assert value.get("read_scope") == {"source": "named", "index_ids": scope["selection"]["index_ids"]}, value
+        # Open one-index reads expose the canonical selection observation;
+        # reviewed-grant discovery is separately retained predecessor coverage.
+        return value
     assert value["schema"] == "airk.query-scope/1" and value["mode"] == "reviewed_grant" and value["view"] == view, value
     selected = selected_scope(value, scope)
     receipt = validate_delivery(value, scope)
@@ -228,6 +241,13 @@ def parity_value(value):
 
 def logical_result(raw, scope, refused=False):
     """A full logical comparison copy; complete original dictionaries/proofs are retained."""
+    if scope.get("open_read"):
+        if not refused:
+            if raw.get("schema") == "airk.query-scope/1":
+                query_scope(raw, scope, raw.get("view"))
+            else:
+                member_result(raw, scope)
+        return parity_value(raw)
     if raw.get("schema") != "airk.combined-read/1":
         if not refused:
             query_scope(raw, scope, raw["view"])
@@ -256,6 +276,15 @@ def docker(*args, check=True, timeout=60):
         print(result.stderr[-4096:], file=sys.stderr, flush=True)
         result.check_returncode()
     return result
+
+
+def open_container_endpoint(name, control, records):
+    """Read the protected endpoint inside its real container namespace; no enrollment."""
+    path = str(PurePosixPath(control) / "http-1" / "endpoint.json")
+    response = docker("exec", name, "cat", path)
+    endpoint = json.loads(response.stdout)
+    records.append({"transport": "tokenless_endpoint", "path": path, "endpoint": endpoint})
+    return endpoint
 
 
 def enroll_container_http(name, install, control, selection, identifier, records, *, split=False):
@@ -394,7 +423,7 @@ def check_https(name, control, connection, scope, cli_tool, catalog, records):
     script = Path(__file__).with_name("http_fixture.py").read_text(encoding="utf-8") + '''
 import sys
 configuration = json.loads(sys.stdin.readline())
-client = McpClient(configuration["connection"], configuration["control"])
+client = McpClient(configuration["connection"], configuration["control"], scope=configuration.get("scope"))
 try:
     for line in sys.stdin:
         value = json.loads(line)
@@ -440,7 +469,8 @@ finally:
         assert reply.get("id") == serial and "error" not in reply
         return reply["result"]
     try:
-        notify({"connection": connection, "control": control})
+        notify({"connection": connection, "control": control,
+                "scope": {"index_ids": scope["selection"]["index_ids"]} if scope.get("open_read") else None})
         check_mcp(exchange, notify, scope, cli_tool, catalog, records)
         api_catalog = raw({"fixture_api": "catalog"})
         assert api_catalog["schema"] == "airk.local-api/1" and api_catalog["contract_version"] == 1
@@ -504,7 +534,12 @@ def main():
     def command(collection, *command_args, check=True, timeout=60):
         selected = scopes[collection]["selection"]
         selected_client = ("airkctl", "--service-runtime-dir", control) if split else ("airk", "--service-install-dir", install)
-        exact = ("exec", name, *selected_client, "--combined-session", json.dumps(selected), *command_args)
+        if split:
+            # U110 commands select their whole index per call. Tool catalog needs no scope.
+            exact = ("exec", name, *selected_client, *command_args,
+                     *(("--index", selected["index_ids"][0]) if command_args[:2] == ("tools", "call") else ()))
+        else:
+            exact = ("exec", name, *selected_client, "--combined-session", json.dumps(selected), *command_args)
         record = {"transport": "cli", "input": exact}; records.append(record)
         response = docker(*exact, check=check, timeout=timeout)
         record.update({"stdout": response.stdout, "stderr": response.stderr, "exit_code": response.returncode})
@@ -581,6 +616,7 @@ def main():
         modern = image_runtime["schema"] in (2, 3)
         for collection in ("project-a", "project-b"):
             scopes[collection] = reviewed_fixture(rpc, collection)
+            scopes[collection]["open_read"] = split
             binding = scopes[collection]["registration"]["binding"]
             accepted_command = ("exec", name, "airkctl" if split else "airk", "--service-runtime-dir", control, "--service-project", binding, "index")
             indexed = docker(*accepted_command)
@@ -601,14 +637,19 @@ def main():
                     query_scope(raw, scope, arguments["view"])
                 else:
                     result = member_result(raw, scope)
-                    allocation = raw["members"][0]["allocation"]
-                    assert allocation["limit"] <= arguments["limit"] and allocation["max_bytes"] <= arguments["max_bytes"]
+                    if not scope.get("open_read"):
+                        allocation = raw["members"][0]["allocation"]
+                        assert allocation["limit"] <= arguments["limit"] and allocation["max_bytes"] <= arguments["max_bytes"]
+                    else:
+                        # Single-index delivery has no combined member allocation/ranking wrapper.
+                        assert len(result.get("hits", result.get("items", []))) <= arguments["limit"]
                     if tool_name == "airk_symbols":
                         assert bool(result["items"]) is (collection == "project-a")
                     else:
                         assert bool(result["hits"]) is (collection == "project-a"), result
-                        assert len(raw["ranking"]) == len(result["hits"]), raw
-                        for rank in raw["ranking"]:
+                        if not scope.get("open_read"):
+                            assert len(raw["ranking"]) == len(result["hits"]), raw
+                        for rank in raw.get("ranking", []):
                             origin = combined.ranked_origin(raw, rank)
                             assert origin["index_id"] == scope["selection"]["index_ids"][0]
                             assert origin["project_ids"] == scope["selection"]["project_ids"] and origin["source_root_id"] == scope["source_id"]
@@ -622,9 +663,13 @@ def main():
             catalog = json.loads(command(collection, "tools", "list", "--json").stdout)["tools"]
             cli_read = lambda name, args: tool(collection, name, args, allow_error=name == "airk_read_file")
             if modern:
-                connection = enroll_container_http(name, install, control,
-                    {"kind":"combined","selection":scope["selection"]}, uuid.uuid4().hex, records, split=split)
-                assert connection["selection"] == {"kind": "combined", "selection": scope["selection"]}, "HTTP scope changed during enrollment"
+                if split:
+                    connection = open_container_endpoint(name, control, records)
+                else:
+                    # Exact pre-U110 schema-2 predecessor compatibility only.
+                    connection = enroll_container_http(name, install, control,
+                        {"kind":"combined","selection":scope["selection"]}, uuid.uuid4().hex, records)
+                    assert connection["selection"] == {"kind": "combined", "selection": scope["selection"]}, "HTTP scope changed during enrollment"
                 helper_spec = importlib.util.spec_from_file_location("container_http_identity", Path(__file__).with_name("http_fixture.py"))
                 helper = importlib.util.module_from_spec(helper_spec); helper_spec.loader.exec_module(helper)
                 helper.validate_native_identity(connection, rpc("health")["observation"])

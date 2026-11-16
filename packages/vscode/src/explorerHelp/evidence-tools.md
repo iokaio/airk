@@ -10,7 +10,8 @@ related_airk_help: freshness, limits
 
 Open **Search → Evidence tools** to choose a guided Code, Documents, Evidence,
 Review or Strategies view. These are the existing workflows, not a generic tool
-runner. The older Explore evidence drawer, command entries and deep links remain.
+runner. Code, Documents, Evidence, Review and Strategies also have their own
+rail destinations. Command entries and deep links remain available.
 
 - **Code:** symbols, textual references and selected-source outline. Written
   references are not resolved cross-file bindings.

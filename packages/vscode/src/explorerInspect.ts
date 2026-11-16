@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import type { ChangesView, CitationCheckView, CitationResult, InspectView, LiveCheck } from './explorerContracts';
 import { parseCitations } from './explorerContracts';
 import { explorerError } from './explorerErrors';
@@ -60,7 +61,7 @@ export async function inspect(session: EvidenceClient, refs: RefRegistry, projec
     const path = ref?.path ?? selectedPath;
     if (!path) { throw new EvidenceFailure(explorerError('NO_SOURCE_FILE')); }
     let nativeFailure: Value | undefined;
-    const result = await session.call('airk_file_info', { path, response_mode: 'full', ...originArgs(ref?.origin) }, { timeout: 30000 }).catch(error => {
+    const result = await session.call('airk_file_info', { path, response_mode: 'full', ...originArgs(ref?.origin) }, { timeout: READ_TRANSPORT_DEADLINE_MS }).catch(error => {
         if (ref?.origin && error instanceof EvidenceFailure && error.nativeResponse) {
             const payload = error.nativePayload ?? readResultBody(error.nativeResponse);
             if (payload.schema === 'airk.combined-read/1' || error.nativePayload && !Object.keys(payload).length) { nativeFailure = error.nativeResponse; return { payload, rawPayload: error.nativeResponse }; }
@@ -123,7 +124,7 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
     let publication: string | undefined;
     for (const path of paths) {
         try {
-            const result = await session.call('airk_file_info', { path }, { timeout: 30000 });
+            const result = await session.call('airk_file_info', { path }, { timeout: READ_TRANSPORT_DEADLINE_MS });
             if (result.payload.schema === 'airk.combined-read/1') { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose an originating index before checking pasted paths.')); }
             publication = samePublication(publication, result);
             if (absentFromIndex(result.payload)) { records.set(path, {}); continue; }
@@ -160,7 +161,7 @@ export async function changesSince(session: EvidenceClient, since: string, limit
     if (session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose one originating index and its member publication in Workbench to compare changes.')); }
     const handle = more && handles ? handles.cursors.get(more, project) : undefined;
     const args = handle ? { ...handle.args, cursor: handle.cursor } : { since, limit, max_bytes: 32768 };
-    const result = await session.call('airk_changes', args, { timeout: 30000 });
+    const result = await session.call('airk_changes', args, { timeout: READ_TRANSPORT_DEADLINE_MS });
     if (handle) { samePublication(handle.publication, result); since = String(handle.args.since); limit = handle.limit; }
     const payload = result.payload;
     if (payload.schema === 'airk.combined-read/1') { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose one originating index and its member publication in Workbench to compare changes.')); }

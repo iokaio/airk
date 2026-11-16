@@ -195,7 +195,16 @@ fn context_template() -> Result<airk_core::arbiter::context_action::ContextReque
         Budget,
         context_action::{ContextRequestV2 as ContextRequest, REQUEST_SCHEMA_V2 as REQUEST_SCHEMA},
     };
-    let budget = Budget::default();
+    // This named historical control must not inherit a later shipping default.
+    let budget = Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262144,
+        deadline_ms: 30000,
+    };
     ensure!(
         (
             budget.calls,
@@ -206,7 +215,7 @@ fn context_template() -> Result<airk_core::arbiter::context_action::ContextReque
             budget.max_bytes,
             budget.deadline_ms
         ) == (8, 3, 8, 2048, 32, 262144, 30000),
-        "native defaults differ from the frozen goal budget"
+        "explicit historical goal budget differs from its frozen control"
     );
     let request = ContextRequest {
         schema: REQUEST_SCHEMA.into(),
@@ -218,7 +227,49 @@ fn context_template() -> Result<airk_core::arbiter::context_action::ContextReque
 }
 
 fn answer_template() -> Result<serde_json::Value> {
-    let mut request = serde_json::to_value(context_template()?)?;
+    answer_template_for(context_template()?)
+}
+fn software_v2_context_template() -> Result<airk_core::arbiter::context_action::ContextRequestV2> {
+    use airk_core::arbiter::{
+        Budget,
+        context_action::{ContextRequestV2, REQUEST_SCHEMA_V2},
+        resource_policy::ResourcePolicy,
+    };
+    let policy = ResourcePolicy::software_v2();
+    policy.validate()?;
+    let budget = Budget::default();
+    ensure!(
+        (
+            budget.calls,
+            budget.rounds,
+            budget.fanout,
+            budget.input_tokens,
+            budget.candidates,
+            budget.max_bytes,
+            budget.deadline_ms
+        ) == (8, 3, 8, 8192, 32, 262144, 120000),
+        "software-v2 defaults differ from the separately frozen current profile"
+    );
+    ensure!(
+        budget.input_tokens == policy.shared_input_tokens
+            && budget.deadline_ms == policy.deadline_ms,
+        "current fixture budget differs from native software-v2 resource policy"
+    );
+    let request = ContextRequestV2 {
+        schema: REQUEST_SCHEMA_V2.into(),
+        question: "__PRIVATE_FROZEN_QUESTION__".into(),
+        budget,
+    };
+    request.validate()?;
+    Ok(request)
+}
+fn software_v2_answer_template() -> Result<serde_json::Value> {
+    answer_template_for(software_v2_context_template()?)
+}
+fn answer_template_for(
+    request: airk_core::arbiter::context_action::ContextRequestV2,
+) -> Result<serde_json::Value> {
+    let mut request = serde_json::to_value(request)?;
     let response = airk_mcp::response::ResponseArgs {
         response_mode: Some(airk_mcp::response::ResponseMode::Full),
         include_status: true,
@@ -283,11 +334,167 @@ fn native_goal_context_template_has_the_independent_frozen_instance() -> Result<
     Ok(())
 }
 
+#[test]
+fn native_software_v2_context_template_has_literal_budget_and_complete_response_options()
+-> Result<()> {
+    let request = software_v2_answer_template()?;
+    assert_eq!(
+        request,
+        serde_json::json!({"schema":"airk.arbiter.context.request/2",
+        "question":"__PRIVATE_FROZEN_QUESTION__","budget":{"calls":8,"rounds":3,"fanout":8,
+            "input_tokens":8192,"candidates":32,"max_bytes":262144,"deadline_ms":120000},
+        "response_mode":"full","include_status":true})
+    );
+    let decoded: airk_mcp::AnswerArgs = serde_json::from_value(request.clone())?;
+    decoded.request.validate()?;
+    assert_eq!(
+        serde_json::to_value(decoded.response)?,
+        serde_json::to_value(airk_mcp::response::ResponseArgs {
+            response_mode: Some(airk_mcp::response::ResponseMode::Full),
+            include_status: true,
+            ..Default::default()
+        })?
+    );
+    assert_eq!(context_template()?.budget.input_tokens, 2048);
+    assert_eq!(context_template()?.budget.deadline_ms, 30000);
+    if let Some(path) = std::env::var_os("AIRK_ARBITER_SOFTWARE_V2_CONTEXT_REQUEST_OUTPUT") {
+        use std::io::Write;
+        let path = PathBuf::from(path);
+        ensure!(
+            path.is_absolute()
+                && path
+                    .parent()
+                    .context("current template output parent missing")?
+                    .canonicalize()?
+                    .starts_with(artifact_root()?),
+            "current template output leaves artifacts"
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        let mut bytes = serde_json::to_vec_pretty(&request)?;
+        bytes.push(b'\n');
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
+    Ok(())
+}
+
 /// Invoke the compiled test binary directly with --ignored --exact and the
 /// documented environment. No public command/configuration can attach it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "private actual native evaluation service; explicit frozen inputs and lifetime required"]
 async fn actual_private_arbiter_fixture() -> Result<()> {
+    run_actual_private_arbiter_fixture(answer_template()?, None).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "private current8192/120 native evaluation service; explicit reviewed inputs and lifetime required"]
+async fn actual_private_arbiter_fixture_software_v2() -> Result<()> {
+    let consent = std::env::var("AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT")
+        .context("current fixture requires explicit resource configuration consent")?;
+    let resources = software_v2_resource_configuration(&consent)?;
+    run_actual_private_arbiter_fixture(software_v2_answer_template()?, Some(resources)).await
+}
+
+fn software_v2_resource_configuration(
+    consent: &str,
+) -> Result<airk_core::service_resources::ResourceConfiguration> {
+    use airk_core::service_resources::{ResourceConfiguration, ResourcePreset};
+    ensure!(
+        consent == "throughput64gib4threads",
+        "current fixture requires explicit throughput64gib4threads resource consent"
+    );
+    let configuration = ResourceConfiguration {
+        preset: ResourcePreset::Throughput,
+        memory_bytes: Some(64 << 30),
+        inference_threads: Some(4),
+        ..ResourceConfiguration::default()
+    };
+    configuration.validate()?;
+    Ok(configuration)
+}
+
+fn require_software_v2_resource_observation(
+    response: &ControlResponse,
+    expected: &airk_core::service_resources::ResourceConfiguration,
+) -> Result<()> {
+    let ControlResponse::Resources {
+        observation,
+        configuration_error: false,
+        ..
+    } = response
+    else {
+        bail!("current fixture native resource configuration refused or unknown")
+    };
+    ensure!(
+        serde_json::to_value(&observation.configuration)? == serde_json::to_value(expected)?,
+        "current fixture actual resource configuration differs"
+    );
+    // Pressure/available memory/reservations are retained facts, not proof of
+    // native load or fit. Ordinary native admission remains the only owner.
+    Ok(())
+}
+
+#[test]
+fn current_private_fixture_resources_require_explicit_consent_and_exact_native_configuration()
+-> Result<()> {
+    use airk_core::service_resources::ResourcePreset;
+    for invalid in ["", "true", "balanced", "throughput", "throughput64gib"] {
+        assert!(software_v2_resource_configuration(invalid).is_err());
+    }
+    let configuration = software_v2_resource_configuration("throughput64gib4threads")?;
+    assert_eq!(configuration.preset, ResourcePreset::Throughput);
+    assert_eq!(configuration.memory_bytes, Some(68719476736));
+    assert_eq!(configuration.inference_threads, Some(4));
+    assert_eq!(configuration.extraction_threads, None);
+    assert_eq!(configuration.background_io_bytes_per_second, None);
+    assert_eq!(configuration.query_concurrency, 16);
+    assert!(
+        require_software_v2_resource_observation(
+            &ControlResponse::Failure {
+                code: "resource_configuration_outcome_unknown".into()
+            },
+            &configuration
+        )
+        .is_err()
+    );
+    let balanced = airk_kernel::service_resources::Resources::new(
+        airk_core::service_resources::ResourceConfiguration::default(),
+        32,
+        Some(128 << 30),
+    )?;
+    let wrong_configuration = ControlResponse::Resources {
+        observation: Box::new(balanced.snapshot()),
+        age_ms: 0,
+        configuration_error: false,
+    };
+    assert!(
+        require_software_v2_resource_observation(&wrong_configuration, &configuration).is_err()
+    );
+    let requested =
+        airk_kernel::service_resources::Resources::new(configuration.clone(), 32, Some(128 << 30))?;
+    let mut observed = requested.snapshot();
+    // A configured ceiling is deliberately not a claim that pressure is absent.
+    observed.pressure = true;
+    let actual = ControlResponse::Resources {
+        observation: Box::new(observed),
+        age_ms: 0,
+        configuration_error: false,
+    };
+    require_software_v2_resource_observation(&actual, &configuration)?;
+    Ok(())
+}
+
+async fn run_actual_private_arbiter_fixture(
+    context_request: serde_json::Value,
+    resource_configuration: Option<airk_core::service_resources::ResourceConfiguration>,
+) -> Result<()> {
+    // The selector's Rust owner supplies the whole frozen request, including
+    // current MCP response options. Environment/input metadata cannot rewrite it.
+    let decoded: airk_mcp::AnswerArgs = serde_json::from_value(context_request.clone())?;
+    decoded.request.validate()?;
     let input = PathBuf::from(
         std::env::var_os("AIRK_ARBITER_EVALUATION_INPUTS")
             .context("AIRK_ARBITER_EVALUATION_INPUTS missing")?,
@@ -350,7 +557,7 @@ async fn actual_private_arbiter_fixture() -> Result<()> {
             false,
         )?;
     }
-    write(&work, "context-request.json", &answer_template()?)?;
+    write(&work, "context-request.json", &context_request)?;
     // Use the actual first-start transaction, actual engine identity and real
     // activation/readiness producer; do not seed catalog rows or fake I4.
     let lease = airk_store::service::ServiceLease::acquire(&control)?;
@@ -493,6 +700,20 @@ async fn actual_private_arbiter_fixture() -> Result<()> {
         "private actual executable differs"
     );
     let instance = observation.instance;
+    if let Some(configuration) = &resource_configuration {
+        let request = ControlMethod::ConfigureResources { configuration: configuration.clone() };
+        write(&work, "resource-configuration-request.json", &request)?;
+        let response = crate::ipc::control::request_once(
+            &control, request, env!("CARGO_PKG_VERSION"), Some(instance),
+        ).await?;
+        write(&work, "resource-configuration-response.json", &response)?;
+        require_software_v2_resource_observation(&response, configuration)?;
+        let actual = crate::ipc::control::request_once(
+            &control, ControlMethod::Resources, env!("CARGO_PKG_VERSION"), Some(instance),
+        ).await?;
+        write(&work, "resources-before-ready.json", &actual)?;
+        require_software_v2_resource_observation(&actual, configuration)?;
+    }
     write(
         &work,
         "ready.json",
@@ -1761,6 +1982,16 @@ fn emit_private_selected_vector_configuration() -> Result<()> {
 #[test]
 #[ignore = "private synthetic composed source/request emitter; fresh protected artifacts output required"]
 fn emit_private_selected_synthetic_fixture() -> Result<()> {
+    emit_selected_synthetic_fixture(answer_template()?)
+}
+
+#[test]
+#[ignore = "private current8192/120 synthetic composed source/request emitter; fresh protected output required"]
+fn emit_private_selected_synthetic_fixture_software_v2() -> Result<()> {
+    emit_selected_synthetic_fixture(software_v2_answer_template()?)
+}
+
+fn emit_selected_synthetic_fixture(mut answer: serde_json::Value) -> Result<()> {
     use std::io::Write;
     let output = PathBuf::from(
         std::env::var_os("AIRK_SELECTED_SYNTHETIC_OUTPUT")
@@ -1832,7 +2063,6 @@ fn emit_private_selected_synthetic_fixture() -> Result<()> {
         );
     let _: airk_mcp::ReadArgs = serde_json::from_value(pinned_read.clone())?;
     write(&output, "read-file-known-source.json", &pinned_read)?;
-    let mut answer = answer_template()?;
     answer
         .as_object_mut()
         .context("answer case not object")?

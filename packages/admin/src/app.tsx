@@ -12,7 +12,7 @@ import { Text } from './render';
 import { currentSession, logout, onSessionChange, takeInitialRoute, type Session } from './session';
 import { Usage } from './usage';
 import { BundledHelp } from './bundledHelp';
-import { browserDestination, MAIN_DESTINATIONS, evidenceToolsPresentation, type EvidenceToolsNode } from '../../ui/src/navigation';
+import { browserDestination, editorDestination, DESTINATION_ICONS, MAIN_DESTINATIONS, evidenceToolsPresentation, type EvidenceToolsNode } from '../../ui/src/navigation';
 import {BROWSER_EVIDENCE_ROUTES,isBrowserEvidenceRoute} from './browserEvidenceRoutes';
 import { PreparedActions } from './preparedActions';
 import { Arbiter } from './arbiter';
@@ -47,7 +47,8 @@ export function SearchWorkspace(props:{route:Route;onView(tools:boolean,tool?:st
   const tools=props.route.params.get('view')==='tools',guided=props.route.params.get('tool'),route=isBrowserEvidenceRoute(guided)?guided:undefined,queryMounted=useRef(false);const lastTool=useRef<string>();if(route)lastTool.current=route;
   if(!tools||route)queryMounted.current=true;
   const show=(value:EvidenceToolsNode|string):ComponentChildren=>typeof value==='string'?value:h(value.tag,value.href?{href:value.href}:value.route?{onClick:()=>props.onView(true,value.route)}:{},...value.children.map(show));
-  return <section aria-label="Search workspace"><div class="actions" aria-label="Search views">
+  const destination=route?editorDestination(route):'search',title=MAIN_DESTINATIONS.find(entry=>entry.id===destination)?.title??'Search';
+  return <section aria-label={`${title} workspace`}><h1>{title}</h1><div class="actions" aria-label="Search views">
     <button type="button" class={tools?'secondary':''} aria-current={!tools?'page':undefined} onClick={()=>props.onView(false)}>Query</button>
     <button type="button" class={tools?'':'secondary'} aria-current={tools?'page':undefined} onClick={()=>props.onView(true)}>Evidence tools</button>
     </div>{queryMounted.current?<section hidden={tools&&!route}><Search guidedRoute={route} onGuidedRoute={route=>props.onView(true,route)}/></section>:null}{tools&&!route?<section class="evidence-tools" aria-label="Evidence tools hub">{lastTool.current?<button onClick={()=>props.onView(true,lastTool.current)}>Continue last guided tool</button>:null}{show(evidenceToolsPresentation('browser',undefined,BROWSER_EVIDENCE_ROUTES))}</section>:null}</section>;
@@ -245,9 +246,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
       {!props.embedded ? <>
       <header>
         <span class="brand">AIRK Admin</span>
-        <span class="muted instance" title="service instance">
-          {session.serviceInstance.slice(0, 8)}
-        </span>
+        <span class="muted instance">Local service</span>
         <button type="button" class="small secondary" onClick={() => endWith({ kind: 'logged_out' })}>
           Sign out
         </button>
@@ -257,11 +256,12 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
           <button
             key={id}
             type="button"
-            class={id === browserDestination(page) ? 'nav current' : 'nav'}
-            aria-current={id === browserDestination(page) ? 'page' : undefined}
-            onClick={() => setPage(target)}
+            title={title} aria-label={title}
+            class={`nav${id === (page === 'search' && route.params.get('tool') ? editorDestination(route.params.get('tool')!) : browserDestination(page)) ? ' current' : ''}${id === 'code' ? ' nav-divider' : id === 'help' ? ' nav-help' : ''}`}
+            aria-current={id === (page === 'search' && route.params.get('tool') ? editorDestination(route.params.get('tool')!) : browserDestination(page)) ? 'page' : undefined}
+            onClick={() => ['code', 'docs', 'evidence', 'review', 'strategies'].includes(id) ? navigateSearch(true, MAIN_DESTINATIONS.find(entry => entry.id === id)!.editor) : setPage(target)}
           >
-            {title}
+            <svg class="destination-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={DESTINATION_ICONS[id]} /></svg><span class="nav-label">{title}</span>
           </button>
         ))}
       </nav>
@@ -280,7 +280,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
         {view('recovery', <Recovery />)}
         {view('service',
           <><Service onLifecycle={(action) => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />
-            <details class="panel"><summary>Optional local Arbiter</summary><Arbiter /></details></>)}
+            <Arbiter /></>)}
         {view('logs', <Logs />)}
         {view('usage', <Usage />)}
         {view('search', <SearchWorkspace route={pageRoute('search')} onView={navigateSearch} />)}

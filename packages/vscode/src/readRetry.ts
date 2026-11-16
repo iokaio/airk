@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Pure native read-retry validation shared by every host consumer.
  * Importing this module opens no transport and performs no startup work. */
+import { READ_OPERATION_DEADLINE_MS } from './generated/arbiterBudget';
 import { isDeepStrictEqual } from 'node:util';
 import type { WindowSelection } from './generated/i2';
 import { validateCatalogSession, validateCombinedCatalogSession } from './catalogSession';
@@ -74,9 +75,9 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
             ||member.cutoff!==undefined&&member.cutoff!==null)return;
         const allocation=member.allocation;
         if(!object(allocation)||!fields(allocation,['index_id','limit','max_bytes','deadline_ms','verification_max_sources','verification_max_bytes','verification_deadline_ms'])
-            ||allocation.index_id!==index||!integer(allocation.limit,1,100)||!integer(allocation.max_bytes,1,65536)||!integer(allocation.deadline_ms,1,30000)
+            ||allocation.index_id!==index||!integer(allocation.limit,1,100)||!integer(allocation.max_bytes,1,65536)||!integer(allocation.deadline_ms,1,READ_OPERATION_DEADLINE_MS)
             ||!integer(allocation.verification_max_sources,0,256)||!integer(allocation.verification_max_bytes,0,1073741824)
-            ||!integer(allocation.verification_deadline_ms,0,30000))return;
+            ||!integer(allocation.verification_deadline_ms,0,READ_OPERATION_DEADLINE_MS))return;
         const error=combined.error;
         if(!object(error)||error.code!=='member_unavailable'||error.retryable!==false
             ||!Array.isArray(error.failed_members)||error.failed_members.length!==1||error.failed_members[0]!==index)return;

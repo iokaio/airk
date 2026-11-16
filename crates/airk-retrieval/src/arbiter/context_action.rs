@@ -209,12 +209,37 @@ pub fn prompt(request: &NativeContextActionRequest) -> Result<Prompt> {
             && request.question.len() <= 16_384,
         "joint task input/policy mismatch"
     );
-    compact_prompt(
+    prompt_from_parts(
         &request.question,
         &request.records,
         &request.choices,
         roster,
     )
+}
+
+/// Native read-only evidence revalidation without minting callback authority.
+/// Qualification consumers reconstruct the actual question/menu and compile it
+/// with the same owner, rather than accepting an opaque roster hash.
+pub fn prompt_from_parts(
+    question: &str,
+    records: &[EvidenceRecord],
+    choices: &[ReadChoice],
+    roster: &ContextActionRoster,
+) -> Result<Prompt> {
+    roster.validate(records)?;
+    ensure!(
+        roster.policy == policy_digest()?
+            && !question.trim().is_empty()
+            && question.len() <= 16_384,
+        "joint task input/policy mismatch"
+    );
+    let eligible = roster.basis.read_choices_scored.iter().copied().collect();
+    let rebuilt = build_roster_with_eligible(question, &roster.scope, records, choices, &eligible)?;
+    ensure!(
+        serde_json::to_value(rebuilt)? == serde_json::to_value(roster)?,
+        "joint roster differs from actual native question/menu constructor"
+    );
+    compact_prompt(question, records, choices, roster)
 }
 
 /// First-use ordered table of distinct file paths.
@@ -387,17 +412,11 @@ pub fn selected_action(
             && calibration.task_policy == roster.policy,
         "invalid joint task score shape/policy"
     );
-    if scores.len() < 2 {
+    let Some((best, margin)) =
+        airk_core::arbiter::context_action::calibration::terminal::raw_winner(scores)?
+    else {
         return Ok(None);
-    }
-    let mut order: Vec<usize> = (0..scores.len()).collect();
-    order.sort_by(|left, right| scores[*right].total_cmp(&scores[*left]));
-    let best = order[0];
-    let runner = order[1];
-    if scores[best] == scores[runner] {
-        return Ok(None);
-    }
-    let margin = scores[best] - scores[runner];
+    };
     Ok(calibration
         .accepts(&roster.cards[best], margin)
         .then_some(roster.cards[best].id))
@@ -450,6 +469,7 @@ mod tests {
         // Structural selection fixture only; 1.0 is NOT a fitted threshold.
         let calibration = JointCalibration {
             schema: CALIBRATION_SCHEMA.into(),
+            class_support: None,
             model: profile.model,
             compiler: profile.compiler,
             task_policy: policy,

@@ -10,6 +10,12 @@ airkctl dependency proof; the §9.5 staged layout (bin/, service/, notices/) wit
 script installers/windows/airk-service.iss; a receipt. Nothing is installed, started, trusted or
 published.
 
+Alternatively, --runtime-dir consumes one already tested canonical Windows pair
+with --admin-inventory naming its sealed inventory. No Cargo or npm command runs
+in this mode. Source, complete payload, static ORT and Admin closure must match
+this checkout. Fresh signed copies still pass the canonical post-sign import,
+model, metadata and complete-inventory checks; original pair bytes stay unchanged.
+
 Signing (U22, U70): scripts/local_signing.py signs fresh copies of `airk.exe` and `airkctl.exe`
 (the staged images), the Inno uninstaller (ISCC's manual-signing first pass stops after writing
 it; the signed copy replaces it and ISCC runs again) and the outer installer EXE, each with an
@@ -81,10 +87,11 @@ class Steps:
         return value
 
 
-def prerequisites(iscc):
+def prerequisites(iscc, *, consume=False):
     if sys.platform != "win32":
         raise SystemExit("The local service installer is built on Windows")
-    missing = [tool for tool in ("cargo", "rustc", "npm", "node", "pwsh", "git") if shutil.which(tool) is None]
+    tools = ("rustc", "pwsh", "git") if consume else ("cargo", "rustc", "npm", "node", "pwsh", "git")
+    missing = [tool for tool in tools if shutil.which(tool) is None]
     if not iscc.is_file():
         missing.append(f"Inno Setup ISCC ({iscc})")
     if missing:
@@ -191,15 +198,51 @@ def signed_installer(steps, signer, iscc, layout, compiled, artifact, run):
     return final, unsigned
 
 
+
+def verified_runtime(directory, version, source, static_inputs, admin_block):
+    """Use the canonical complete C7 validator; never reconstruct missing metadata."""
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("Expected an existing tested runtime directory without redirection")
+    directory = directory.resolve(strict=True)
+    package = load_script("package-native")
+    files, executables = package.validate_runtime(directory, version, TARGET, source)
+    if tuple(executables) != ("airk.exe", "airkctl.exe"):
+        raise ValueError("Tested Windows runtime must contain its exact service/client pair")
+    build = package.bounded_json(directory / "airk-build.json", 65_536)
+    if build["static_ort"] != static_inputs or build["admin_assets"] != admin_block:
+        raise ValueError("Tested runtime static ORT or Admin inputs differ from this checkout")
+    return {"directory": str(directory), "files": files, "build": build}
+
+
+def runtime_input_receipt(verified):
+    files = verified["files"]
+    return {"directory": verified["directory"], "profile": verified["build"]["profile"],
+            "source": verified["build"]["source"],
+            "metadata": {name: files[name] for name in ("airk-install.json", "airk-runtime.json", "airk-build.json")},
+            "images": {name: files[name] for name in ("airk.exe", "airkctl.exe")}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--force-build", action="store_true", required=True,
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--force-build", action="store_true",
                         help="Build from this checkout; completed artifacts are never reused")
+    inputs.add_argument("--runtime-dir", type=Path,
+                        help="Consume one existing tested canonical Windows runtime pair without Cargo/npm")
+    parser.add_argument("--admin-inventory", type=Path,
+                        help="Consume mode: exact sealed build-admin-assets.py inventory for the tested pair")
     parser.add_argument("--unsigned", action="store_true",
                         help="Label the payload and installer unsigned instead of stopping without signing access")
     parser.add_argument("--iscc", type=Path, default=default_iscc())
     args = parser.parse_args()
-    prerequisites(args.iscc)
+    if args.runtime_dir is not None:
+        if args.admin_inventory is None:
+            parser.error("--runtime-dir requires --admin-inventory")
+        prerequisites(args.iscc, consume=True)
+    else:
+        if args.admin_inventory is not None:
+            parser.error("--admin-inventory requires --runtime-dir")
+        prerequisites(args.iscc)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     if not load_script("split_receipts").split_version(version):
         raise SystemExit(f"Version {version} predates the split; increment the patch version before a local build")
@@ -212,17 +255,35 @@ def main():
                "commit": commit, "dirty": dirty, "signed": False, "result": "failed"}
     try:
         admin = load_script("build-admin-assets")
-        # The shared owner runs npm ci and the drift check, then writes the checked inventory.
-        admin.check(run / "admin-assets.json", runner=lambda command, cwd: steps.run(
-            "admin-" + command[1], [admin._resolve(command[0]), *command[1:]], cwd=cwd))
         runtime = load_script("build-service-runtime")
-        admin_inventory = json.loads((run / "admin-assets.json").read_text(encoding="utf-8"))
+        consumed = None
+        profile = "release-local"
+        if args.runtime_dir is None:
+            # The build owner retains its existing npm check and single Cargo invocation.
+            admin.check(run / "admin-assets.json", runner=lambda command, cwd: steps.run(
+                "admin-" + command[1], [admin._resolve(command[0]), *command[1:]], cwd=cwd))
+            admin_inventory = json.loads((run / "admin-assets.json").read_text(encoding="utf-8"))
+        else:
+            package = load_script("package-native")
+            admin_inventory = package.bounded_json(args.admin_inventory, 1 << 20)
         admin_block = admin.block_from_inventory(admin_inventory)
         source = steps.call("source-inputs", runtime.source_identity)
         static_inputs = steps.call("static-ort-inputs", runtime.verify_static_inputs)
-        # One Cargo invocation with the local profile (published releases are built in CI).
-        steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
-        airk, airkctl = steps.call("native", lambda: runtime.cargo_pair("release-local"))
+        if args.runtime_dir is None:
+            steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
+            airk, airkctl = steps.call("native", lambda: runtime.cargo_pair(profile))
+        else:
+            consumed = steps.call("tested-runtime", lambda: verified_runtime(
+                args.runtime_dir, version, source, static_inputs, admin_block))
+            receipt["input_runtime"] = runtime_input_receipt(consumed)
+            profile = consumed["build"]["profile"]
+            # Pin fresh complete copies before signing; the original remains read-only.
+            copied = run / "tested-runtime"
+            shutil.copytree(Path(consumed["directory"]), copied)
+            pinned = verified_runtime(copied, version, source, static_inputs, admin_block)
+            if pinned["files"] != consumed["files"] or pinned["build"] != consumed["build"]:
+                raise RuntimeError("Tested runtime changed while its private signing input was copied")
+            airk, airkctl = copied / "airk.exe", copied / "airkctl.exe"
         layout = run / "layout"
         signing = None
         signer = None
@@ -241,7 +302,7 @@ def main():
         shutil.copy2(airk, qualified / "airk.exe")
         shutil.copy2(airkctl, qualified / "airkctl.exe")
         build = steps.call("runtime-qualification", lambda: runtime.qualify_staged_runtime(
-            qualified, version, "windows", "x86_64", "release-local", source, static_inputs,
+            qualified, version, "windows", "x86_64", profile, source, static_inputs,
             admin_inventory, admin_block))
         airk, airkctl = qualified / "airk.exe", qualified / "airkctl.exe"
         inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing,
@@ -266,6 +327,16 @@ def main():
         if (runtime.source_identity() != source or runtime.verify_static_inputs() != static_inputs
                 or admin.block_from_inventory(admin_inventory) != admin_block):
             raise RuntimeError("Runtime inputs changed during installer packaging")
+        if consumed is not None:
+            final_input = verified_runtime(args.runtime_dir, version, source, static_inputs, admin_block)
+            final_copy = verified_runtime(copied, version, source, static_inputs, admin_block)
+            if (final_input != consumed or final_copy["files"] != consumed["files"]
+                    or final_copy["build"] != consumed["build"]):
+                raise RuntimeError("Tested runtime changed during installer packaging")
+            if signer is not None and any(
+                    signer.receipts[name]["source_sha256"] != consumed["files"][image]
+                    for name, image in (("airk", "airk.exe"), ("airkctl", "airkctl.exe"))):
+                raise RuntimeError("Signed inputs differ from the tested runtime images")
         if any(not (layout / name).is_file() or digest(layout / name) != row["sha256"]
                for name, row in inventory["files"].items()):
             raise RuntimeError("Installer payload changed during compilation")

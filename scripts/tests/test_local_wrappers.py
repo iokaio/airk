@@ -311,6 +311,27 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
                 service.main()
 
 
+    def test_consume_prerequisites_do_not_require_cargo_npm_or_node(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(service.sys, "platform", "win32"), \
+                patch.object(service.shutil, "which", lambda tool: None if tool in ("cargo", "npm", "node") else "/fictional/" + tool):
+            iscc = Path(temporary) / "ISCC.exe"
+            iscc.write_bytes(b"fictional compiler")
+            service.prerequisites(iscc, consume=True)
+            with self.assertRaisesRegex(SystemExit, "cargo, npm, node"):
+                service.prerequisites(iscc)
+
+    def test_consume_arguments_require_exact_explicit_mode_and_sealed_inventory(self):
+        for arguments in ([], ["--runtime-dir", "runtime"], ["--force-build", "--runtime-dir", "runtime"],
+                          ["--force-build", "--admin-inventory", "inventory.json"]):
+            with self.subTest(arguments=arguments), \
+                    patch.object(service, "prerequisites", side_effect=AssertionError("no prerequisite or compiler process")), \
+                    patch("sys.argv", ["build-local-service-installer.py", *arguments]), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    service.main()
+                self.assertEqual(error.exception.code, 2)
+
+
 class PowerShellWrappers(unittest.TestCase):
     WRAPPERS = ("build-local-installers.ps1", "build-local-service-installer.ps1", "build-local-vsix.ps1")
 
@@ -319,7 +340,12 @@ class PowerShellWrappers(unittest.TestCase):
             text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
             with self.subTest(wrapper=name):
                 self.assertIn("[switch] $ForceBuild", text)
-                self.assertIn("if (-not $ForceBuild) { throw", text)
+                if name == "build-local-service-installer.ps1":
+                    self.assertIn("if (-not $ForceBuild -and -not $RuntimeDir) { throw", text)
+                    self.assertIn("'-ForceBuild and -RuntimeDir are mutually exclusive.'", text)
+                    self.assertIn("'--runtime-dir', $RuntimeDir, '--admin-inventory', $AdminInventory", text)
+                else:
+                    self.assertIn("if (-not $ForceBuild) { throw", text)
                 self.assertIn("$ErrorActionPreference = 'Stop'", text)
                 self.assertIsNone(FORBIDDEN.search(text))
         combined = (ROOT / "scripts/build-local-installers.ps1").read_text(encoding="utf-8")
@@ -330,6 +356,27 @@ class PowerShellWrappers(unittest.TestCase):
         for owner in ("build-local-vsix.py", "build-local-service-installer.py"):
             source = (ROOT / "scripts" / owner).read_text(encoding="utf-8")
             self.assertIsNone(FORBIDDEN.search(source.split('"""', 2)[2]), owner)
+
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 unavailable")
+    def test_service_wrapper_forwards_existing_pair_and_inventory_as_exact_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            wrapper = folder / "build-local-service-installer.ps1"
+            shutil.copyfile(ROOT / "scripts/build-local-service-installer.ps1", wrapper)
+            (folder / "build-local-service-installer.py").write_text(
+                "import json,sys;print(json.dumps(sys.argv[1:]))", encoding="utf-8")
+            runtime = str(folder / "tested pair with spaces")
+            inventory = str(folder / "checked inventory.json")
+            result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(wrapper),
+                "-RuntimeDir", runtime, "-AdminInventory", inventory, "-Unsigned"], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), ["--runtime-dir", runtime, "--admin-inventory", inventory, "--unsigned"])
+            for arguments in (["-RuntimeDir", runtime], ["-ForceBuild", "-RuntimeDir", runtime, "-AdminInventory", inventory]):
+                refused = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(wrapper), *arguments],
+                    capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout, "")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 unavailable")
     def test_combined_wrapper_stops_at_the_first_failed_product(self):

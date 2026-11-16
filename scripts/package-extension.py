@@ -40,7 +40,7 @@ LOCK = "packages/vscode/package-lock.json"
 # that resolves outside this list.
 MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serviceExtension.js",
            "serviceDashboard.js", "serviceClient.js", "serviceHttp.js", "serviceConsoleView.js",
-           "nativeGate.js", "nativeMetadata.js", "nativeMetadataCodec.js", "nativeMetadataOwner.js", "nativeOutcome.js", "readRetry.js", "model.js",
+           "nativeGate.js", "nativeMetadata.js", "nativeMetadataCodec.js", "nativeMetadataOwner.js", "nativeOutcome.js", "readRetry.js", "generated/arbiterBudget.js", "model.js",
            "privateDirectory.js", "mcpStdioSession.js", "nativeMessageLimits.js", "sourceVerification.js", "publications.js",
            "agentConfig.js", "agentConfigHealth.js", "agentMigration.js", "agentReconnect.js", "agentToml.js",
            "unifiedAgentConfig.js",
@@ -72,7 +72,7 @@ MODEL_NOTICE_FILES = tuple("notices/all-MiniLM-L6-v2/" + name for name in (
 HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class NativeSession", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
 # The update loader's inventory name rule (extensionUpdateLoader.ts); every sealed name must match it.
-LOADER_NAME = re.compile(r"(?:package\.json|images/airk\.svg|out/help-manifest\.json|out/airkctl/bootstrap/(?:controller|release|system|provenance)\.js|out/(?:airkctl/(?:(?:agents|features|status)/)?)?"
+LOADER_NAME = re.compile(r"(?:package\.json|images/airk\.svg|out/help-manifest\.json|out/generated/arbiterBudget\.js|out/airkctl/bootstrap/(?:controller|release|system|provenance)\.js|out/(?:airkctl/(?:(?:agents|features|status)/)?)?"
                          r"[A-Za-z0-9_-]+\.(?:js|css)|node_modules/jsonc-parser/(?:package\.json|lib/umd/(?:main|impl/[A-Za-z-]+)\.js))")
 # Executable image signatures: PE, ELF, Mach-O (thin, both byte orders) and fat/universal.
 NATIVE_MAGIC = (b"MZ", b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
@@ -128,7 +128,7 @@ def runtime_package(package):
     package["dependencies"] = {"jsonc-parser": dependencies["jsonc-parser"]}
     # VSCE's package file list must include the sealed shared content and the
     # exact public legal companions, even though this UI-only package has no weights.
-    package["files"] = list(dict.fromkeys([*package.get("files", []), "out/help-manifest.json", *MODEL_NOTICE_FILES]))
+    package["files"] = list(dict.fromkeys([*package.get("files", []), "out/help-manifest.json", "out/generated/arbiterBudget.js", *MODEL_NOTICE_FILES]))
     return package
 
 

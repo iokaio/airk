@@ -16,6 +16,8 @@ use std::{
 mod build_target;
 mod calibration_equivalence;
 mod composed_validation;
+mod software_v2;
+mod terminal;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +76,10 @@ pub struct FinalProof {
     pub disk_budget_compatibility: Option<PinnedFile>,
     #[serde(default)]
     pub calibration_component_equivalence: Option<PinnedFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_qualifications: Vec<terminal::TerminalProofSources>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_policy: Option<PinnedFile>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +105,24 @@ pub struct RecordedDecision {
     pub approved_component_target_provenances: BTreeSet<Sha256Digest>,
     #[serde(default)]
     pub approved_download_source_maps: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_qualifications: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_human_annotations: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_native_captures: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_native_execution_receipts: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_independence_analyses: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_terminal_criteria_freezes: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_resource_policies: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_software_v2_executions: BTreeSet<Sha256Digest>,
+    #[serde(default)]
+    pub approved_software_v2_reference_producers: BTreeSet<Sha256Digest>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -940,6 +964,10 @@ fn validate_focus_native(
     expected: &Binding,
     records: &[Original],
 ) -> Result<()> {
+    ensure!(
+        profile.max_tokens == 512,
+        "historical Focus evidence is static512 only"
+    );
     let numerical = kind == Gate::NativeNumerical;
     let schema = if numerical {
         "airk.private-focus-native-parity/1"
@@ -1098,6 +1126,10 @@ fn validate_context_native(
     expected: &Binding,
     records: &[Original],
 ) -> Result<()> {
+    ensure!(
+        profile.max_tokens == 2048,
+        "historical Context evidence cannot establish8192 fit"
+    );
     let (capture_sha, capture) =
         original_schema(records, "airk.private-context-native-numeric-resource/1")?;
     actual_identity(capture, profile, expected)?;
@@ -1353,6 +1385,7 @@ fn verify_proof(
     profile: &Profile,
     candidate: &Candidate,
     decision: &RecordedDecision,
+    require_current_policy: bool,
 ) -> Result<(FinalProof, Sha256Digest)> {
     ensure!(
         decision
@@ -1362,10 +1395,46 @@ fn verify_proof(
     );
     let proof: FinalProof = serde_json::from_slice(&pinned(&candidate.final_proof)?)?;
     ensure!(
-        proof.schema == "airk.private-final-stage-qualification/1",
+        matches!(
+            proof.schema.as_str(),
+            "airk.private-final-stage-qualification/1" | "airk.private-final-stage-qualification/2"
+        ),
         "unknown/nonfinal qualification proof"
     );
-    let expected = binding(profile, candidate.profile.sha256, &proof.binding.target)?;
+    let resource_policy = software_v2::policy(profile, &proof, decision)?;
+    ensure!(
+        !require_current_policy || resource_policy.is_some(),
+        "current final-plan catalog requires the approved software-v2 resource policy for every profile"
+    );
+    let extended_scope = terminal::validate(profile, candidate, decision, &proof)?;
+    ensure!(
+        proof.schema
+            == if extended_scope || resource_policy.is_some() {
+                "airk.private-final-stage-qualification/2"
+            } else {
+                "airk.private-final-stage-qualification/1"
+            },
+        "unknown/nonfinal qualification proof or class scope"
+    );
+    if proof.schema == "airk.private-final-stage-qualification/2" {
+        ensure!(
+            resource_policy.is_some(),
+            "final proof/2 requires explicit software-v2 resource policy"
+        );
+        ensure!(
+            proof.disk_budget_compatibility.is_none()
+                && proof.calibration_component_equivalence.is_none(),
+            "software-v2 primitives cannot inherit historical primitive equivalence"
+        );
+    }
+    let mut expected = binding(profile, candidate.profile.sha256, &proof.binding.target)?;
+    if extended_scope {
+        expected.task_scope = "context_action_class_rules/2".into();
+        ensure!(
+            proof.calibration_component_equivalence.is_none(),
+            "generic-only calibration equivalence cannot transfer /2 terminal scope"
+        );
+    }
     ensure!(
         proof.binding == expected,
         "model/assets/compiler/calibration/runtime/tier/platform/task scope mismatch"
@@ -1414,11 +1483,14 @@ fn verify_proof(
             formula["schema"] == "airk.private-source-disk-accounting/1",
             "owning disk-formula evidence missing"
         );
-        let original_binding = binding(
+        let mut original_binding = binding(
             &original,
             compatibility.original_profile.sha256,
             &proof.binding.target,
         )?;
+        if extended_scope {
+            original_binding.task_scope = expected.task_scope.clone();
+        }
         original_profile = Some(original);
         Some(original_binding)
     } else {
@@ -1435,7 +1507,7 @@ fn verify_proof(
             decision,
             pin,
             &proof.binding.target,
-            &component_targets,
+            &component_targets.targets,
         )?;
         original_profile = Some(original);
         original_binding = Some(binding);
@@ -1471,6 +1543,21 @@ fn verify_proof(
         }
         match kind {
             Gate::NativeNumerical | Gate::NativeResource => {
+                if let Some(policy) = &resource_policy {
+                    software_v2::validate(&software_v2::Evidence {
+                        kind: *kind,
+                        profile,
+                        candidate,
+                        expected: &expected,
+                        records: &originals,
+                        policy,
+                        targets: &component_targets.targets,
+                        source_groups: &component_targets.source_groups,
+                        build_receipts: &component_targets.build_receipts,
+                        decision,
+                    })?;
+                    continue;
+                }
                 let owners = originals
                     .iter()
                     .filter(|(_, value)| {
@@ -1486,7 +1573,7 @@ fn verify_proof(
                     owners[0].1["owned"]["suspended_assignment"]["image"]["sha256"].clone(),
                 )?;
                 ensure!(
-                    component_targets.get(&image) == Some(&expected.target),
+                    component_targets.targets.get(&image) == Some(&expected.target),
                     "primitive actual image target lacks reviewed native build evidence"
                 );
                 if profile.declared_stage() == Some(Stage::Focus) {
@@ -1519,7 +1606,12 @@ fn verify_proof(
             Gate::HeldoutA6 => {
                 validate_quality(profile.model, profile.manifest, &expected, &originals)?
             }
-            Gate::ActualComposed => composed_validation::validate(profile, &expected, &originals)?,
+            Gate::ActualComposed => composed_validation::validate(
+                profile,
+                &expected,
+                &originals,
+                resource_policy.as_ref(),
+            )?,
             Gate::RightsClosure => validate_rights(profile, &expected, decision, &originals)?,
         }
     }
@@ -1633,40 +1725,52 @@ fn verified_download_sources(
     }
     Ok(downloads)
 }
+fn context_calibration(
+    profile: &Profile,
+    files: &BTreeMap<String, PathBuf>,
+) -> Result<Option<airk_core::arbiter::context_action::calibration::JointCalibration>> {
+    use airk_core::arbiter::context_action::calibration::JointCalibration;
+    if profile.declared_stage() != Some(Stage::Context) {
+        return Ok(None);
+    }
+    let asset = profile
+        .assets
+        .iter()
+        .find(|asset| asset.role == AssetRole::Calibration)
+        .context("calibration asset absent")?;
+    let raw = pinned(&PinnedFile {
+        path: files
+            .get(&asset.name)
+            .context("calibration source absent")?
+            .clone(),
+        bytes: asset.bytes,
+        sha256: asset.sha256,
+    })?;
+    let policy = *profile
+        .task_policies
+        .get(&Task::ContextAction)
+        .context("Context task policy absent")?;
+    Ok(Some(JointCalibration::parse_and_validate(
+        &raw, profile, policy,
+    )?))
+}
 fn validate_task_scope(profile: &Profile, files: &BTreeMap<String, PathBuf>) -> Result<()> {
-    if profile.declared_stage() == Some(Stage::Context) {
-        use airk_core::arbiter::context_action::{
-            ContextReason, RelevanceHypothesis,
-            calibration::{ContextActionClass, JointCalibration},
-        };
-        let asset = profile
-            .assets
-            .iter()
-            .find(|asset| asset.role == AssetRole::Calibration)
-            .context("calibration asset absent")?;
-        let raw = pinned(&PinnedFile {
-            path: files
-                .get(&asset.name)
-                .context("calibration source absent")?
-                .clone(),
-            bytes: asset.bytes,
-            sha256: asset.sha256,
-        })?;
-        let policy = *profile
-            .task_policies
-            .get(&Task::ContextAction)
-            .context("Context task policy absent")?;
-        let calibration = JointCalibration::parse_and_validate(&raw, profile, policy)?;
+    use airk_core::arbiter::context_action::{
+        ContextReason, RelevanceHypothesis,
+        calibration::{CALIBRATION_SCHEMA_V2, ContextActionClass},
+    };
+    if let Some(calibration) = context_calibration(profile, files)? {
         ensure!(
-            calibration
-                .rules
-                .iter()
-                .all(|rule| rule.action == ContextActionClass::Read
-                    && rule.allowed_gaps == [Gap::Unsupported]
+            calibration.rules.iter().all(|rule| {
+                if rule.action != ContextActionClass::Read {
+                    return calibration.schema == CALIBRATION_SCHEMA_V2;
+                }
+                rule.allowed_gaps == [Gap::Unsupported]
                     && rule.allowed_reasons == [ContextReason::AdditionalEvidenceMayHelp]
                     && rule.allowed_roles == [EvidenceRole::Unknown]
-                    && rule.allowed_relevance == [RelevanceHypothesis::Uncertain]),
-            "calibration broadens the actually qualified GenericRead/Unknown/Uncertain scope"
+                    && rule.allowed_relevance == [RelevanceHypothesis::Uncertain]
+            }),
+            "calibration broadens the actually qualified class scope"
         );
     }
     Ok(())
@@ -1705,7 +1809,7 @@ pub fn promote(tag: &str, decision_pin: &PinnedFile, candidates: &[Candidate]) -
                 .contains(&candidate.download_sources.sha256),
             "download source map absent from recorded approval"
         );
-        let (proof, proof_sha) = verify_proof(&profile, candidate, &decision)?;
+        let (proof, proof_sha) = verify_proof(&profile, candidate, &decision, true)?;
         ensure!(
             candidate.files.keys().cloned().collect::<BTreeSet<_>>()
                 == profile
@@ -2019,6 +2123,8 @@ mod tests {
     fn final_proof_refusal_cases() -> Result<()> {
         let mut cases = calibration_equivalence::refusal_cases()?;
         cases.extend(build_target::refusal_cases()?);
+        cases.extend(terminal::refusal_cases()?);
+        cases.extend(software_v2::refusal_cases()?);
 
         let digest = Sha256Digest::from_bytes([1; 32]);
         let expected = Binding {

@@ -62,6 +62,8 @@ pub fn document() -> serde_json::Value {
     root::<PreparedMutationCall>(&mut generator, &mut roots);
     root::<RecoverMutationCall>(&mut generator, &mut roots);
     root::<AcknowledgedMutationCall>(&mut generator, &mut roots);
+    root::<airk_core::agent_manual::AgentManualEntry>(&mut generator, &mut roots);
+    root::<airk_core::agent_manual::AgentConfigRefusal>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

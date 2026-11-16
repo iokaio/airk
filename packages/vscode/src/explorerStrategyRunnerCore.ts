@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Runs a validated strategy against one pinned publication. Every call goes through the
 // Explorer's evidence session; nothing here writes files, runs commands or calls an agent.
+import { READ_OPERATION_DEADLINE_MS, READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import type { LiveCheck } from './explorerContracts';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure, type EvidenceReadPort, type NativeTool, type ToolResult } from './explorerEvidenceCore';
@@ -76,7 +77,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
         if (calls >= budgets.calls) { reasons.push(`call budget of ${budgets.calls} reached`); throw new Stop(); }
         if (clock() >= deadline) { reasons.push(`time budget of ${budgets.seconds} s reached`); throw new Stop(); }
         calls++;
-        const result = await deps.session.call(tool, args, { timeout: Math.max(1, Math.min(30000, deadline - clock())) });
+        const result = await deps.session.call(tool, args, { timeout: Math.max(1, Math.min(READ_TRANSPORT_DEADLINE_MS, deadline - clock())) });
         current();
         if(clock()>=deadline){reasons.push(`time budget of ${budgets.seconds} s reached; late native reply was not applied`);throw new Stop();}
         if (tool !== 'airk_status' && !publication) { reasons.push('evidence was requested before the publication was pinned'); throw new Stop(); }
@@ -247,7 +248,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
                         // a past file_info cannot authorize a host byte hash.
                         const expected=ledger.find(entry=>entry.path===path)?.contentHash;
                         let result:ToolResult;
-                        try{result=await call('airk_file_info',{path,revision:publication,...(expected?{known_hash:expected}:{}),verification:'report',verification_max_sources:1,verification_max_bytes:verificationBytes,verification_deadline_ms:Math.min(30000,remaining),response_mode:'full'});}
+                        try{result=await call('airk_file_info',{path,revision:publication,...(expected?{known_hash:expected}:{}),verification:'report',verification_max_sources:1,verification_max_bytes:verificationBytes,verification_deadline_ms:Math.min(READ_OPERATION_DEADLINE_MS,remaining),response_mode:'full'});}
                         catch(error){verificationBytes=0;throw error;}
                         const receipt=nativeVerification(result.payload.source_verification),counts=receipt?.counts as Value|undefined,spent=counts?.bytes_read;
                         if(typeof spent!=='number'||!Number.isSafeInteger(spent)||spent<0||spent>verificationBytes){verificationBytes=0;reasons.push(`${step.id}: native verification byte accounting unavailable`);}else verificationBytes-=spent;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // One review algorithm. Editor Git/filesystem/configuration and browser manual-input adapters supply capabilities.
+import { READ_OPERATION_DEADLINE_MS, READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import type {LiveCheck} from './explorerContracts';
 import {absentFromIndex,EvidenceFailure,PublicationChanged,samePublication,type EvidenceReadPort} from './explorerEvidenceCore';
 import {explorerError} from './explorerErrors';
@@ -52,12 +53,12 @@ async function changesPage(context: ReviewContext, page: ReviewPage): Promise<Ch
     const files: ChangedFileView[] = [];
     for (const change of changes.slice(offset, offset + REVIEW_LIMITS.files)) {
         let info: Record<string, unknown> | undefined;
-        const budget=context.verificationBudget,remaining=budget?Math.floor(budget.deadline-performance.now()):30000;
+        const budget=context.verificationBudget,remaining=budget?Math.floor(budget.deadline-performance.now()):READ_OPERATION_DEADLINE_MS;
         if(budget&&(budget.reportBytes<DEFAULT_MCP_MESSAGE_BYTES||remaining<1))throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT',source('Review native response or time budget was exhausted. Narrow the Git change set and refresh.','Review native response or time budget was exhausted. Narrow the supplied paths and refresh.')));
         const verify=change.change!=='deleted'&&(!budget||budget.bytes>0);
         if(budget&&!verify&&change.change!=='deleted'&&!notes.includes('Saved-source verification is incomplete: the shared byte budget or native accounting is exhausted. Remaining indexed metadata is read without source capture.'))notes.push('Saved-source verification is incomplete: the shared byte budget or native accounting is exhausted. Remaining indexed metadata is read without source capture.');
         let result;
-        try{result=await session.call('airk_file_info', { path: change.path,...(publication?{revision:publication}:{}),...(!verify?{verification:'off'}:budget?{verification:'report',verification_max_sources:1,verification_max_bytes:budget.bytes,verification_deadline_ms:Math.min(30000,remaining)}:{}) }, { timeout: 30000 });}
+        try{result=await session.call('airk_file_info', { path: change.path,...(publication?{revision:publication}:{}),...(!verify?{verification:'off'}:budget?{verification:'report',verification_max_sources:1,verification_max_bytes:budget.bytes,verification_deadline_ms:Math.min(READ_OPERATION_DEADLINE_MS,remaining)}:{}) }, { timeout: READ_TRANSPORT_DEADLINE_MS });}
         catch(error){if(budget)budget.bytes=0;throw error;}
         const native=result.rawPayload??result.payload,reportBytes=new TextEncoder().encode(JSON.stringify(native)).length;
         if(budget){
@@ -97,7 +98,7 @@ async function consistentReview<T extends { notes: readonly string[] }>(context:
             const remaining = Math.floor(deadline - performance.now());
             if (remaining <= 0) { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT', source('Review exceeded its time budget. Narrow the Git change set and refresh.','Review exceeded its time budget. Narrow the supplied paths and refresh.'))); }
             const key = JSON.stringify([tool, args]);
-            if (!cache.has(key)) { cache.set(key, context.session.call(tool, args, { ...options, timeout: Math.min(options.timeout ?? 30000, remaining) })); }
+            if (!cache.has(key)) { cache.set(key, context.session.call(tool, args, { ...options, timeout: Math.min(options.timeout ?? READ_TRANSPORT_DEADLINE_MS, remaining) })); }
             return cache.get(key)!;
         } } };
         try {
@@ -124,7 +125,7 @@ async function declarations(context: ReviewContext, paths: readonly string[]): P
     const selected = prioritized(paths).slice(0, REVIEW_LIMITS.sourceFiles);
     for (const file of selected) {
         const args = { path_prefix: file, limit: 100, max_bytes: 32768 };
-        const result = await context.session.call('airk_symbols', args, { timeout: 30000 });
+        const result = await context.session.call('airk_symbols', args, { timeout: READ_TRANSPORT_DEADLINE_MS });
         publication = samePublication(publication, result);
         const view = factList({ tool: 'airk_symbols', args, limit: 100 }, result.payload, result.publication, context.project, context.handles, result.rawPayload);
         const declarations = view.items.filter(item => /^[A-Za-z_$][\w$]{0,127}$/.test(item.name) && item.path === file);
@@ -149,7 +150,7 @@ async function declarations(context: ReviewContext, paths: readonly string[]): P
 
 async function references(context: ReviewContext, name: string, publication: string | undefined, prefix?: string): Promise<{ hits: { path: string; line: number; text: string }[]; truncated: boolean }> {
     const args = { name, ...(prefix ? { path_prefix: prefix } : {}), limit: REVIEW_LIMITS.references, max_bytes: 16384 };
-    const result = await context.session.call('airk_references', args, { timeout: 30000 });
+    const result = await context.session.call('airk_references', args, { timeout: READ_TRANSPORT_DEADLINE_MS });
     samePublication(publication, result);
     const view = factList({ tool: 'airk_references', args, limit: REVIEW_LIMITS.references }, result.payload, result.publication, context.project, context.handles, result.rawPayload);
     const hits = view.items.flatMap(item => item.startLine && (!prefix || item.path.startsWith(prefix)) ? [{ path: item.path, line: item.startLine, text: (item.detail ?? '').slice(0, 300) }] : []);
@@ -173,7 +174,7 @@ async function testScopes(context: ReviewContext, paths: readonly string[], patt
         for (const prefix of modules) {
             let cursor: string | undefined;
             for (let page = 0; page < REVIEW_LIMITS.inventoryPages; page++) {
-                const result = await context.session.call('airk_list_files', { prefix, limit: 100, max_bytes: 32768, ...(cursor ? { cursor } : {}) }, { timeout: 30000 });
+                const result = await context.session.call('airk_list_files', { prefix, limit: 100, max_bytes: 32768, ...(cursor ? { cursor } : {}) }, { timeout: READ_TRANSPORT_DEADLINE_MS });
                 publication = samePublication(publication, result);
                 const indexed = Array.isArray(result.payload.paths) ? result.payload.paths : Array.isArray(result.payload.files) ? result.payload.files.map(raw => (raw as { path?: string }).path) : [];
                 for (const file of indexed) { if (typeof file === 'string' && !file.startsWith('/') && !file.includes('\\') && !file.includes(':') && !file.split('/').includes('..') && pattern.test(file)) { known.add(testScope(file)); } }

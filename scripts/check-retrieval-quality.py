@@ -3,11 +3,15 @@
 
 Default static vectors exercise adapter contracts; --corpus with --model-dir
 measures a small original graded corpus using a catalog-pinned offline model.
-Judgments stay outside indexed sources. Neither path proves general relevance.
+Judgments stay outside indexed sources. Reports retain full native inputs/results,
+including refusals, fallback/readiness/partial fields, and are private evidence.
+Neither path proves general relevance or exact-vs-ANN task quality.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import functools
+from copy import deepcopy
 import importlib.util
 import json
 import math
@@ -83,7 +87,114 @@ def source_identity():
     return {"commit": commit, "dirty": dirty, "public_tree_sha256": source.hexdigest()}
 
 
-def judge_combined(value, sources, grades):
+
+BUDGET_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/split/i2/transport_budget.json"
+
+
+@functools.cache
+def native_read_budget():
+    """Rust owns the current deadline; refuse missing/malformed emitted inputs."""
+    raw = BUDGET_FIXTURE.read_bytes()
+    if len(raw) > 1 << 20:
+        raise ValueError("native read budget fixture exceeds bound")
+    value = json.loads(raw)
+    operation, transport = value.get("operation_deadline_ms"), value.get("max_invoke_deadline_ms")
+    if (value.get("schema") != "airk.i2-transport-budget/1" or value.get("protocol") != 2
+            or type(operation) is not int or operation <= 0
+            or type(transport) is not int or transport < operation):
+        raise ValueError("invalid native read budget fixture")
+    return {"fixture": "fixtures/split/i2/transport_budget.json", "sha256": hashlib.sha256(raw).hexdigest(),
+            "operation_deadline_ms": operation, "transport_deadline_ms": transport}
+
+
+def read_seconds():
+    return native_read_budget()["operation_deadline_ms"] / 1000
+
+
+def location_key(path):
+    value = str(path).replace("\\", "/")
+    if value.startswith("//?/UNC/"):
+        value = "//" + value[8:]
+    elif value.startswith("//?/"):
+        value = value[4:]
+    return os.path.normcase(os.path.normpath(value))
+
+
+def freeze_source_oracle(service, name, roots):
+    """Freeze native index/root/project identities before observing rankings."""
+    if not service.catalog_authority:
+        return None
+    selected = deepcopy(service.scopes[name])
+    descriptor = service.rpc({"catalog_host_context": {"key": selected["context_key"], "expected_catalog_revision": None}})["descriptor"]
+    assert descriptor["namespace"] == selected["namespace"], "source oracle namespace differs"
+    response = service.rpc({"catalog_page": {"request": {"kind": "sources", "index_id": selected["index_id"],
+        "project_id": None, "after": None, "expected_catalog_revision": descriptor["catalog_revision"],
+        "limit": 32, "max_bytes": 48000}}})
+    page = response["page"]
+    assert (page["namespace"] == selected["namespace"] and page["revision"] == descriptor["catalog_revision"]
+            and page["continuation"] is None), "source oracle catalog page incomplete or changed"
+    # Current HTTPS is an explicit open IndexSet: Core resolve_open carries
+    # no Project membership. Its management grant must not be borrowed here.
+    projects = [] if service.single_image else selected["project_ids"]
+    assert len(projects) == len(set(projects)), "source oracle Project selection differs"
+    if not service.single_image:
+        assert projects, "historical scoped fixture requires its native Projects"
+    expected = {location_key(root.resolve(strict=True)): (root, prefix) for root, prefix in roots}
+    assert len(expected) == len(roots), "duplicate fixture source root"
+    sources, virtual, seen = {}, {}, set()
+    for item in page["items"]:
+        row = item["value"]
+        assert item["kind"] == "source" and row["index_id"] == selected["index_id"] and row["enabled"] is True
+        root_key = location_key(row["canonical_path"])
+        assert root_key in expected and root_key not in seen, "source oracle root is foreign or duplicated"
+        seen.add(root_key)
+        root, prefix = expected[root_key]
+        for file in sorted(root.rglob("*")):
+            assert not file.is_symlink(), "source oracle refuses redirected input"
+            if not file.is_file():
+                continue
+            relative = file.relative_to(root).as_posix()
+            key = (selected["index_id"], row["id"], relative)
+            spelling = prefix + relative
+            assert spelling not in virtual, "ambiguous fixture source spelling"
+            virtual[spelling] = key
+            sources[key] = {"sha256": digest(file), "project_ids": sorted(projects), "virtual_path": spelling}
+    assert seen == set(expected) and sources, "source oracle omitted a fixture root"
+    return {"sources": sources, "virtual": virtual, "native_catalog": deepcopy(response), "selection": selected,
+            "request_scope": ({"index_ids": [selected["index_id"]]} if service.single_image else
+                              {"project_ids": projects, "index_ids": [selected["index_id"]]})}
+
+
+def oracle_receipt(oracle):
+    if oracle is None:
+        return None
+    return {"selection": oracle["selection"], "request_scope": oracle["request_scope"], "native_catalog": oracle["native_catalog"],
+            "sources": [{"index_id": key[0], "source_root_id": key[1], "source_relative_path": key[2], **source}
+                        for key, source in sorted(oracle["sources"].items())]}
+
+
+def oracle_for_case(session, case):
+    oracle = getattr(session, "source_oracle", None)
+    if oracle is None:
+        raise AssertionError("combined ranking requires a pre-query native source oracle")
+    prefix = case.get("path_prefix", "")
+    sources = {key: value for key, value in oracle["sources"].items() if value["virtual_path"].startswith(prefix)}
+    grades = {oracle["virtual"][name]: grade for name, grade in case.get("grades", {}).items()}
+    return oracle, sources, grades
+
+
+def ranked_hit(value, rank):
+    pointer = rank["result_pointer"]
+    if not isinstance(pointer, str) or not pointer.startswith("/members/"):
+        raise ValueError("combined ranking locator differs")
+    record = value
+    for token in pointer[1:].split("/"):
+        token = token.replace("~1", "/").replace("~0", "~")
+        record = record[int(token)] if isinstance(record, list) else record[token]
+    return record
+
+
+def judge_combined(value, sources, grades, *, expected_members=None):
     """Score an explicit index/root/path oracle without collapsing origins.
 
     `sources` maps (index_id, source_root_id, source_relative_path) to an exact
@@ -103,9 +214,15 @@ def judge_combined(value, sources, grades):
     if [member.get("index_id") for member in vector] != member_ids:
         raise AssertionError("qualified relevance publication vector differs")
     publications = {member["index_id"]: member.get("publication") for member in vector}
+    selected_members = {key[0] for key in sources} if expected_members is None else set(expected_members)
+    if set(member_ids) != selected_members:
+        raise AssertionError("qualified relevance selected member set differs")
     try:
         for index in member_ids:
-            combined_evidence.member_result(value, index)
+            logical = combined_evidence.member_result(value, index)
+            member = next(member for member in members if member["index_id"] == index)
+            if member["result"].get("isError") or publications[index] is None or logical.get("error"):
+                raise ValueError("native member unavailable")
     except (KeyError, TypeError, ValueError) as error:
         raise AssertionError("qualified relevance native metadata differs") from error
     for rank in value.get("ranking", []):
@@ -177,13 +294,13 @@ class Session:
         self.process.stdin.flush()
 
     def request(self, method, arguments, deadline=None):
-        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
-        clients.remaining(deadline, 120)
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + read_seconds())
+        clients.remaining(deadline, read_seconds())
         self.sequence += 1
         self.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": arguments})
         while True:
             try:
-                message = self.messages.get(timeout=clients.remaining(deadline, 120))
+                message = self.messages.get(timeout=clients.remaining(deadline, read_seconds()))
             except queue.Empty as error:
                 raise TimeoutError("MCP qualification deadline") from error
             if isinstance(message, BaseException):
@@ -201,21 +318,35 @@ class Session:
         arguments = {key: case[key] for key in ("query", "mode", "path_prefix", "project_ids", "index_ids", "member_availability") if key in case}
         arguments.update(limit=limit, max_bytes=65536, response_mode="full")
         start = time.perf_counter_ns()
-        retry_deadline = time.monotonic() + 15
+        retry_deadline = time.monotonic() + read_seconds()
         params = {"name": "airk_search", "arguments": arguments}
-        result, attempt = clients.read_envelope(lambda until: self.request("tools/call", params, until), retry_deadline, 601)
+        self.last_attempt = {"request": deepcopy(params), "budget": deepcopy(native_read_budget()), "responses": []}
+        def observe(until):
+            response = self.request("tools/call", params, until)
+            self.last_attempt["responses"].append(deepcopy(response))
+            return response
+        result, attempt = clients.read_envelope(observe, retry_deadline, 601)
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if result.get("isError"):
             raise RuntimeError(str(result["content"]))
         value = json.loads(result["content"][0]["text"])
+        self.last_attempt["native_result"] = deepcopy(value)
+        if "structuredContent" in result and result["structuredContent"] != value:
+            raise AssertionError("native text and structured results differ")
         if value.get("schema") == "airk.combined-read/1":
             vector = value["publication_vector"]
-            selected = (vector["authority"], tuple(member["index_id"] for member in vector["members"]))
+            selected = (json.dumps(vector["authority"], sort_keys=True), tuple(member["index_id"] for member in vector["members"]))
             identity = json.dumps({"authority": vector["authority"], "members": vector["members"]}, sort_keys=True)
             observations = getattr(self, "combined_publications", {})
             if selected in observations and observations[selected] != identity:
                 raise AssertionError("fixed fixture member publication changed during session")
             self.combined_publications = {**observations, selected: identity}
+            # Existing single-index controls compare the exact native token.
+            # Complete member/vector identity remains in last_attempt/results.
+            members = vector["members"]
+            self.publication = (members[0]["publication"]["token"] if len(members) == 1
+                                and isinstance(members[0].get("publication"), dict)
+                                and "token" in members[0]["publication"] else identity)
             return value, elapsed, attempt
         publication = value["publication"]["token"]
         if self.publication is not None and publication != self.publication:
@@ -226,6 +357,23 @@ class Session:
     def search(self, case):
         value, elapsed, attempt = self.query(case, 5)
         publication = self.publication
+        if value.get("schema") == "airk.combined-read/1":
+            oracle, sources, _ = oracle_for_case(self, case)
+            judge_combined(value, sources, {}, expected_members={key[0] for key in oracle["sources"]})
+            expected = oracle["virtual"][case["expected"]]
+            rank = None
+            for offset, row in enumerate(value["ranking"]):
+                origin = combined_evidence.ranked_origin(value, row)
+                key = (origin["index_id"], origin["source_root_id"], origin["source_relative_path"])
+                if key == expected and case.get("expected_text", "") in ranked_hit(value, row)["text"]:
+                    rank = offset + 1
+                    break
+            if rank is None:
+                raise AssertionError("fixed qualified retrieval judgment failed")
+            assert sources[expected]["sha256"] == case["source_sha256"], "fixture source hash differs"
+            return {"case": case["name"], "latency_ms": elapsed, "admission_retries": attempt,
+                    "recall_at_5": 1, "reciprocal_rank_at_5": 1 / rank, "publication": publication,
+                    "input": deepcopy(case), "native_result": deepcopy(value), "native_attempt": deepcopy(self.last_attempt)}
         paths = [hit["citation"]["path"] for hit in value["hits"]]
         rank = next((index + 1 for index, hit in enumerate(value["hits"])
                      if hit["citation"]["path"] == case["expected"]
@@ -235,10 +383,17 @@ class Session:
         if value["hits"][rank - 1]["citation"]["content_hash"] != case["source_sha256"]:
             raise AssertionError(f"fixture citation hash differs: {case['name']}")
         return {"case": case["name"], "latency_ms": elapsed, "admission_retries": attempt, "recall_at_5": 1,
-                "reciprocal_rank_at_5": 1 / rank, "publication": publication}
+                "reciprocal_rank_at_5": 1 / rank, "publication": publication,
+                "input": deepcopy(case), "native_result": deepcopy(value), "native_attempt": deepcopy(self.last_attempt)}
 
     def judged_search(self, case, source_hashes):
         value, elapsed, attempt = self.query(case, 10)
+        if value.get("schema") == "airk.combined-read/1":
+            oracle, sources, grades = oracle_for_case(self, case)
+            return {"status": "ok", "latency_ms": elapsed, "admission_retries": attempt,
+                    "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
+                    "native_result": deepcopy(value), **judge_combined(value, sources, grades,
+                        expected_members={key[0] for key in oracle["sources"]})}
         paths = []
         for hit in value["hits"]:
             citation = hit["citation"]
@@ -249,14 +404,14 @@ class Session:
             paths.append(path)
         return {"status": "ok", "latency_ms": elapsed, "admission_retries": attempt,
                 "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
-                "truncated": value.get("truncated", False),
-                **judgments.score(paths, case["grades"])}
+                "truncated": value.get("truncated", False), "partial": value.get("partial", False),
+                "native_result": deepcopy(value), **judgments.score(paths, case["grades"])}
 
     def judged_combined_search(self, case, sources, grades):
         value, elapsed, attempt = self.query(case, 10)
         return {"status": "ok", "latency_ms": elapsed, "admission_retries": attempt,
                 "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
-                **judge_combined(value, sources, grades)}
+                "native_result": deepcopy(value), **judge_combined(value, sources, grades)}
 
     def compact_plan_probe(self, probe):
         """Retain the known compact/rich workflow comparison independently of rankings."""
@@ -309,16 +464,12 @@ class HttpSession(Session):
     def __init__(self, service, name):
         self.service, self.sequence, self.publication = service, 0, None
         self.closed = False
-        selected = {"kind": "scoped", "selection": service.scopes[name]}
-        identity = uuid.uuid4().hex
-        connection = service.enroll_http(selected, identity)
-        expected, observed = dict(selected["selection"]), dict(connection["selection"]["selection"])
-        expected.pop("expected_catalog_revision"); observed.pop("expected_catalog_revision")
-        assert connection["connection_id"] == identity and connection["selection"]["kind"] == "scoped" and observed == expected, "Retrieval enrollment changed reviewed scope"
+        endpoint = service.http_endpoint()
         health = service.rpc("health")["observation"]
-        http_fixture.validate_native_identity(connection, health)
+        http_fixture.validate_native_identity(endpoint, health)
         assert health["instance"] == service.managed_health["instance"], "Retrieval service owner changed"
-        self.network = http_fixture.McpClient(connection, service.control)
+        self.network = http_fixture.McpClient(endpoint, service.control,
+            scope={"index_ids": [service.scopes[name]["index_id"]]})
         try:
             self.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                                        "clientInfo": {"name": "airk-qualification", "version": "1"}})
@@ -329,8 +480,8 @@ class HttpSession(Session):
             raise
 
     def request(self, method, arguments, deadline=None):
-        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
-        timeout = clients.remaining(deadline, 120)
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + read_seconds())
+        timeout = clients.remaining(deadline, read_seconds())
         assert not self.closed, "Retrieval HTTP session is closed"
         self.network.connection.timeout = timeout
         if self.network.connection.sock is not None:
@@ -415,7 +566,40 @@ def add_fixture_root(service, name, alias, root):
     return service.configure(name, change)
 
 
-def fixture(binary, base, count, trials, metrics_module, detail="balanced", cli=None):
+def static_measurement(count, trials):
+    """Freeze every original query slot even if setup or an early check refuses."""
+    records = []
+    for usage in ("usage_disabled", "usage_enabled"):
+        records.append({"stage": usage + "/cold", "trial": 0, "case": CASES[0]["name"],
+                        "input": deepcopy(CASES[0]), "status": "not_run"})
+        records.extend({"stage": usage + "/warm", "trial": trial, "case": case["name"],
+                        "input": deepcopy(case), "status": "not_run"}
+                       for trial in range(trials) for case in CASES)
+    records.extend({"stage": "parallel", "trial": trial, "case": CASES[-1]["name"],
+                    "input": deepcopy(CASES[-1]), "status": "not_run"} for trial in range(8))
+    return {"distractors": count, "scheduled_attempts": len(records), "attempts": records, "complete": False}
+
+
+def capture_static_search(session, case, record):
+    session.last_attempt = None
+    record["input"] = deepcopy(case)
+    try:
+        result = session.search(case)
+        record.update(result, status="ok")
+        return result
+    except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
+        record.update(status="error", failure_class=type(error).__name__)
+        raise
+    finally:
+        if session.last_attempt is not None:
+            record["native_attempt"] = deepcopy(session.last_attempt)
+
+
+def fixture(binary, base, count, trials, metrics_module, detail="balanced", cli=None, measurement=None):
+    measurement = static_measurement(count, trials) if measurement is None else measurement
+    slots = {(row["stage"], row["trial"], row["case"]): row for row in measurement["attempts"]}
+    def capture(session, case, stage, trial=0):
+        return capture_static_search(session, case, slots[(stage, trial, case["name"])])
     # owner/state is reserved for native-created, owner-private service state.
     root, state, alias = (base / name for name in ("root", "index-data", "alias"))
     root.mkdir(parents=True)
@@ -472,24 +656,29 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced", cli=
         cases = [dict(case, source_sha256=digest(
             alias / case["expected"].removeprefix("@specs/")
             if case["expected"].startswith("@specs/") else root / case["expected"])) for case in CASES]
+        oracle = freeze_source_oracle(service, "qualification", [(root, ""), (alias, "@specs/")])
+        measurement.update(source_oracle=oracle_receipt(oracle), semantic_status=deepcopy(status))
         modes = {}
         publications = set()
         for disabled in (True, False):
             service.configure("qualification", {"operation": "usage", "mode": "disabled" if disabled else "aggregates_only"})
             session = open_session(service, "qualification")
+            session.source_oracle = oracle
             try:
-                cold = [session.search(cases[0])]
-                warm = [session.search(case) for _ in range(trials) for case in cases]
+                usage = "usage_disabled" if disabled else "usage_enabled"
+                cold = [capture(session, cases[0], usage + "/cold")]
+                warm = [capture(session, case, usage + "/warm", trial) for trial in range(trials) for case in cases]
                 publications.add(session.publication)
                 resources = session.counters(metrics_module, binary)
             finally:
                 session.close()
             modes["usage_disabled" if disabled else "usage_enabled"] = {"cold": stats(cold), "warm": stats(warm),
-                "process_counters": resources, "judgments": warm[:len(CASES)]}
-        def concurrent(_):
+                "process_counters": resources, "judgments": warm[:len(CASES)], "attempts": warm, "cold_attempts": cold}
+        def concurrent(ordinal):
             session = open_session(service, "qualification")
+            session.source_oracle = oracle
             try:
-                return session.search(cases[-1])
+                return capture(session, cases[-1], "parallel", ordinal)
             finally:
                 session.close()
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -497,10 +686,12 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced", cli=
         publications.update(record["publication"] for record in parallel)
         if len(publications) != 1:
             raise AssertionError("usage modes/processes observed different fixture publications")
-        modes["four_https_clients" if service.single_image else "four_processes"] = stats(parallel)
-        return {"distractors": count, "publication": publications.pop(),
-                "source_hashes": {case["expected"]: case["source_sha256"] for case in cases},
-                "modes": modes, "usage": json.loads(service.run(*service.management_arguments("qualification"), "usage", "report").stdout)["report"]}
+        modes["four_https_clients" if service.single_image else "four_processes"] = {**stats(parallel), "attempts": parallel}
+        measurement.update(publication=publications.pop(),
+                source_hashes={case["expected"]: case["source_sha256"] for case in cases},
+                modes=modes, usage=json.loads(service.run(*service.management_arguments("qualification"), "usage", "report").stdout)["report"],
+                complete=all(row["status"] == "ok" for row in measurement["attempts"]))
+        return measurement
 
 
 def index_controls(service, root, source_hashes, publication, control):
@@ -550,11 +741,14 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
     source_hashes = {name: digest(root / name) for name in corpus["sources"]}
-    service = clients.Fixture(binary.parent, base, cli=cli)
-    records = []
+    records = [{"case": case["id"], "mode": mode, "split": case["split"], "family": case["family"],
+                "trial": trial, "input": deepcopy(case), "status": "not_run"}
+               for trial in range(trials) for case in corpus.get("queries", []) for mode in case["modes"]]
     measurement = measurement if measurement is not None else {}
     measurement.update(schema="airk.relevance-measurement/1", corpus_sha256=corpus_hash,
-                       source_hashes=source_hashes, attempts=records, complete=False)
+                       source_hashes=source_hashes, attempts=records, scheduled_attempts=len(records),
+                       read_budget=deepcopy(native_read_budget()), complete=False)
+    service = clients.Fixture(binary.parent, base, cli=cli)
     with service:
         service.register("relevance", root, state)
         # Use the paired helper's canonical default object identity. Reimporting
@@ -569,28 +763,32 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
         deadline = time.monotonic() + 300
         while True:
             status = service.published_status("relevance", deadline)
+            measurement["semantic_status"] = deepcopy(status)
             readiness = clients.semantic_readiness(status)
             assert readiness["state"] != "failed", "Pinned-model semantic work failed"
             if readiness["state"] == "ready" and readiness["completed_artifacts"] == len(source_hashes):
                 break
             assert time.monotonic() < deadline, readiness
             time.sleep(0.05)
+        oracle = freeze_source_oracle(service, "relevance", [(root, "")])
+        measurement["source_oracle"] = oracle_receipt(oracle)
+        measurement["semantic_status"] = deepcopy(status)
         session = open_session(service, "relevance")
+        session.source_oracle = oracle
         try:
             print("Relevance fixture: compact/rich plans and graded queries", flush=True)
             plan_probe = (session.compact_plan_probe(corpus["compact_plan_probe"])
                           if corpus.get("compact_plan_probe") else {"state": "not_configured"})
-            for trial in range(trials):
-                for case in corpus["queries"]:
-                    for mode in case["modes"]:
-                        record = {"case": case["id"], "mode": mode, "split": case["split"],
-                                  "family": case["family"], "trial": trial}
-                        try:
-                            record.update(session.judged_search({**case, "mode": mode}, source_hashes))
-                        except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
-                            # Keep every failed attempt; never export raw sources/error strings.
-                            record.update(status="error", failure_class=type(error).__name__)
-                        records.append(record)
+            for record in records:
+                case, mode = record["input"], record["mode"]
+                session.last_attempt = None
+                try:
+                    record.update(session.judged_search({**case, "mode": mode}, source_hashes))
+                except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
+                    record.update(status="error", failure_class=type(error).__name__)
+                finally:
+                    if session.last_attempt is not None:
+                        record["native_attempt"] = deepcopy(session.last_attempt)
         finally:
             session.close()
         assert source_hashes == {name: digest(root / name) for name in source_hashes}, "Relevance sources changed"
@@ -669,7 +867,7 @@ def main():
         "ranking_units": "Top five returned chunks, with each fixed judgment requiring its expected path and any expected text. Repeated paths retain their chunk rank.",
         "process_cleanup": "Modern HTTPS sessions send DELETE and close their sockets; historical MCP children must exit after EOF; each owned service must drain. No external provider or source deletion.",
         "scope": "Original synthetic static vectors and fixed judgments outside indexed sources. No production semantic-quality, larger-than-memory, physical-I/O, installed-editor or power-loss qualification.",
-        "workloads": []}
+        "read_budget": deepcopy(native_read_budget()), "workloads": []}
     if corpus:
         report.update(judgments_sha256=corpus_hash, ranking_units=corpus["ranking_unit"],
                       cache_conditions="Reused frontend after indexing and compact/rich plan probes; OS caches uncontrolled. No cold-start claim.")
@@ -683,8 +881,10 @@ def main():
                 report["representative"] = {}
                 representative_fixture(binary, base, corpus, corpus_hash, args.trials, args.detail, model, report["representative"], cli)
             else:
-                for count in (32, 256):
-                    report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail, cli))
+                report["workloads"] = [static_measurement(count, args.trials) for count in (32, 256)]
+                for measurement in report["workloads"]:
+                    count = measurement["distractors"]
+                    fixture(binary, base / str(count), count, args.trials, metrics, args.detail, cli, measurement=measurement)
     except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
         report["failure_class"] = type(error).__name__
         if retained_fixture is not None:
@@ -718,7 +918,7 @@ def main():
     report["binary_sha256_after"] = digest(binary)
     report["passed"] = ("failure_class" not in report and report["source"] == report["source_after"]
                         and report["binary_sha256"] == report["binary_sha256_after"]
-                        and (not corpus or report["representative"]["complete"]))
+                        and (report["representative"]["complete"] if corpus else all(row["complete"] for row in report["workloads"])))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"passed": report["passed"], "receipt": str(args.output),

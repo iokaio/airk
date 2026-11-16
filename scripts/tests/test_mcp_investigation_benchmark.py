@@ -63,6 +63,39 @@ for line in sys.stdin:
 
 
 class InvestigationBenchmarkTests(unittest.TestCase):
+    def test_modern_scope_is_explicit_and_old_connection_rosters_are_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = {"schema": 3, "transport": "https", "args": [], "route": "isolated-approved-runtime",
+                      "control": str(Path(temporary).resolve()), "scope": {"index_ids": ["idx_one", "idx_two"]}}
+            self.assertIs(BENCH.modern_configuration(config, combined=True), config)
+            narrowed = BENCH.configuration_for_case(config, {"index_ids": ["idx_two"]})
+            self.assertEqual(narrowed["scope"], {"index_ids": ["idx_two"]})
+            self.assertEqual(config["scope"], {"index_ids": ["idx_one", "idx_two"]})
+            with self.assertRaisesRegex(ValueError, "widens_frozen_call_scope"):
+                BENCH.configuration_for_case(config, {"index_ids": ["idx_other"]})
+            for change in ({"schema": 2}, {"connections_file": "old-credential-roster.json"},
+                           {"scope": {}}, {"scope": {"project_ids": ["old-grant"]}}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    BENCH.modern_configuration({**config, **change}, combined=True)
+            workspace = {**config, "scope": {"workspace": temporary}}
+            self.assertIs(BENCH.modern_configuration(workspace, combined=False), workspace)
+            with self.assertRaisesRegex(ValueError, "explicit_https_indexes_required"):
+                BENCH.modern_configuration(workspace, combined=True)
+
+    def test_https_raw_request_charges_and_sends_its_per_call_scope(self):
+        session = BENCH.Session({"transport": "https", "scope": {"index_ids": ["idx_fixture"]}}, 5)
+        network = mock.Mock()
+        network.connection.sock = None
+        network.with_scope.side_effect = lambda message: {**message, "params": {**message["params"],
+            "arguments": {**message["params"]["arguments"], "index_ids": ["idx_fixture"]}}}
+        network._request.side_effect = lambda _method, message: {"jsonrpc": "2.0", "id": message["id"], "result": {"complete": True}}
+        session.local.network = network
+        result, metadata = session.https_request("tools/call", {"name": "search", "arguments": {"query": "needle"}})
+        sent = network._request.call_args.args[1]
+        self.assertEqual(sent["params"]["arguments"], {"query": "needle", "index_ids": ["idx_fixture"]})
+        self.assertEqual(metadata["request_bytes"], len(BENCH.canonical(sent)))
+        self.assertEqual(result, {"complete": True})
+
     def test_http_cleanup_failure_retains_original_and_complete_secondary_evidence(self):
         session = BENCH.Session({"transport": "https"}, 5)
         primary = BENCH.http_fixture.HttpResponseError(200, "bounded prefix", submission="uncertain")
@@ -98,6 +131,7 @@ class InvestigationBenchmarkTests(unittest.TestCase):
             session = BENCH.RetainedSession({"transport": "https"}, 5)
             session.local.network = network = mock.Mock()
             session.networks = [network]
+            network.with_scope.side_effect = lambda message: message
             network._request.side_effect = error
             with self.subTest(code=code), self.assertRaises(error_type) as caught:
                 session.request("tools/call", {"name": "search", "arguments": {}})

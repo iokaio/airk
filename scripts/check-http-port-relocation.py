@@ -129,11 +129,7 @@ def immutable_scope(selection):
 
 
 def validate_relocation(before, after, old_health, new_health):
-    a, b = before['endpoint'], after['endpoint']
-    if before['connection_id'] != after['connection_id'] or immutable_scope(before['selection']) != immutable_scope(after['selection']):
-        raise AssertionError('Explicit reconnect changed credential identity or immutable authority')
-    if after['selection']['selection']['expected_catalog_revision'] < before['selection']['selection']['expected_catalog_revision']:
-        raise AssertionError('Explicit reconnect regressed the reviewed catalog clock')
+    a, b = before, after
     for field in ('installation', 'user', 'namespace', 'ca_sha256', 'executable_sha256'):
         if a[field] != b[field]:
             raise AssertionError('Relocation changed endpoint identity: ' + field)
@@ -151,7 +147,7 @@ def stale_probe(transport, connection, control, occupant):
     try:
         client = transport.McpClient(connection, control, timeout=3)
     except ssl.SSLError:
-        # McpClient connects and validates TLS before storing/sending bearer
+        # McpClient connects and validates TLS before any HTTP request
         # bytes. Constructor refusal proves no HTTP request could be issued.
         pass
     else:
@@ -170,8 +166,8 @@ def stale_probe(transport, connection, control, occupant):
             'scope': 'invalid TLS occupant; not an untrusted-CA or certificate-rotation campaign'}
 
 
-def read_marker(transport, connection, control):
-    client = transport.McpClient(connection, control)
+def read_marker(transport, connection, control, scope):
+    client = transport.McpClient(connection, control, scope=scope)
     arguments = {'path':'sentinel.txt','start_line':1,'end_line':1,'response_mode':'full'}
     try:
         client.send({'jsonrpc':'2.0','id':1,'method':'initialize','params':{
@@ -210,8 +206,8 @@ def qualify(runtime, approved, report):
     actual = hashlib.sha256((runtime / 'airk-install.json').read_bytes()).hexdigest()
     if not re.fullmatch('[0-9a-f]{64}', approved) or approved != actual:
         raise ValueError('Explicit approved installer digest differs')
-    if json.loads((runtime / 'airk-runtime.json').read_text())['schema'] != 2:
-        raise ValueError('Port relocation requires a modern single-image runtime')
+    if json.loads((runtime / 'airk-runtime.json').read_text())['schema'] not in (2, 3):
+        raise ValueError('Port relocation requires an approved single-image or matched-pair runtime')
     report.parent.mkdir(parents=True, exist_ok=True)
     with report.open('x', encoding='utf-8') as stream:
         proof = {'schema': 'airk.http-port-relocation/1', 'status': 'running', 'approved_install_sha256': approved,
@@ -237,16 +233,15 @@ def qualify(runtime, approved, report):
                     proof['phase'] = 'isolated_managed_activation'; retain()
                     fixture.start()
                     register_project(fixture, owner)
-                    identifier = uuid.uuid4().hex
-                    before = fixture.enroll_http({'kind': 'scoped', 'selection': fixture.scopes['port-relocation']}, identifier)
+                    scope = {'index_ids': [fixture.scopes['port-relocation']['index_id']]}
+                    before = fixture.http_endpoint()
                     old_health = fixture.rpc('health')['observation']
                     transport.validate_native_identity(before, old_health)
-                    old_port = urlsplit(before['endpoint']['url']).port
+                    old_port = urlsplit(before['url']).port
                     if old_port == PREFERRED_PORT:
                         raise AssertionError('Service claimed the occupied preferred port')
-                    old_token = transport.private_bytes(before['credential_file'], fixture.control, 103)
                     proof['phase'] = 'preferred_collision_scoped_mcp_and_api'; retain()
-                    proof['before_result'] = read_marker(transport, before, fixture.control)
+                    proof['before_result'] = read_marker(transport, before, fixture.control, scope)
                     preferred.require_uncontacted()
                     proof['before_connection'] = before
                     proof['phase'] = 'exact_instance_stop'; retain()
@@ -255,22 +250,21 @@ def qualify(runtime, approved, report):
                     saved = ForeignListener(old_port)
                     fixture.managed_stop = None; fixture.managed_health = None
                     proof['phase'] = 'saved_collision_explicit_start'; retain()
-                    restarted = json.loads(fixture.run('runtime','start','--install-dir',fixture.install).stdout)
+                    restarted = json.loads(fixture.service_run('runtime','start','--install-dir',fixture.install).stdout)
                     fixture.managed_health = fixture.rpc('health')['observation']
                     if restarted['instance'] != fixture.managed_health['instance']:
                         raise AssertionError('Explicit Start receipt differs from the reconnected native instance')
-                    after = json.loads(fixture.run('runtime','http-connection-info','--install-dir',fixture.install,
-                                                  '--connection-id',identifier).stdout)
-                    # The command returns the connection DTO, without new enrollment.
+                    after = fixture.http_endpoint()
+                    # Fresh endpoint metadata; the explicit per-call index is unchanged.
                     transport.validate_native_identity(after, fixture.managed_health)
                     validate_relocation(before, after, old_health, fixture.managed_health)
-                    if transport.private_bytes(after['credential_file'], fixture.control, 103) != old_token:
-                        raise AssertionError('Relocation changed the enrolled bearer')
                     preferred.require_uncontacted(); saved.require_uncontacted()
-                    proof.update(restart=restarted, after_connection=after, token_preserved=True,
+                    if list((fixture.control / 'http-1').glob('credential-*.token')):
+                        raise AssertionError('Tokenless port relocation created read credential artifacts')
+                    proof.update(restart=restarted, after_endpoint=after, scope=scope, credential_artifacts_created=False,
                                  preferred_native_contacts=0, saved_native_contacts=0)
                     proof['phase'] = 'explicit_client_reconnect'; retain()
-                    proof['after_result'] = read_marker(transport, after, fixture.control)
+                    proof['after_result'] = read_marker(transport, after, fixture.control, scope)
                     preferred.require_uncontacted(); saved.require_uncontacted()
                     proof['phase'] = 'stale_url_tls_refusal'; retain()
                     proof['stale_probe'] = stale_probe(transport, before, fixture.control, saved)

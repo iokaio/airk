@@ -68,7 +68,8 @@ export function SharedManagement(props: { state: ExplorerViewState; page?: PageI
     if (!owner) return <section><p>{error || (closedByUser ? 'The captured management session is closed. Reopening creates a fresh native context; no original action is replayed.' : 'Opening native management…')}</p>
         {closedByUser || error ? <button type="button" onClick={() => { closedByUser = false; setError(''); setReopen(value => value + 1); }}>Open native management</button> : null}</section>;
     return <div class="airk-shared-management"><div class="actions" aria-label="Native management session">
-        <span>Native management · {owner.session.serviceInstance.slice(0, 8)}</span>
+        <span>Native management</span>
+        <details><summary>Details: native management connection</summary><p>Service instance: <code>{owner.session.serviceInstance}</code></p></details>
         <button type="button" class="secondary" onClick={() => { closedByUser = true; owner.invalidate(); setOwner(null); void owner.close().catch(() => { setError('The original context close was not confirmed. Verify the native connection before opening another context.'); }); }}>Close management session</button>
         </div><ManagementApp key={epoch} initialGate={{ kind: 'none' }} embedded active={props.active} initialPage={props.page} onPageChange={props.onPageChange} /></div>;
 }

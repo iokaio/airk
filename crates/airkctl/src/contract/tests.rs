@@ -109,7 +109,8 @@ fn session_fixture_names_this_contract_and_budgets() {
         ("max_response_frame_bytes", MAX_RESPONSE_FRAME_BYTES as u64),
         ("max_invoke_stderr_bytes", MAX_INVOKE_STDERR_BYTES as u64),
         ("max_in_flight", MAX_IN_FLIGHT as u64),
-        ("max_invoke_deadline_ms", MAX_INVOKE_DEADLINE_MS),
+        // Historical control: preserve the original wire-fixture bytes.
+        ("max_invoke_deadline_ms", 120_000),
         ("max_buffered_events", MAX_BUFFERED_EVENTS as u64),
         ("max_buffered_event_bytes", MAX_BUFFERED_EVENT_BYTES as u64),
     ] {
@@ -329,4 +330,18 @@ fn status_documents_round_trip_and_refuse_unknown_states() {
             case["name"]
         );
     }
+}
+
+#[test]
+fn current_transport_envelope_is_separate_from_the_literal_operation_budget() {
+    let current = json(include_str!(
+        "../../../../fixtures/split/i2/transport_budget.json"
+    ));
+    assert_eq!(current["schema"], "airk.i2-transport-budget/1");
+    assert_eq!(current["operation_deadline_ms"], 120_000);
+    assert_eq!(current["max_invoke_deadline_ms"], 125_000);
+    assert_eq!(current["max_invoke_deadline_ms"], MAX_INVOKE_DEADLINE_MS);
+    assert_eq!(airk_core::arbiter::Budget::default().deadline_ms, 120_000);
+    let historical = json(FRAMES);
+    assert_eq!(historical["budgets"]["max_invoke_deadline_ms"], 120_000);
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { READ_TRANSPORT_DEADLINE_MS, READ_TRANSPORT_OVERHEAD_MS } from './generated/arbiterBudget';
 import { answerSourceBinding, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
@@ -246,7 +247,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         if(!spec){throw new Error('Choose a registered project.');}
         const identity=this.evidenceIdentity(spec);
         if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;this.combinedControls=undefined;}
-        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});this.clientIdentity=identity;}
+        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:READ_TRANSPORT_DEADLINE_MS,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});this.clientIdentity=identity;}
         return this.client;
     }
     stop():void{this.refreshQueryClient?.cancel('workbench-refresh');this.refreshQueryClient?.dispose();this.refreshQueryClient=undefined;this.refreshFlows.clear();this.refreshRequeries.clear();this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
@@ -329,7 +330,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             ...(named ? { selection: { indexes: [...named.indexes], sets: [...named.sets] } } : {}) };
         session.turns.push(turn); this.busy = true; this.notice = undefined; this.send();
         try {
-            const result = await client.call('airk_answer', request, { supersede: 'workbench', timeout: 35000 });
+            const result = await client.call('airk_answer', request, { supersede: 'workbench', timeout: Math.min(READ_TRANSPORT_DEADLINE_MS, budget.deadline_ms + READ_TRANSPORT_OVERHEAD_MS) });
             if (generation !== this.generation || session !== this.session || client !== this.client
                 || identity !== this.clientIdentity || identity !== this.evidenceIdentity() || !this.permitted()) return;
             turn.envelope = result.rawPayload ?? result.payload;
@@ -366,7 +367,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
             if(plan){request.plan=plan;if(this.selectedSpec()?.combinedSession&&plan.query_scope){const scope=object(plan.query_scope);for(const key of ['project_ids','index_ids','member_availability'])if(scope[key]!==undefined)request[key]=structuredClone(scope[key]);}}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
             turn.request=structuredClone(request);
-            const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
+            const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:READ_TRANSPORT_DEADLINE_MS});
             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==this.evidenceIdentity()||!this.permitted()){return;}
             turn.envelope=result.rawPayload??result.payload;if(result.rawPayload)this.metadata.remember(result.rawPayload,result.payload);this.turnAuthorities.set(turn,this.clientIdentity!);
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
@@ -423,9 +424,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             query:async(query,selection)=>{
                 if(!valid())throw new Error('refresh_selection_changed');
                 const tool=refreshQueryTool(query.tool);
-                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});
+                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:READ_TRANSPORT_DEADLINE_MS,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});
                 this.refreshQueryClient=client;
-                try{const response=await client.call(tool,structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
+                try{const response=await client.call(tool,structuredClone(object(query.arguments)),{timeout:READ_TRANSPORT_DEADLINE_MS,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
                     if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=raw;throw error;}
                     return raw;
                 }finally{if(this.refreshQueryClient===client)this.refreshQueryClient=undefined;client.dispose();}

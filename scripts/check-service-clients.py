@@ -1140,7 +1140,28 @@ class Fixture:
             endpoint = json.loads(self.run("--output", "json", *self.open_service(), "agents", "endpoint").stdout)
         else:
             endpoint = json.loads(self.service_run("runtime", "http-endpoint", "--install-dir", self.install).stdout)
-        assert endpoint == transport.read_endpoint(self.control), "CLI endpoint record differs from the published endpoint.json"
+        persisted = transport.read_endpoint(self.control)
+        descriptor = {key: value for key, value in endpoint.items() if key != "manual"}
+        assert descriptor == persisted, "CLI endpoint record differs from the published endpoint.json"
+        # Manual setup is presentation outside the persisted endpoint digest.
+        # Validate every native entry rather than dropping unchecked new fields.
+        if "manual" in endpoint:
+            manual = endpoint["manual"]
+            assert isinstance(manual, list) and len(manual) == 3, "Native manual entry roster differs"
+            assert {(row["client"], row["scope"], row["file"], row["format"]) for row in manual} == {
+                ("claude", "project", ".mcp.json", "json"),
+                ("codex", "project", ".codex/config.toml", "toml"),
+                ("vscode", "project", ".vscode/mcp.json", "json"),
+            }, "Native manual entry targets differ"
+            import tomllib
+            for row in manual:
+                assert set(row) == {"client", "scope", "file", "format", "text"}
+                value = tomllib.loads(row["text"]) if row["format"] == "toml" else json.loads(row["text"])
+                container = {"claude": "mcpServers", "codex": "mcp_servers", "vscode": "servers"}[row["client"]]
+                fields = {"url": endpoint["url"], "http_headers" if row["client"] == "codex" else "headers": {"X-AIRK-Response-Mode": "terse"}}
+                if row["client"] != "codex":
+                    fields["type"] = "http"
+                assert value == {container: {"airk": fields}}, "Native manual text differs from token-free endpoint entry"
         return endpoint
 
     def open_http(self, name, client=None):

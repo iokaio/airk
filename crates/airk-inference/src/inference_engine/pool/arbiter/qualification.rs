@@ -2,6 +2,7 @@
 //! Explicit private qualification, never part of release profile admission.
 mod context;
 mod focus;
+mod software_v2;
 
 use super::*;
 use airk_core::arbiter::{Asset, ModelChoice, Profile};

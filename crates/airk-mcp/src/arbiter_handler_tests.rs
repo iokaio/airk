@@ -139,6 +139,9 @@ async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_
         let mut args = record["arguments"].as_object().unwrap().clone();
         args.insert("response_mode".into(), json!("full"));
         args.insert("include_status".into(), json!(true));
+        // Answer owns saved-source verification on its complete outer result.
+        // Its canonical inner reader explicitly disables per-read verification.
+        args.insert("verification".into(), json!("off"));
         if matches!(operation, NativeRead::ReadEvidence | NativeRead::Context) {
             args.insert(
                 "revision".into(),

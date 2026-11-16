@@ -638,6 +638,7 @@ pub(super) fn refusal_cases() -> Result<Vec<Value>> {
     let card = request.roster.cards[index].id;
     let calibration = JointCalibration {
         schema: CALIBRATION_SCHEMA.into(),
+        class_support: None,
         model: fitted.model,
         compiler: fitted.compiler,
         task_policy: request.roster.policy,

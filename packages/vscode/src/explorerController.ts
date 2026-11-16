@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { READ_OPERATION_DEADLINE_MS, READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import * as nodePath from 'node:path';
 import {randomUUID} from 'node:crypto';
 import * as vscode from 'vscode';
@@ -165,7 +166,7 @@ interface ContextObservation {
     state: 'idle' | 'reading' | 'waiting' | 'complete' | 'stopped'; retryAt?: number;
 }
 const CONTEXT_OBSERVATION_ATTEMPTS = 8;
-const CONTEXT_OBSERVATION_BUDGET_MS = 30000;
+const CONTEXT_OBSERVATION_BUDGET_MS = READ_OPERATION_DEADLINE_MS;
 
 export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
 
@@ -972,7 +973,7 @@ export class ExplorerController implements vscode.Disposable {
                     && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
                 publish();
                 try {
-                    const result = await this.session().call('airk_search', args, { supersede: 'search', timeout: 30000 });
+                    const result = await this.session().call('airk_search', args, { supersede: 'search', timeout: READ_TRANSPORT_DEADLINE_MS });
                     if (!current()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
                     const status = this.statusFor === project && this.statusIdentity === this.control.observationIdentity ? this.status : undefined;
                     const view = searchView(project, typed, result.payload, result.publication, this.refs,
@@ -998,7 +999,7 @@ export class ExplorerController implements vscode.Disposable {
                 // Extracted coordinates have no host-known page boundary: keep one cited line.
                 const sourceLines = info.payload.line_basis === 'source';
                 const result = await this.session().call('airk_context', { path: ref.path, line: ref.startLine,
-                    before: sourceLines ? typed.before : 0, after: sourceLines ? typed.after : 0, revision: ref.publication, known_hash: ref.contentHash, max_bytes: 32768, ...originArgs(ref.origin) }, { timeout: 30000 });
+                    before: sourceLines ? typed.before : 0, after: sourceLines ? typed.after : 0, revision: ref.publication, known_hash: ref.contentHash, max_bytes: 32768, ...originArgs(ref.origin) }, { timeout: READ_TRANSPORT_DEADLINE_MS });
                 const selected = originatingResult(result.payload, ref.origin);
                 if ((selected.publication ?? result.publication) !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
                 return passageView(project, result.payload, result.publication, this.refs);
@@ -1008,7 +1009,7 @@ export class ExplorerController implements vscode.Disposable {
                 const project = this.requireProject();
                 const ref = this.refs.get(typed.ref, project);
                 // The location on disk comes from AIRK's own file record, never from the webview.
-                const native=await this.session().call('airk_file_info', { path: ref.path, ...originArgs(ref.origin) }, { timeout: 30000 });
+                const native=await this.session().call('airk_file_info', { path: ref.path, ...originArgs(ref.origin) }, { timeout: READ_TRANSPORT_DEADLINE_MS });
                 const selected=originatingResult(native.payload,ref.origin),info=selected.payload;
                 const source = info.source as Record<string, unknown> | undefined;
                 if (!source || typeof source.root !== 'string' || typeof source.relative_path !== 'string') {
@@ -1074,7 +1075,7 @@ export class ExplorerController implements vscode.Disposable {
                 this.requireProject();
                 if ([typed.topic, typed.command, typed.tool].filter(Boolean).length > 1) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE', 'Choose one help selector.')); }
                 const result = await this.session().call('airk_help', { ...(typed.topic ? { topic: typed.topic } : {}), ...(typed.command ? { command: typed.command } : {}),
-                    ...(typed.tool ? { tool: typed.tool } : {}), ...(typed.startLine ? { start_line: typed.startLine } : {}), max_bytes: 16384 }, { timeout: 30000 });
+                    ...(typed.tool ? { tool: typed.tool } : {}), ...(typed.startLine ? { start_line: typed.startLine } : {}), max_bytes: 16384 }, { timeout: READ_TRANSPORT_DEADLINE_MS });
                 return engineHelp(result.payload);
             }
             case 'list.more': {

@@ -2,6 +2,7 @@
 //! One Rust-owned experimental descriptor builder. Never release authority.
 use airk_core::{
     arbiter::context_action::{ContextReason, RelevanceHypothesis, calibration::*},
+    arbiter::resource_policy::ResourcePolicy,
     arbiter::*,
     identity::{Sha256Digest, framed_digest},
 };
@@ -37,6 +38,7 @@ pub struct PreparedProfile {
     pub profile: Profile,
     pub files: BTreeMap<String, PathBuf>,
     pub numeric_raw_only: bool,
+    pub resource_policy: Option<ResourcePolicy>,
 }
 
 fn sha(bytes: &[u8]) -> Sha256Digest {
@@ -172,6 +174,7 @@ fn abi(focus: bool) -> ScoreAbi {
 fn structural_calibration(profile: &Profile, policy: Sha256Digest) -> JointCalibration {
     JointCalibration {
         schema: CALIBRATION_SCHEMA.into(),
+        class_support: None,
         model: profile.model,
         compiler: profile.compiler,
         task_policy: policy,
@@ -213,6 +216,53 @@ fn trained_assets(profile: &Profile) -> BTreeMap<String, JointAssetBinding> {
 /// Build only an unqualified native evaluation descriptor. Resource inputs are
 /// declared experiment reservations; this function does not claim measured fit.
 pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
+    prepare_declared(input, output, None)
+}
+
+/// Additive software-v2 metadata only. Historical prepare keeps its 2048 Context
+/// compiler and /1 private identity; this path binds the separately frozen /2
+/// resource policy without claiming that the graph or host has measured fit.
+pub fn prepare_with_limits(
+    input: ProfileInput,
+    policy: &ResourcePolicy,
+    output: &Path,
+) -> Result<PreparedProfile> {
+    policy.validate()?;
+    prepare_declared(input, output, Some(policy))
+}
+
+fn compiler_with_limits(bytes: &[u8], focus: bool, policy: &ResourcePolicy) -> Result<Vec<u8>> {
+    policy.validate()?;
+    let mut profile: CompilerProfile = serde_json::from_slice(bytes)?;
+    profile.validate()?;
+    ensure!(
+        profile.recipe
+            == if focus {
+                CompilerRecipe::QwenRerankYesNoV1
+            } else {
+                CompilerRecipe::QwenSingleChoiceV1
+            },
+        "resource width requires the selected native compiler recipe"
+    );
+    if focus {
+        ensure!(
+            profile.max_tokens == policy.focus_pair_input_tokens,
+            "Focus resource policy cannot widen its static graph"
+        );
+        return Ok(bytes.to_vec());
+    }
+    profile.max_tokens = policy.context_input_tokens;
+    profile.validate()?;
+    let mut bytes = serde_json::to_vec_pretty(&profile)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn prepare_declared(
+    input: ProfileInput,
+    output: &Path,
+    resource_policy: Option<&ResourcePolicy>,
+) -> Result<PreparedProfile> {
     ensure!(
         !output.exists()
             && input.profile_id.starts_with("private-")
@@ -295,6 +345,15 @@ pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
     } else {
         crate::arbiter::compiler::qwen::compiler_profile(&tokenizer_bytes)?
     };
+    let compiler_bytes = if let Some(policy) = resource_policy {
+        let bytes = compiler_with_limits(&compiler_bytes, focus, policy)?;
+        // Re-admit exact serialized metadata through the existing unchanged
+        // token/recipe owner, rather than inferring support from Core's ceiling.
+        crate::arbiter::compiler::Compiler::from_verified(&bytes, &tokenizer_bytes)?;
+        bytes
+    } else {
+        compiler_bytes
+    };
     let (task, policy) = if focus {
         (
             Task::FocusRank,
@@ -331,7 +390,13 @@ pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
         qualification: None,
         tasks: BTreeSet::from([task]),
         abi: abi(focus),
-        max_tokens: if focus { 512 } else { 2048 },
+        max_tokens: resource_policy.map_or(if focus { 512 } else { 2048 }, |policy| {
+            if focus {
+                policy.focus_pair_input_tokens
+            } else {
+                policy.context_input_tokens
+            }
+        }),
         max_candidates: input.maximum_candidates,
         memory_reservation_bytes: input.memory_reservation_bytes,
         peak_disk_bytes: input.peak_disk_bytes,
@@ -423,12 +488,25 @@ pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
         JointCalibration::parse_and_validate(&calibration_bytes, &profile, policy)?;
     }
     // Test-support identity only, explicitly distinct from a qualified release.
-    profile.manifest = framed_digest(
-        b"airk.private.selected-stage-evaluation-profile/1",
-        &[&serde_json::to_vec(&profile)?],
-    );
+    profile.manifest = if let Some(policy) = resource_policy {
+        framed_digest(
+            b"airk.private.selected-stage-evaluation-profile/2",
+            &[&serde_json::to_vec(&profile)?, &policy.canonical_bytes()?],
+        )
+    } else {
+        framed_digest(
+            b"airk.private.selected-stage-evaluation-profile/1",
+            &[&serde_json::to_vec(&profile)?],
+        )
+    };
     fs::create_dir(output)?;
     fs::write(output.join("compiler.json"), &compiler_bytes)?;
+    if let Some(policy) = resource_policy {
+        fs::write(
+            output.join("resource-policy.json"),
+            policy.canonical_bytes()?,
+        )?;
+    }
     fs::write(output.join(calibration_name), &calibration_bytes)?;
     fs::write(
         output.join("experimental-profile.json"),
@@ -444,8 +522,15 @@ pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
         profile,
         files,
         numeric_raw_only,
+        resource_policy: resource_policy.cloned(),
     })
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod resource_tests;
+
+#[cfg(test)]
+mod regeneration;

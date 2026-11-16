@@ -548,7 +548,12 @@ mod tests {
     #[test]
     #[ignore = "requires explicitly provisioned INT8 assets and native runtime"]
     fn bundled_int8_is_normalized_bounded_and_batch_independent() -> Result<()> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/local-vector-model");
+        let _native_owner = crate::native_inference::fixture::NativeCompute::admit()?;
+        let root = std::env::var_os("AIRK_BUNDLED_MODEL_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/local-vector-model")
+            });
         for profile in crate::model_catalog::inspect_catalog()?.catalog.profiles {
             let directory = root.join(&profile.id);
             let model = OnnxModel::open(&directory, &std::fs::read(directory.join("model.json"))?)?;

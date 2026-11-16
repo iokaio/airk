@@ -110,7 +110,17 @@ fn original_call_limit_and_deadline_never_grant_another_dispatch() -> Result<()>
     gather.observe(Ok(result(&scope, 20, 22, "initial")), now)?;
     assert!(gather.next(now)?.is_none());
     assert_eq!(gather.finish(now)?.stop, StopReason::Budget);
-    let mut gather = Gathering::new(request(), scope.clone(), application(&scope), now)?;
+    let mut historical = request();
+    historical.budget = Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262144,
+        deadline_ms: 30_000,
+    };
+    let mut gather = Gathering::new(historical, scope.clone(), application(&scope), now)?;
     let expired = now + Duration::from_secs(31);
     assert!(gather.next(expired)?.is_none());
     let answer = gather.finish(expired)?;
@@ -490,5 +500,23 @@ fn native_initial_retention_one_byte_over_boundary_refuses_without_raising_budge
             .contains("mandatory initial canonical search exceeds original retention budget")
     );
     assert!(gathering.finish(now).is_err());
+    Ok(())
+}
+
+#[test]
+fn current_default_keeps_dispatch_until_original_120_second_deadline() -> Result<()> {
+    let now = Instant::now();
+    let scope = scope();
+    let current = request();
+    assert_eq!(current.budget.input_tokens, 8192);
+    assert_eq!(current.budget.deadline_ms, 120_000);
+    let mut gather = Gathering::new(current.clone(), scope.clone(), application(&scope), now)?;
+    assert!(gather.next(now + Duration::from_secs(31))?.is_some());
+    let mut expired = Gathering::new(current, scope.clone(), application(&scope), now)?;
+    let cutoff = now + Duration::from_secs(120);
+    assert!(expired.next(cutoff)?.is_none());
+    let answer = expired.finish(cutoff)?;
+    assert_eq!(answer.stop, StopReason::Deadline);
+    assert_eq!(answer.work.calls, 0);
     Ok(())
 }

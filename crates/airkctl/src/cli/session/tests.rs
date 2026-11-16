@@ -11,6 +11,8 @@ use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 const FRAMES: &str = include_str!("../../../../../fixtures/wire/airkctl_session_frames.json");
+const TRANSPORT_BUDGET: &str =
+    include_str!("../../../../../fixtures/split/i2/transport_budget.json");
 const PLANE: &str = include_str!("../../../../../fixtures/split/i1/window_plane.json");
 /// Observation deadline for a frame or pipe call; never a sleep.
 const OBSERVE: Duration = Duration::from_secs(30);
@@ -558,8 +560,11 @@ fn invoked_carries_the_three_channels_and_the_error_line() {
 
 #[test]
 fn real_command_invoker_carries_exact_agent_entries_through_the_session() {
-    let project = tempfile::tempdir().unwrap();
-    let file = project.path().join(".mcp.json");
+    // Exercise the actual retention writer in its qualified private Git/npm
+    // fixture; a bare tempfile does not satisfy whole-file recovery policy.
+    let project = crate::agents::config::EditableFixture::new();
+    let root = crate::cli::plain(project.path().to_path_buf());
+    let file = root.join(".mcp.json");
     let source = "{\"mcpServers\":{\"airk-remove\":{\"command\":\"airk\"},\"airk-keep\":{ \"command\" : \"airk\" }}}\n";
     std::fs::write(&file, source).unwrap();
     let clock = Arc::new(ManualClock::default());
@@ -574,13 +579,9 @@ fn real_command_invoker_carries_exact_agent_entries_through_the_session() {
             "agents".into(),
             action.into(),
             "--runtime-dir".into(),
-            project
-                .path()
-                .join("missing-control")
-                .to_string_lossy()
-                .into_owned(),
+            root.join("missing-control").to_string_lossy().into_owned(),
             "--project".into(),
-            project.path().to_string_lossy().into_owned(),
+            root.to_string_lossy().into_owned(),
             "--no-user".into(),
         ]
     };
@@ -606,12 +607,19 @@ fn real_command_invoker_carries_exact_agent_entries_through_the_session() {
     assert_eq!(removed["outcome"]["exit_code"], 0, "{removed}");
     let result: Value =
         serde_json::from_str(removed["outcome"]["stdout"].as_str().unwrap()).unwrap();
-    assert_eq!(result["actions"].as_array().unwrap().len(), 1);
-    assert_eq!(result["actions"][0]["changed"], true);
+    assert_eq!(
+        result,
+        json!({
+            "schema": 1,
+            "actions": [{"file": file, "serverKey": "airk-remove", "connectionId": null, "changed": true, "error": null}],
+            "blockers": [],
+        }),
+        "complete native removal outcome: {result}"
+    );
     let after = std::fs::read_to_string(&file).unwrap();
     assert!(!after.contains("airk-remove"));
     assert!(after.contains("\"airk-keep\":{ \"command\" : \"airk\" }"));
-    assert!(!project.path().join("missing-control").exists());
+    assert!(!root.join("missing-control").exists());
     assert_eq!(client.eof().1, 0);
 }
 
@@ -1355,4 +1363,70 @@ fn open_read_selector_values_are_not_command_words() {
         ])));
     }
     assert!(refused_command(&argv(&["tools", "shell"])));
+}
+
+/// Observe the real actor's literal boundary decisions, separately from historical frames.
+#[test]
+fn current_i2_transport_budget_cases_match_native_invoke_and_admin_admission() {
+    let expected: Value = serde_json::from_str(TRANSPORT_BUDGET).unwrap();
+    assert_eq!(expected["operation_deadline_ms"], 120_000);
+    assert_eq!(expected["max_invoke_deadline_ms"], 125_000);
+    let mut observed = expected.clone();
+    let mut cases = Vec::new();
+    for case in expected["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["json"]["request"].get("invoke").is_some())
+    {
+        let deadline = case["json"]["request"]["invoke"]["deadline_ms"]
+            .as_u64()
+            .unwrap();
+        let clock = Arc::new(ManualClock::default());
+        clock.advance(17);
+        let in_command = clock.clone();
+        let mut client = Client::start(options(&clock, None, move |argv, io| {
+            assert_eq!(argv, ["version"]);
+            let context = io
+                .read_attempt
+                .as_ref()
+                .expect("one original Invoke parent");
+            let first = context.live_budget().unwrap();
+            assert_eq!(first.request_id.to_string(), id(10));
+            assert_eq!(first.expires_monotonic_ns, (17 + deadline) * 1_000_000);
+            assert_eq!(first.remaining_ns, deadline * 1_000_000);
+            in_command.advance(5);
+            let later = context.live_budget().unwrap();
+            assert_eq!(later.expires_monotonic_ns, first.expires_monotonic_ns);
+            assert_eq!(later.remaining_ns, (deadline - 5) * 1_000_000);
+            assert_eq!(airk_core::arbiter::Budget::default().deadline_ms, 120_000);
+            0
+        }));
+        client.ask(&hello());
+        let reply = client.ask(&case["json"]);
+        let accepted = reply["outcome"]["status"] == "invoked";
+        assert_eq!(
+            accepted,
+            case["valid"].as_bool().unwrap(),
+            "{}: {reply}",
+            case["name"]
+        );
+        if !accepted {
+            assert_eq!(reply, failure(10, "session_invalid_request", false));
+        }
+        assert_eq!(client.eof().1, 0);
+        let mut row = case.clone();
+        row["valid"] = json!(accepted);
+        cases.push(row);
+    }
+    cases.extend(admin::observed_transport_budget_cases());
+    observed["cases"] = json!(cases);
+    assert_eq!(observed, expected);
+    if let Some(output) = std::env::var_os("AIRK_I2_TRANSPORT_CASES_OUTPUT") {
+        std::fs::write(
+            output,
+            serde_json::to_string_pretty(&observed).unwrap() + "\n",
+        )
+        .unwrap();
+    }
 }

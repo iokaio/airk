@@ -93,6 +93,19 @@ export type Budget = {
     rounds: number;
 };
 
+export type ClassDisposition = {
+    action: ContextActionClass;
+    support: ClassSupport;
+};
+
+export type ClassSupport = {
+    reason: string;
+    status: "unsupported";
+} | {
+    qualification?: Sha256Digest | null;
+    status: "supported";
+};
+
 export type CompilerProfile = {
     controls: Array<BoundToken>;
     max_options: number;
@@ -370,6 +383,21 @@ export type GroundedParagraph = {
 
 export type Incarnation = string;
 
+export type IndependenceAnalysis = {
+    accepted_cases: number;
+    accepted_sample: Sha256Digest;
+    action: ContextActionClass;
+    criteria_freeze: Sha256Digest;
+    /**
+     * Must be justified by the separately approved exact cluster analysis.
+     * It is not inferred from the number of task rows or repositories.
+     */
+    effective_independent_cases: number;
+    method: string;
+    repository_clusters: number;
+    schema: string;
+};
+
 export type IndexApplication = {
     availability: Availability;
     profile?: Sha256Digest | null;
@@ -391,6 +419,10 @@ export type JointAssetBinding = {
 
 export type JointCalibration = {
     assets: Record<string, JointAssetBinding>;
+    /**
+     * Absent on historical /1; /2 explicitly accounts for all four classes.
+     */
+    class_support?: Array<ClassDisposition> | null;
     compiler: Sha256Digest;
     model: ModelChoice;
     rules: Array<JointRule>;
@@ -526,6 +558,12 @@ export type QualifiedTarget = {
     target: string;
 };
 
+export type ReadChoice = {
+    id: Sha256Digest;
+    operation: NativeRead;
+    target: string;
+};
+
 export type Readout = "decision_symbol" | "pointer_head" | "focus_yes_no";
 
 export type RelevanceHypothesis = "useful" | "complementary" | "redundant" | "uncertain";
@@ -602,6 +640,89 @@ export type TensorContract = {
 };
 
 export type TensorType = "int64" | "float32" | "bool";
+
+export type TerminalAnnotations = {
+    /**
+     * Descriptive attribution only; exact original file needs separate approval.
+     */
+    human_review_reference: string;
+    rows: Array<TerminalHumanLabel>;
+    schema: string;
+};
+
+export type TerminalCriteria = {
+    calibration_population: Sha256Digest;
+    confirmation_population: Sha256Digest;
+    /**
+     * Exact preregistered criteria source; independently approved at promotion.
+     */
+    freeze: Sha256Digest;
+    maximum_false_acceptance_upper: number;
+    minimum_cal_accepted: number;
+    minimum_cal_population: number;
+    minimum_confirmation_accepted: number;
+    minimum_confirmation_population: number;
+    minimum_coverage: number;
+};
+
+export type TerminalHumanLabel = {
+    accepted_whole_cards: Array<Sha256Digest>;
+    action: ContextActionClass;
+    id: string;
+    repository_cluster: string;
+    visible_input: Sha256Digest;
+};
+
+export type TerminalObservation = {
+    accepted_whole_cards: Array<Sha256Digest>;
+    choices: Array<ReadChoice>;
+    human_annotations: Sha256Digest;
+    id: string;
+    native_capture: Sha256Digest;
+    question: string;
+    records: Array<EvidenceRecord>;
+    repository_cluster: string;
+    roster: ContextActionRoster;
+    /**
+     * None retains an unscored refusal/failure in the complete population denominator.
+     */
+    scores?: Array<number> | null;
+};
+
+export type TerminalQualification = {
+    assets: Record<string, JointAssetBinding>;
+    calibration: Array<TerminalObservation>;
+    compiler: Sha256Digest;
+    confirmation: Array<TerminalObservation>;
+    criteria: TerminalCriteria;
+    independence_analysis: Sha256Digest;
+    model: ModelChoice;
+    rule: JointRule;
+    schema: string;
+    task_policy: Sha256Digest;
+};
+
+export type TerminalRawCapture = {
+    assets: Record<string, JointAssetBinding>;
+    compiler: Sha256Digest;
+    execution_identity: string;
+    model: ModelChoice;
+    /**
+     * Actual native custody/source receipt, independently reviewed with capture.
+     */
+    native_execution_receipt: Sha256Digest;
+    rows: Array<TerminalRawRow>;
+    schema: string;
+    task_policy: Sha256Digest;
+};
+
+export type TerminalRawRow = {
+    compiled_input?: Sha256Digest | null;
+    id: string;
+    input_tokens?: number | null;
+    scores?: Array<number> | null;
+    visible_input: Sha256Digest;
+};
 
 export type Work = {
     bytes: number;

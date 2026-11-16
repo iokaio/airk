@@ -610,6 +610,73 @@ fn parse_body(envelope: &Value, declared_output_bytes: usize) -> Result<Value> {
     Ok(value)
 }
 
+/// The parity adapter must use the operation's original allocation. Plans
+/// already have a larger native output contract; applying an ordinary read
+/// frame here rejects a valid complete native reply before its plan check.
+fn tool_body(envelope: &Value, tool: &str, arguments: &Value) -> Result<Value> {
+    if !matches!(tool, "parse" | "airk_parse") {
+        return body(envelope);
+    }
+    // Decode through the same native MCP/Core request owners rather than
+    // reading an allowance from the response or mirroring its defaults.
+    let public: airk_mcp::ParseArgs = serde_json::from_value(arguments.clone())?;
+    let request = airk_core::workbench::decode_request(serde_json::to_value(public)?)?;
+    let output = request
+        .output
+        .or_else(|| request.plan.map(|plan| plan.output))
+        .unwrap_or_default();
+    parse_body(envelope, output.max_bytes)
+}
+
+#[test]
+fn parity_plan_budget_preserves_native_precedence_and_refuses_ordinary_read_overflow() -> Result<()>
+{
+    let request = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
+        "response_mode":"full", "plan":{"steps":[{"id":"one","tool":"capabilities","args":{}}],
+            "output":{"view":"raw","max_bytes":262144}},
+        "output":{"view":"raw","max_bytes":131072}});
+    let value = json!({"schema":"airk.workbench.result/1","plan":{"output":{"max_bytes":131072}},
+        "payload":"x".repeat(125000)});
+    let envelope = airk_mcp::unified::success(value.clone());
+    let original = envelope.clone();
+    // Literal old read framing refuses this complete plan. The native declared
+    // 128-KiB canonical allocation and its existing transport wrapper accept it.
+    assert!(serde_json::to_vec(&envelope)?.len() > 200704);
+    assert!(serde_json::to_vec(&value)?.len() < 131072);
+    assert_eq!(tool_body(&envelope, "parse", &request)?, value);
+    assert_eq!(tool_body(&envelope, "airk_parse", &request)?, value);
+    assert_eq!(envelope, original);
+    assert!(tool_body(&envelope, "capabilities", &request).is_err());
+    let mut narrower = request.clone();
+    narrower["output"]["max_bytes"] = 65536.into();
+    let mut narrow_value = value.clone();
+    narrow_value["plan"]["output"]["max_bytes"] = 65536.into();
+    assert!(
+        tool_body(
+            &airk_mcp::unified::success(narrow_value),
+            "parse",
+            &narrower
+        )
+        .is_err()
+    );
+    let mut wrong_reply = value.clone();
+    wrong_reply["plan"]["output"]["max_bytes"] = 262144.into();
+    assert!(tool_body(&airk_mcp::unified::success(wrong_reply), "parse", &request).is_err());
+    let default_request =
+        json!({"schema":"airk.parse.request/1","mode":"prepare","text":"/capabilities"});
+    let mut default_value = value;
+    default_value["plan"]["output"]["max_bytes"] = 262144.into();
+    assert_eq!(
+        tool_body(
+            &airk_mcp::unified::success(default_value.clone()),
+            "parse",
+            &default_request
+        )?,
+        default_value
+    );
+    Ok(())
+}
+
 fn body_with_budgets(
     envelope: &Value,
     body_budget: usize,
@@ -1122,15 +1189,418 @@ fn first_difference(left: &Value, right: &Value, path: &str) -> Option<String> {
     ))
 }
 
+// Workbench owns each step's MCP result envelope. Decode only that explicit
+// duplicate, after authenticating every original body; source text stays literal.
+fn workbench_comparison_copy(raw: &Value) -> Result<Value> {
+    ensure!(raw["schema"] == airk_core::workbench::RESULT_SCHEMA);
+    let maximum = usize::try_from(
+        raw.pointer("/plan/output/max_bytes")
+            .and_then(Value::as_u64)
+            .context("Workbench output allocation missing")?,
+    )?;
+    // Original request precedence/bounds were checked by tool_body(). This
+    // second check authenticates the unchanged original receipt before copying.
+    parse_body(raw, maximum)?;
+    let mut result = raw.clone();
+    if let Some(receipt) = result
+        .get_mut("delivery_observation")
+        .and_then(|observation| observation.get_mut("receipt"))
+    {
+        receipt["result_digest"] = json!("<authenticated-raw-observation-digest>");
+    }
+    let steps = raw["steps"].as_array().context("Workbench steps missing")?;
+    ensure!(steps.len() <= airk_core::workbench::MAX_STEP_REPORTS);
+    for (offset, step) in steps.iter().enumerate() {
+        let mut logical = current_observations(step, &["/elapsed_ms"], false)?;
+        if let Some(envelope) = step.get("result").filter(|value| !value.is_null()) {
+            let tool = step["tool"]
+                .as_str()
+                .context("Workbench step tool missing")?;
+            let native = tool_body(envelope, tool, &step["arguments"])?;
+            if native["schema"] == airk_core::workbench::RESULT_SCHEMA {
+                // Parse is not an executable plan step. Fail closed if a future
+                // nested plan changes that contract rather than ignore its proof.
+                anyhow::bail!("unreviewed nested Workbench plan result");
+            }
+            let status = matches!(tool, "status" | "airk_status");
+            logical["result"] = if envelope.get("structuredContent").is_some() {
+                current_envelope_copy(envelope, status)?
+            } else if envelope.pointer("/content/0/type").and_then(Value::as_str) == Some("text") {
+                // Text-only MCP still has one explicit canonical JSON slot.
+                // Preserve other blocks and wrapper fields, including evidence.
+                let mut copy = envelope.clone();
+                copy["content"][0]["text"] = current_body_copy(&native, status)?;
+                copy
+            } else {
+                // A single selected index returns its primitive body directly.
+                // Normalize only that native root's typed observations.
+                current_body_copy(&native, status)?
+            };
+        }
+        result["steps"][offset] = logical;
+    }
+    Ok(result)
+}
+
+fn parity_comparison_copy(raw: &Value) -> Result<Value> {
+    if raw["schema"] == airk_core::workbench::RESULT_SCHEMA {
+        workbench_comparison_copy(raw)
+    } else {
+        stable(logical_comparison_copy(raw)?)
+    }
+}
+
+// Independent small native-shaped bodies, with real delivery framing. These
+// pure regressions do not depend on retained private transport captures.
+fn signed_workbench_parity_fixture(mut body: Value) -> Result<Value> {
+    body.as_object_mut()
+        .context("fixture body")?
+        .remove("delivery_observation");
+    let mut covered = body.clone();
+    if covered
+        .pointer("/read_scope/source")
+        .is_some_and(Value::is_string)
+    {
+        covered.as_object_mut().unwrap().remove("read_scope");
+    }
+    let digest = framed_digest(
+        b"airk/combined-delivery-result/1",
+        &[&serde_json::to_vec(&covered)?],
+    );
+    let scope = body
+        .pointer("/publication_vector/authority")
+        .or_else(|| body.get("scope_identity"))
+        .cloned()
+        .unwrap_or_else(|| json!(Sha256Digest::from_bytes([11; 32])));
+    body["delivery_observation"] = json!({"digest_basis":"canonical_body_without_delivery_observation",
+        "receipt":{"schema":1,"service_instance":Incarnation::from_bytes([12;16]),
+        "namespace":Incarnation::from_bytes([13;16]),"catalog_revision":2,
+        "scope_identity":scope,"result_digest":digest}});
+    Ok(body)
+}
+
+fn workbench_parity_fixture(child: Option<Value>) -> Result<Value> {
+    let indexes = [
+        IndexId::from_identity(Incarnation::from_bytes([81; 16])),
+        IndexId::from_identity(Incarnation::from_bytes([82; 16])),
+    ];
+    let member = |offset: usize| {
+        json!({"index_id":indexes[offset],"index_name":format!("fixture{offset}"),
+        "is_error":false,"outcome":"complete","elapsed_ms":47+offset,
+        "allocation":{"index_id":indexes[offset],"limit":4,"max_bytes":4096,
+        "deadline_ms":14977-offset,"verification_max_sources":0,"verification_max_bytes":0,
+        "verification_deadline_ms":0},"result":{"request_id":Incarnation::from_bytes([21+offset as u8;16]),
+        "content_hash":Sha256Digest::from_bytes([31;32]),"source_path":"fixture.rs",
+        "future":{"request_id":"source-identity","elapsed_ms":7},
+        "hits":[{"text":"{\"request_id\":\"literal source\",\"elapsed_ms\":19}"}]}})
+    };
+    let child = child.unwrap_or_else(|| {
+        json!({"schema":"airk.combined-read/1",
+        "publication_vector":{"authority":Sha256Digest::from_bytes([11;32]),
+        "observed_from_unix_ms":10,"observed_to_unix_ms":20,
+        "members":indexes.map(|index|json!({"index_id":index,"publication":null}))},
+        "members":[member(0),member(1)],"ranking":[],
+        "read_scope":{"source":"explicit","index_ids":indexes}})
+    });
+    let child = signed_workbench_parity_fixture(child)?;
+    signed_workbench_parity_fixture(json!({"schema":"airk.workbench.result/1",
+        "scope_identity":Sha256Digest::from_bytes([11;32]),
+        "plan":{"output":{"max_bytes":262144},"budgets":{"seconds":30}},
+        "future":{"request_id":"plan-evidence","elapsed_ms":9},
+        "steps":[{"id":"one","tool":"capabilities","arguments":{"max_bytes":8192},
+        "elapsed_ms":242,"status":"complete","error":null,
+        "result":{"isError":false,"structuredContent":child,
+        "content":[{"type":"text","text":child.to_string()},
+        {"type":"text","text":"{\"request_id\":\"second evidence block\",\"elapsed_ms\":11}"}]}}]}))
+}
+
+#[test]
+fn workbench_nested_native_observations_compare_without_mutating_originals() -> Result<()> {
+    let original = workbench_parity_fixture(None)?;
+    let before = original.clone();
+    let mut child = original["steps"][0]["result"]["structuredContent"].clone();
+    child["publication_vector"]["observed_from_unix_ms"] = json!(30);
+    child["publication_vector"]["observed_to_unix_ms"] = json!(40);
+    for (offset, member) in child["members"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        member["allocation"]["deadline_ms"] = json!(14976);
+        member["elapsed_ms"] = json!(52 + offset);
+        member["result"]["request_id"] = json!(Incarnation::from_bytes([41 + offset as u8; 16]));
+    }
+    let mut later = workbench_parity_fixture(Some(child))?;
+    later["steps"][0]["elapsed_ms"] = json!(248);
+    later = signed_workbench_parity_fixture(later)?;
+    assert_ne!(original, later);
+    assert_eq!(
+        parity_comparison_copy(&original)?,
+        parity_comparison_copy(&later)?
+    );
+    assert_eq!(
+        original, before,
+        "comparison changed authenticated original bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn workbench_nested_native_comparison_retains_semantics_and_refuses_drift() -> Result<()> {
+    let original = workbench_parity_fixture(None)?;
+    let expected = parity_comparison_copy(&original)?;
+    let child = original["steps"][0]["result"]["structuredContent"].clone();
+    for (pointer, value) in [
+        ("/members/0/allocation/max_bytes", json!(4095)),
+        ("/members/0/allocation/verification_max_sources", json!(1)),
+        (
+            "/members/0/result/content_hash",
+            json!(Sha256Digest::from_bytes([32; 32])),
+        ),
+        ("/members/0/result/source_path", json!("other.rs")),
+        (
+            "/members/0/result/future/request_id",
+            json!("different-source-identity"),
+        ),
+        ("/members/0/result/future/elapsed_ms", json!(8)),
+        (
+            "/members/0/result/hits/0/text",
+            json!("{\"request_id\":\"changed source\",\"elapsed_ms\":19}"),
+        ),
+        ("/read_scope/source", json!("different-scope-source")),
+        (
+            "/publication_vector/authority",
+            json!(Sha256Digest::from_bytes([14; 32])),
+        ),
+    ] {
+        let mut changed = child.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert_ne!(
+            parity_comparison_copy(&workbench_parity_fixture(Some(changed))?)?,
+            expected,
+            "masked semantic field {pointer}"
+        );
+    }
+    for (pointer, value) in [
+        ("/plan/budgets/seconds", json!(29)),
+        ("/plan/output/max_bytes", json!(131072)),
+        ("/scope_identity", json!(Sha256Digest::from_bytes([16; 32]))),
+        ("/future/elapsed_ms", json!(10)),
+        ("/steps/0/arguments/max_bytes", json!(8191)),
+        ("/future/request_id", json!("different-plan-evidence")),
+        (
+            "/steps/0/result/content/1/text",
+            json!("{\"request_id\":\"different second evidence block\",\"elapsed_ms\":11}"),
+        ),
+        (
+            "/steps/0/result/structuredContent/delivery_observation/receipt/service_instance",
+            json!(Incarnation::from_bytes([15; 16])),
+        ),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        if pointer.contains("structuredContent") {
+            changed["steps"][0]["result"]["content"][0]["text"] =
+                json!(changed["steps"][0]["result"]["structuredContent"].to_string());
+        }
+        let changed = signed_workbench_parity_fixture(changed)?;
+        assert_ne!(
+            parity_comparison_copy(&changed)?,
+            expected,
+            "masked semantic field {pointer}"
+        );
+    }
+    for pointer in [
+        "/delivery_observation/receipt/result_digest",
+        "/steps/0/result/structuredContent/delivery_observation/receipt/result_digest",
+        "/steps/0/result/content/0/text",
+    ] {
+        let mut invalid = original.clone();
+        *invalid.pointer_mut(pointer).unwrap() = json!("invalid-original-proof");
+        if pointer != "/delivery_observation/receipt/result_digest" {
+            invalid = signed_workbench_parity_fixture(invalid)?;
+        }
+        assert!(
+            parity_comparison_copy(&invalid).is_err(),
+            "accepted {pointer}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn workbench_step_shape_matrix_covers_single_combined_and_mixed_results() -> Result<()> {
+    let template = workbench_parity_fixture(None)?;
+    let combined = template["steps"][0]["result"]["structuredContent"].clone();
+    let primitive = json!({"request_id":Incarnation::from_bytes([61;16]),
+        "content_hash":Sha256Digest::from_bytes([62;32]),"scope_identity":Sha256Digest::from_bytes([63;32]),
+        "future":{"request_id":"retained-source-ID","elapsed_ms":19},
+        "hits":[{"text":"{\"request_id\":\"literal evidence\",\"elapsed_ms\":23}"}]});
+    let wrap = |body: &Value, shape| match shape {
+        0 => body.clone(),
+        1 => json!({"isError":false,"structuredContent":body,
+            "content":[{"type":"text","text":body.to_string()},
+            {"type":"text","text":"{\"request_id\":\"second source\"}"}],
+            "future":{"request_id":"wrapper-evidence"}}),
+        2 => json!({"isError":false,
+            "content":[{"type":"text","text":body.to_string()},
+            {"type":"text","text":"{\"request_id\":\"second source\"}"}],
+            "future":{"request_id":"wrapper-evidence"}}),
+        _ => unreachable!(),
+    };
+    let plan = |result: Value| -> Result<Value> {
+        let mut plan = template.clone();
+        plan["steps"][0]["result"] = result;
+        signed_workbench_parity_fixture(plan)
+    };
+    let mut original_steps = Vec::new();
+    let mut later_steps = Vec::new();
+    for (kind, original) in [("single", primitive), ("combined", combined)] {
+        let mut later = original.clone();
+        if kind == "single" {
+            later["request_id"] = json!(Incarnation::from_bytes([64; 16]));
+        } else {
+            later["publication_vector"]["observed_from_unix_ms"] = json!(30);
+            later["publication_vector"]["observed_to_unix_ms"] = json!(40);
+            for (offset, member) in later["members"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .enumerate()
+            {
+                member["allocation"]["deadline_ms"] = json!(14976);
+                member["elapsed_ms"] = json!(51 + offset);
+                member["result"]["request_id"] =
+                    json!(Incarnation::from_bytes([65 + offset as u8; 16]));
+            }
+            later = signed_workbench_parity_fixture(later)?;
+        }
+        for shape in 0..3 {
+            let first_plan = plan(wrap(&original, shape))?;
+            let second_plan = plan(wrap(&later, shape))?;
+            let expected = parity_comparison_copy(&first_plan)?;
+            assert_eq!(
+                expected,
+                parity_comparison_copy(&second_plan)?,
+                "{kind} shape {shape}"
+            );
+            let mut first_step = first_plan["steps"][0].clone();
+            let mut later_step = second_plan["steps"][0].clone();
+            first_step["id"] = json!(format!("{kind}-{shape}"));
+            later_step["id"] = first_step["id"].clone();
+            original_steps.push(first_step);
+            later_steps.push(later_step);
+            let prefix = if kind == "single" {
+                ""
+            } else {
+                "/members/0/result"
+            };
+            for (suffix, replacement) in [
+                ("/content_hash", json!(Sha256Digest::from_bytes([67; 32]))),
+                ("/future/request_id", json!("changed-source-ID")),
+                ("/future/elapsed_ms", json!(20)),
+                (
+                    "/hits/0/text",
+                    json!("{\"request_id\":\"different literal evidence\",\"elapsed_ms\":23}"),
+                ),
+            ] {
+                let mut changed = original.clone();
+                let pointer = format!("{prefix}{suffix}");
+                *changed.pointer_mut(&pointer).unwrap() = replacement;
+                if kind == "combined" {
+                    changed = signed_workbench_parity_fixture(changed)?;
+                }
+                assert_ne!(
+                    expected,
+                    parity_comparison_copy(&plan(wrap(&changed, shape))?)?,
+                    "masked {kind} shape {shape} field {pointer}"
+                );
+            }
+            let scoped_fields = if kind == "single" {
+                vec![("/scope_identity", json!(Sha256Digest::from_bytes([69; 32])))]
+            } else {
+                vec![
+                    (
+                        "/publication_vector/authority",
+                        json!(Sha256Digest::from_bytes([69; 32])),
+                    ),
+                    ("/read_scope/source", json!("different-scope-source")),
+                    ("/members/0/allocation/max_bytes", json!(4095)),
+                ]
+            };
+            for (pointer, replacement) in scoped_fields {
+                let mut changed = original.clone();
+                *changed.pointer_mut(pointer).unwrap() = replacement;
+                if kind == "combined" {
+                    changed = signed_workbench_parity_fixture(changed)?;
+                }
+                assert_ne!(
+                    expected,
+                    parity_comparison_copy(&plan(wrap(&changed, shape))?)?,
+                    "masked {kind} shape {shape} scope/budget field {pointer}"
+                );
+            }
+            let mut invalid = original.clone();
+            invalid
+                .pointer_mut(&format!("{prefix}/request_id"))
+                .unwrap()
+                .clone_from(&json!("not-a-native-transport-identity"));
+            if kind == "combined" {
+                invalid = signed_workbench_parity_fixture(invalid)?;
+            }
+            assert!(
+                parity_comparison_copy(&plan(wrap(&invalid, shape))?).is_err(),
+                "invalid typed request ID {kind} shape {shape}"
+            );
+            if kind == "combined" {
+                let mut invalid = original.clone();
+                invalid["delivery_observation"]["receipt"]["result_digest"] =
+                    json!(Sha256Digest::from_bytes([68; 32]));
+                assert!(
+                    parity_comparison_copy(&plan(wrap(&invalid, shape))?).is_err(),
+                    "invalid original combined proof shape {shape}"
+                );
+            }
+            if shape == 1 {
+                let mut invalid = wrap(&original, shape);
+                invalid["content"][0]["text"] = json!("{\"mismatched\":true}");
+                assert!(
+                    parity_comparison_copy(&plan(invalid)?).is_err(),
+                    "text/structured drift {kind}"
+                );
+            }
+            if shape > 0 {
+                let mut changed = wrap(&original, shape);
+                changed["content"][1]["text"] = json!("{\"request_id\":\"changed second source\"}");
+                assert_ne!(
+                    expected,
+                    parity_comparison_copy(&plan(changed)?)?,
+                    "masked second evidence block {kind} shape {shape}"
+                );
+            }
+        }
+    }
+    assert_eq!(original_steps.len(), 6);
+    let mut first = template.clone();
+    first["steps"] = json!(original_steps);
+    let mut later = template;
+    later["steps"] = json!(later_steps);
+    let first = signed_workbench_parity_fixture(first)?;
+    let later = signed_workbench_parity_fixture(later)?;
+    assert_eq!(
+        parity_comparison_copy(&first)?,
+        parity_comparison_copy(&later)?,
+        "mixed plan did not normalize every supported native result representation"
+    );
+    Ok(())
+}
+
 fn parity_difference(label: &str, left: &Value, right: &Value) -> Result<Option<String>> {
-    let a = stable(
-        logical_comparison_copy(left)
-            .with_context(|| format!("{label}: left logical reconstruction"))?,
-    )?;
-    let b = stable(
-        logical_comparison_copy(right)
-            .with_context(|| format!("{label}: right logical reconstruction"))?,
-    )?;
+    let a = parity_comparison_copy(left)
+        .with_context(|| format!("{label}: left logical reconstruction"))?;
+    let b = parity_comparison_copy(right)
+        .with_context(|| format!("{label}: right logical reconstruction"))?;
     let Some(difference) = first_difference(&a, &b, "") else {
         return Ok(None);
     };
@@ -1280,7 +1750,11 @@ impl McpSession {
                 .collect::<String>(),
             save_replies(label, &json!({"mcp":wire,"pipe":piped}))?.display()
         );
-        assert_parity(label, &body(&piped)?, &body(&wire["result"])?)?;
+        assert_parity(
+            label,
+            &tool_body(&piped, tool, &stripped)?,
+            &tool_body(&wire["result"], tool, &stripped)?,
+        )?;
         Ok((wire, piped))
     }
 }

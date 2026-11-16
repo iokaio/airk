@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod agent_connection;
+pub mod agent_manual;
 pub mod agent_scope;
 pub mod agent_workspace;
 pub mod binding;

@@ -309,6 +309,7 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             endpoint = HTTP.read_endpoint(control)
             self.assertEqual(endpoint, connection["endpoint"])
             client = HTTP.McpClient(endpoint, control, scope={"index_ids": ["idx_fixture"]})
+            self.assertEqual(client.connection.timeout, 125, "120-second native operation plus five transport seconds")
             try:
                 client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
                 client.receive(1)
@@ -322,6 +323,11 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 self.assertEqual(client.api_read("list_scopes", {})["structuredContent"]["arguments"], {})
             finally:
                 client.close()
+            short = HTTP.McpClient(endpoint, control, timeout=3, scope={"index_ids": ["idx_fixture"]})
+            try:
+                self.assertEqual(short.connection.timeout, 3, "An explicit deadline must not be extended")
+            finally:
+                short.close()
             calls = [value for value, _ in wire if isinstance(value, dict) and value.get("method") == "tools/call"]
             self.assertEqual([call["params"]["arguments"] for call in calls], [{"query": "q", "index_ids": ["idx_fixture"]}, {}])
             self.assertTrue(all(value is None for _, value in observed))

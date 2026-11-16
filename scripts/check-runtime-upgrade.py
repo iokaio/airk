@@ -40,6 +40,38 @@ def runtime_binary(runtime, platform=sys.platform):
     return path
 
 
+def prepare_candidate_runtime(source, owner):
+    """Use the existing reviewed interim fixture adapter for a sealed split pair.
+
+    This qualifies historical runtime migration with the pair's exact images.
+    It is not an installed split-product upgrade journey; that remains separate.
+    """
+    metadata = json.loads((source / 'airk-runtime.json').read_bytes())
+    if metadata.get('schema') != 3:
+        return source, None, None
+    spec = importlib.util.spec_from_file_location('upgrade_split_fixture', Path(__file__).with_name('check-service-clients.py'))
+    clients = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(clients)
+    destination = owner / ('split-candidate-' + uuid.uuid4().hex)
+    fixture = clients.split_fixture_payload(source, destination)
+    main, cli = runtime_binary(fixture), runtime_binary(fixture).with_name('airkctl.exe' if sys.platform == 'win32' else 'airkctl')
+    if digest(main) != metadata['airk_sha256'] or digest(cli) != metadata['airkctl_sha256']:
+        raise RuntimeError('Interim upgrade fixture changed the approved split images')
+    provenance = {'pair_root': str(source), 'pair_manifest_sha256': digest(source / 'airk-install.json'),
+                  'pair_metadata': metadata, 'fixture_root': str(fixture),
+                  'fixture_manifest_sha256': digest(fixture / 'airk-install.json'),
+                  'qualification_scope': 'Reviewed interim historical migration fixture; not installed split-product qualification'}
+    return fixture, cli, provenance
+
+
+def routed_candidate_command(executable, arguments, candidate, cli):
+    if cli is None or location_key(executable) != location_key(candidate):
+        return executable, arguments
+    if arguments and arguments[0] == 'runtime':
+        return candidate, ('__airk_role', 'setup-interim', *arguments)
+    return cli, arguments
+
+
 def apply_fixture_replacement(invoke, binary, install, candidate):
     """One explicit full uninstall, durably identified before staging a successor."""
     operation = secrets.token_hex(32)
@@ -422,13 +454,22 @@ def check_upgrade_inputs(runtime, previous_runtime, interrupted_runtime=None, cl
         if (install.get("schema") != 1 or not isinstance(version, str)
                 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
                 or install.get("files") != {name: value for name, value in files.items() if name != "airk-install.json"}
-                or native.get("schema") not in (1, 2)
+                or native.get("schema") not in (1, 2, 3)
                 or host_arch is None or install.get("os") != host_os or install.get("arch") != host_arch
                 or any(native.get(key) != install.get(key) for key in ("version", "os", "arch"))):
             raise RuntimeError("Upgrade input has inconsistent version or sealed file inventory: " + str(canonical))
         main = runtime_binary(canonical, sys.platform)
         if files.get(main.relative_to(canonical).as_posix()) != native.get("airk_sha256"):
             raise RuntimeError("Upgrade input main differs from runtime metadata: " + str(canonical))
+        if native["schema"] == 3:
+            spec = importlib.util.spec_from_file_location("upgrade_split_preflight", Path(__file__).with_name("check-service-clients.py"))
+            clients = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(clients)
+            if clients.classify_runtime(canonical)["topology"] != "split_pair":
+                raise RuntimeError("Upgrade input split metadata differs")
+            cli = main.with_name("airkctl.exe" if sys.platform == "win32" else "airkctl")
+            if files.get(cli.relative_to(canonical).as_posix()) != native.get("airkctl_sha256"):
+                raise RuntimeError("Upgrade input CLI differs from its matched-pair metadata")
         if native["schema"] == 1:
             helper = main.with_name("airk-embed.exe" if sys.platform == "win32" else "airk-embed").relative_to(canonical).as_posix()
             if files.get(helper) != native.get("embed_sha256") or not isinstance(native.get("embed_sha256"), str):
@@ -437,8 +478,8 @@ def check_upgrade_inputs(runtime, previous_runtime, interrupted_runtime=None, cl
             "install_manifest_sha256": files["airk-install.json"], "sealed_files": len(install["files"]),
             "main_sha256": files[main.relative_to(canonical).as_posix()]}
     if clean_break and (not clean_break_required(observations["predecessor"]["version"], observations["candidate"]["version"])
-            or observations["candidate"]["runtime_schema"] != 2):
-        raise RuntimeError("Clean-break input preflight requires an actual pre-1.8.16 predecessor and supported single runtime")
+            or observations["candidate"]["runtime_schema"] not in (2, 3)):
+        raise RuntimeError("Clean-break input preflight requires an actual pre-1.8.16 predecessor and supported native runtime")
     result = {"passed": True, "check_inputs_only": True, "runtime_executed": False, "inputs": observations,
             "scope": "Accessible canonical fixture roots and bounded complete sealed-file/version census; native activation verification remains separate."}
     if fixture_root is not None:
@@ -771,41 +812,39 @@ def assert_semantic_query(body, mode, publication, pipeline, original):
 
 
 def verify_https_reconnect(invoke, binary, install, control, root, project, selected, configuration_receipt, original, semantic_before=None, command=None):
-    """Reconnect through preserved native authority, not the terminated launcher."""
+    """Reconnect through the tokenless native endpoint and exact retained Index."""
     spec = importlib.util.spec_from_file_location("upgrade_http_fixture", Path(__file__).with_name("http_fixture.py"))
     transport = importlib.util.module_from_spec(spec); spec.loader.exec_module(transport)
-    identifier = uuid.uuid4().hex
-    if selected is not None:
-        connection = transport.enroll_native(
-            lambda *arguments, timeout=None: invoke(binary, *arguments, timeout=timeout),
-            install, control, {"kind": "scoped", "selection": selected}, identifier)
-        expected, observed = selected.copy(), connection["selection"]["selection"].copy()
-        expected.pop("expected_catalog_revision"); observed.pop("expected_catalog_revision")
-        if connection["selection"]["kind"] != "scoped" or observed != expected:
-            raise RuntimeError("HTTPS reconnect changed the exact reviewed authority")
-    else:
-        directory = control / "http-fixture-inputs"
-        directory.mkdir(mode=0o700, exist_ok=False)
-        registration = directory / "registration.json"
-        with os.fdopen(os.open(registration, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as output:
-            json.dump(project, output)
-        connection = invoke(binary, "runtime", "http-legacy-connection", "--install-dir", install,
-            "--registration-file", registration, "--configuration-receipt", configuration_receipt,
-            "--connection-id", identifier, "--client", "unknown")
-        if connection["selection"]["kind"] != "imported_legacy" or connection["selection"]["selection"]["registration"] != project:
-            raise RuntimeError("HTTPS reconnect changed predecessor registration or claimed a new grant")
     health = invoke(binary, "service", "rpc", "--runtime-dir", control, "--stdin", input=json.dumps("health"))["observation"]
-    if connection["connection_id"] != identifier:
-        raise RuntimeError("Upgraded HTTPS connection identity changed")
-    transport.validate_native_identity(connection, health)
+    endpoint = transport.read_endpoint(control)
+    transport.validate_native_identity(endpoint, health)
+    if selected is not None:
+        index = selected.get("index_id")
+        if selected.get("namespace") != endpoint["namespace"]:
+            raise RuntimeError("HTTPS reconnect scope belongs to another native catalog")
+    else:
+        # The old registration is only a source-selection input. Resolve its
+        # exact surviving Index using native catalog metadata; issue no grant
+        # and never infer an Index identity from its legacy Project binding.
+        def rpc(method):
+            return invoke(binary, "service", "rpc", "--runtime-dir", control, "--stdin", input=json.dumps(method))
+        items, _pages = catalog_page_items(rpc, "indexes")
+        matching = [row["value"] for row in items if row.get("kind") == "index"
+                    and row["value"].get("tombstone") is False
+                    and row["value"].get("backing", {}).get("binding") == project["binding"]]
+        if len(matching) != 1:
+            raise RuntimeError("HTTPS reconnect needs exactly the retained registration's current Index")
+        index = matching[0]["id"]
+    scope = transport.scope_value(index_ids=[index])
     evidence_file = root / "https-reconnect-evidence.json"
-    evidence = {"connection": connection, "native_health": health}
+    evidence = {"endpoint": endpoint, "read_scope": scope, "native_health": health,
+                "configuration_receipt": configuration_receipt, "legacy_registration": project}
     with evidence_file.open("x", encoding="utf-8") as output:
         json.dump(evidence, output, indent=2)
     def retain(name, value):
         evidence[name] = value
         evidence_file.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    network = transport.McpClient(connection, control)
+    network = transport.McpClient(endpoint, control, 125, scope=scope)
     try:
         network.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "upgraded-http-fixture", "version": "1"}}})
@@ -830,7 +869,7 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
         def attempt(route, value):
             evidence["read_attempts"].append({"transport":route,"result":value})
             evidence_file.write_text(json.dumps(evidence,indent=2)+"\n",encoding="utf-8")
-        deadline = time.monotonic()+60
+        deadline = time.monotonic()+125
         mcp = typed_https_read(lambda until:read("mcp",until),lambda value:attempt("mcp",value),deadline)
         retain("mcp", mcp)
         api = typed_https_read(lambda until:read("json_api",until),lambda value:attempt("json_api",value),deadline)
@@ -852,11 +891,7 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
         if semantic_before is not None:
             if command is None:
                 raise RuntimeError("Semantic upgrade requires the actual CLI transport")
-            cli_scope = ["--service-runtime-dir",str(control)]
-            if selected is not None:
-                cli_scope += ["--catalog-session",json.dumps(connection["selection"]["selection"])]
-            else:
-                cli_scope += ["--service-project",project["binding"],"--root",project["root"],"--data-dir",project["data_root"],"--collection",project["collection"]]
+            cli_scope = ["--service-runtime-dir", str(control)]
             semantic_after = {"queries":{},"attempts":[]}
             def semantic_read(route, tool, arguments, until):
                 remaining = until-time.monotonic()
@@ -866,7 +901,7 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
                 if network.connection.sock is not None:
                     network.connection.sock.settimeout(remaining)
                 if route == "cli":
-                    reply = command(binary,*cli_scope,"tools","call","airk_"+tool,"--args",json.dumps(arguments),timeout=remaining)
+                    reply = command(binary,*cli_scope,"tools","call","airk_"+tool,"--index",index,"--args",json.dumps(arguments),timeout=remaining)
                     if reply.returncode not in (0,1):
                         raise RuntimeError("Current semantic CLI transport failed")
                     return json.loads(reply.stdout)
@@ -878,7 +913,7 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
                 def retain_attempt(value):
                     semantic_after["attempts"].append({"transport":route,"tool":tool,"arguments":arguments,"result":value})
                     retain("semantic",semantic_after)
-                return typed_https_read(lambda until:semantic_read(route,tool,arguments,until),retain_attempt,time.monotonic()+90)
+                return typed_https_read(lambda until:semantic_read(route,tool,arguments,until),retain_attempt,time.monotonic()+125)
             status = actual_read("mcp","status",{"response_mode":"full"})
             semantic_after["status"] = status
             semantic_after["model"] = retained_model(control)
@@ -915,8 +950,8 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
                 raise RuntimeError("Upgrade or retained semantic reads changed/reissued index/vector/model jobs")
             semantic_after["score_comparison"] = "Full current CLI/HTTPS results compared; old/new floating-point score equality is not assumed."
             retain("semantic",semantic_after)
-        return {"transport": "https", "connection_id": identifier, "selection": connection["selection"],
-                "endpoint": connection["endpoint"], "mcp": mcp, "json_api": api,
+        return {"transport": "https", "read_scope": scope,
+                "endpoint": endpoint, "mcp": mcp, "json_api": api,
                 "same_original_source": True, "complete_mcp_api_parity": True,"retained_semantic":semantic_after}
     finally:
         network.close()
@@ -1164,6 +1199,8 @@ def run_clean_break(args, new, old):
     binary, old_binary = runtime_binary(new), runtime_binary(old)
     temporary = owned_temporary(fixture_parent(args.fixture_base))
     root = Path(temporary.name)
+    new, candidate_cli, candidate_provenance = prepare_candidate_runtime(new, root)
+    binary = runtime_binary(new)
     install, old_state = root / "install", root / "state"
     old_control = old_state / "control"
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -1178,8 +1215,10 @@ def run_clean_break(args, new, old):
         "fixture_root": str(root), "candidate": new_identity, "previous": old_identity,
         "previous_version": json.loads((old / "airk-install.json").read_text(encoding="utf-8"))["version"],
         "version": json.loads((new / "airk-install.json").read_text(encoding="utf-8"))["version"],
-        "indexes_before": originals, "source_inputs": source_inputs}
+        "indexes_before": originals, "source_inputs": source_inputs,
+        "candidate_pair_fixture": candidate_provenance}
     def command(executable, *arguments, input=None, timeout=180):
+        executable, arguments = routed_candidate_command(executable, arguments, binary, candidate_cli)
         return record_native_command(root, records, executable, arguments, input=input,
             timeout=timeout, flags=flags, environment=environment)
     def invoke(executable, *arguments, input=None, timeout=180):
@@ -1286,11 +1325,15 @@ def run_clean_break(args, new, old):
             # predecessor before the replacement is staged (the observed order).
             for retained in args.retained_runtime:
                 retained = retained.resolve(strict=True)
+                retained, _cli, provenance = prepare_candidate_runtime(retained, root)
+                receipt.setdefault("retained_pair_fixtures", []).append(provenance)
                 invoke(binary, "runtime", "stage", "--source", retained, "--install-dir", install,
                        "--state-dir", old_state, "--approved-sha256", digest(retained / "airk-install.json"),
                        "--verification-basis", "organization-digest")
         if args.interrupted_runtime:
             interrupted = args.interrupted_runtime.resolve(strict=True)
+            interrupted, _cli, provenance = prepare_candidate_runtime(interrupted, root)
+            receipt["interrupted_pair_fixture"] = provenance
             interrupted_identity = digest(interrupted / "airk-install.json")
             invoke(binary, "runtime", "stage", "--source", interrupted, "--install-dir", install,
                    "--state-dir", old_state, "--approved-sha256", interrupted_identity,
@@ -1571,6 +1614,8 @@ def main():
     new = args.runtime.resolve(strict=True)
     old = args.previous_runtime.resolve(strict=True)
     binary, old_binary = runtime_binary(new),runtime_binary(old)
+    if json.loads((old / "airk-runtime.json").read_bytes()).get("schema") == 3:
+        parser.error("This historical connected-stdio migration fixture requires a pre-split predecessor; qualify split-to-split upgrades through installed-product journeys")
     boundary = clean_break_required(json.loads((old / "airk-install.json").read_text(encoding="utf-8"))["version"],
                                     json.loads((new / "airk-install.json").read_text(encoding="utf-8"))["version"])
     if args.clean_break and not boundary:
@@ -1584,7 +1629,9 @@ def main():
 
     records = []
     root = None
+    candidate_cli = None
     def command(executable, *arguments, input=None, timeout=180):
+        executable, arguments = routed_candidate_command(executable, arguments, binary, candidate_cli)
         return record_native_command(root, records, executable, arguments, input=input,
                                      timeout=timeout, flags=flags, environment=environment)
     def invoke(executable, *arguments, input=None, timeout=180):
@@ -1595,6 +1642,8 @@ def main():
     parent = fixture_parent(args.fixture_base)
     temporary = owned_temporary(parent)
     root = Path(temporary.name)
+    new, candidate_cli, candidate_provenance = prepare_candidate_runtime(new, root)
+    binary = runtime_binary(new)
     environment.update(isolated_git_environment(root))
     install, state = root / "install", root / "state"
     source, data = root / "source", root / "data"
@@ -1611,7 +1660,7 @@ def main():
     candidate_stage_attempted = False
     old_execution_digest = digest(old_binary)
     primary_error = None
-    receipt = {"passed": False, "source_state": args.source_state, "fixture_setup": args.fixture_setup, "fixture_root": str(root),
+    receipt = {"passed": False, "candidate_pair_fixture": candidate_provenance, "source_state": args.source_state, "fixture_setup": args.fixture_setup, "fixture_root": str(root),
                "semantic_old_requested":args.semantic_old,
                "retirement_mode":"native_darwin_exact_image" if sys.platform == "darwin" else "native_retirement_with_held_process_observations",
                "qualification_scope": "explicit old-index positive upgrade" if args.source_state == "indexed"
@@ -1791,6 +1840,8 @@ def main():
         started = time.monotonic()
         if args.interrupted_runtime:
             interrupted = args.interrupted_runtime.resolve(strict=True)
+            interrupted, _cli, provenance = prepare_candidate_runtime(interrupted, root)
+            receipt["interrupted_pair_fixture"] = provenance
             interrupted_identity = digest(interrupted / "airk-install.json")
             invoke(binary, "runtime", "stage", "--source", interrupted, "--install-dir", install,
                    "--state-dir", state, "--approved-sha256", interrupted_identity,

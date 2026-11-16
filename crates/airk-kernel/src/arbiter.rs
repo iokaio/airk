@@ -296,7 +296,7 @@ impl crate::Kernel {
             {
                 let outcome = context.owner.next_read(
                     NativeNextReadRequest {
-                        read_attempt: None,
+                        read_attempt: context.attempt,
                         worker: context.worker,
                         authority: context.authority,
                         scope: scope.clone(),

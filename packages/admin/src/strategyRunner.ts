@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Browser adapter only: scope, metadata decoding and all read authority stay
 // with the existing Search capture and canonical I3 operation.
+import { READ_TRANSPORT_DEADLINE_MS } from '../../vscode/src/generated/arbiterBudget';
 import {runStrategy,validateStrategy,type RunRequest,type RunResult} from '../../ui/src/strategies';
 import {EvidenceFailure,publicationOf,publicationValues,type EvidenceReadPort,type ToolResult} from '../../ui/src/evidenceCore';
 import {FactHandles} from '../../vscode/src/explorerFacts';
@@ -60,7 +61,7 @@ export async function runBrowserStrategy(request:RunRequest,capture:ScopedReadCa
     current();pendingReads++;
     const original=capture.read(tool.replace(/^airk_/,''),structuredClone(args));
     original.then(()=>{pendingReads--;},()=>{pendingReads--;});
-    const reply=await boundedWorkflowRead(original,callOptions?.timeout??30000);current();
+    const reply=await boundedWorkflowRead(original,callOptions?.timeout??READ_TRANSPORT_DEADLINE_MS);current();
     reads.push(structuredClone(reply));
     return capturedSingleIndexResult(capture,reply);
   }};

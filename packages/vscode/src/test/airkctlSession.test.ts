@@ -24,19 +24,36 @@ const frames = JSON.parse(fs.readFileSync(path.join(repo, 'fixtures/wire/airkctl
     { schema: string; protocol: number; budgets: Record<string, number>; requests: Case[]; invalid_requests: Case[]; responses: Case[]; events: Case[]; invalid_events: Case[] };
 const cases = (key: 'requests' | 'invalid_requests' | 'responses' | 'events' | 'invalid_events') => { assert.ok(frames[key].length > 0, `${key}: zero cases is a failure`); return frames[key]; };
 
-test('session fixture is the reviewed schema; every budget equals the client constant', () => {
+test('historical session fixture retains its deadline control and unchanged frame budgets', () => {
     assert.equal(frames.schema, 'airk.wire-fixture.airkctl-session-frames/1');
     assert.equal(frames.protocol, SESSION_PROTOCOL);
+    assert.equal(frames.budgets.max_invoke_deadline_ms, 120000, 'retained historical control remains unchanged');
+    assert.equal(MAX_INVOKE_DEADLINE_MS, 125000, 'operation120000 plus transport delivery5000');
     assert.deepEqual({
         max_request_frame_bytes: frames.budgets.max_request_frame_bytes, max_invoke_stdin_bytes: frames.budgets.max_invoke_stdin_bytes,
         max_invoke_args: frames.budgets.max_invoke_args, max_invoke_arg_bytes: frames.budgets.max_invoke_arg_bytes,
-        max_response_frame_bytes: frames.budgets.max_response_frame_bytes, max_in_flight: frames.budgets.max_in_flight, max_invoke_deadline_ms: frames.budgets.max_invoke_deadline_ms,
+        max_response_frame_bytes: frames.budgets.max_response_frame_bytes, max_in_flight: frames.budgets.max_in_flight,
     }, {
         max_request_frame_bytes: MAX_REQUEST_FRAME_BYTES, max_invoke_stdin_bytes: MAX_INVOKE_STDIN_BYTES, max_invoke_args: MAX_INVOKE_ARGS,
-        max_invoke_arg_bytes: MAX_INVOKE_ARG_BYTES, max_response_frame_bytes: MAX_RESPONSE_FRAME_BYTES, max_in_flight: MAX_IN_FLIGHT, max_invoke_deadline_ms: MAX_INVOKE_DEADLINE_MS,
+        max_invoke_arg_bytes: MAX_INVOKE_ARG_BYTES, max_response_frame_bytes: MAX_RESPONSE_FRAME_BYTES, max_in_flight: MAX_IN_FLIGHT,
     });
 });
 
+const transportBudgets = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../fixtures/split/i2/transport_budget.json'), 'utf8')) as {
+    schema: string; protocol: number; operation_deadline_ms: number; max_invoke_deadline_ms: number;
+    cases: { name: string; json: unknown; valid: boolean }[];
+};
+test('native I2 transport boundary keeps operation120000 and delivery maximum125000 distinct', () => {
+    assert.equal(transportBudgets.schema, 'airk.i2-transport-budget/1');
+    assert.equal(transportBudgets.protocol, 2);
+    assert.equal(transportBudgets.operation_deadline_ms, 120000);
+    assert.equal(transportBudgets.max_invoke_deadline_ms, 125000);
+    assert.equal(MAX_INVOKE_DEADLINE_MS, transportBudgets.max_invoke_deadline_ms);
+    assert.equal(transportBudgets.cases.length, 8);
+});
+for (const row of transportBudgets.cases) test(`native I2 transport admission: ${row.name}`, () => {
+    assert.equal(requestFrameValid(row.json), row.valid);
+});
 test('session requests: every reviewed request is accepted and encodes to exactly its JSON', () => {
     for (const item of cases('requests')) {
         assert.ok(requestFrameValid(item.json), item.name);

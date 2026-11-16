@@ -433,14 +433,17 @@ class McpClient:
                           failure=failure, body_truncated=truncated,
                           submission="uncertain" if truncated else "observed")
 
-    def __init__(self, endpoint, control_root, timeout=60, *, scope=None):
+    def __init__(self, endpoint, control_root, timeout=125, *, scope=None):
         """endpoint: the tokenless endpoint record (`<control>/http-1/endpoint.json`,
         `airkctl agents endpoint`), or a legacy connection record embedding one.
         The CA is the record's ca_certificate_file when present, else
         `<control>/http-1/ca.pem`; either must be an owner-private file under
         control_root. No credential file is read. scope: optional per-call
         scope (scope_value keywords) attached to evidence reads that name none;
-        a legacy scoped connection record defaults it to its enrolled index."""
+        a legacy scoped connection record defaults it to its enrolled index.
+        The 125-second transport default permits the 120-second operation plus
+        five seconds of transport overhead; it grants no new native work time.
+        An explicit shorter timeout stays the caller's original deadline."""
         record = endpoint
         endpoint, port = checked_endpoint(record)
         legacy = record is not endpoint

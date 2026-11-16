@@ -9,6 +9,7 @@ struct BridgeService {
     body: Mutex<Option<String>>,
     bytes: Vec<u8>,
     read_refusal: Mutex<Option<&'static str>>,
+    deadlines: Mutex<Vec<u64>>,
 }
 impl BridgeService {
     fn new() -> Arc<Self> {
@@ -19,6 +20,7 @@ impl BridgeService {
             body: Mutex::new(None),
             bytes: serde_json::to_vec(&json!({"future_native":["é中",true,1],"ok":true})).unwrap(),
             read_refusal: Mutex::new(None),
+            deadlines: Mutex::new(Vec::new()),
         })
     }
     fn record(&self, name: &'static str) {
@@ -73,6 +75,7 @@ impl Service for BridgeService {
             ControlMethod::WindowClose { .. } => ControlResponse::WindowClosed {},
             ControlMethod::WindowRenew { .. } => ControlResponse::WindowRenewed { ttl_ms: 30000 },
             ControlMethod::AdminNativeOpen { deadline_ns } => {
+                self.deadlines.lock().unwrap().push(deadline_ns);
                 assert!(deadline_ns > 0);
                 self.record("open");
                 self.gate.pass();
@@ -90,6 +93,7 @@ impl Service for BridgeService {
             } => {
                 assert_eq!(session, Self::secret());
                 assert_eq!(request_id, id(10).parse().unwrap());
+                self.deadlines.lock().unwrap().push(deadline_ns);
                 assert!(deadline_ns > 0);
                 *self.body.lock().unwrap() = Some(body.get().to_owned());
                 self.record("call");
@@ -294,4 +298,46 @@ fn native_admin_midstream_auth_end_preserves_unknown_effects_and_prevents_reopen
         assert_eq!(exit, 0);
         assert!(!text.contains(&"A".repeat(43)) && !text.contains(&"E".repeat(43)));
     }
+}
+
+/// The shared fixture's AdminCall rows traverse actual native-session admission.
+pub(super) fn observed_transport_budget_cases() -> Vec<Value> {
+    let expected: Value = serde_json::from_str(TRANSPORT_BUDGET).unwrap();
+    let mut observed = Vec::new();
+    for case in expected["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["json"]["request"].get("admin_call").is_some())
+    {
+        let deadline = case["json"]["request"]["admin_call"]["deadline_ms"]
+            .as_u64()
+            .unwrap();
+        let clock = Arc::new(ManualClock::default());
+        clock.advance(17);
+        let service = BridgeService::new();
+        let mut client = client(&clock, &service);
+        let reply = client.ask(&case["json"]);
+        let accepted = reply["outcome"]["status"] == "admin_chunk";
+        assert_eq!(
+            accepted,
+            case["valid"].as_bool().unwrap(),
+            "{}: {reply}",
+            case["name"]
+        );
+        if accepted {
+            assert_eq!(
+                *service.deadlines.lock().unwrap(),
+                vec![(17 + deadline) * 1_000_000; 2]
+            );
+        } else {
+            assert_eq!(reply, failure(10, "session_invalid_request", false));
+            assert!(service.deadlines.lock().unwrap().is_empty());
+        }
+        assert_eq!(client.eof().1, 0);
+        let mut row = case.clone();
+        row["valid"] = json!(accepted);
+        observed.push(row);
+    }
+    observed
 }

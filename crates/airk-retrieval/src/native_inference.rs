@@ -115,3 +115,6 @@ mod evaluation {
 pub use evaluation::EvaluationScope;
 #[cfg(feature = "test-support")]
 pub(crate) use evaluation::lease as evaluation_model_lease;
+
+#[cfg(test)]
+pub(crate) mod fixture;

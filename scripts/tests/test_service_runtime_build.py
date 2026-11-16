@@ -617,6 +617,29 @@ class SplitPairBuildTests(unittest.TestCase):
             self.assertEqual(targets, [str(root / "AIRK.app/Contents/MacOS/airkctl"), str(root / "AIRK.app"), str(root / "AIRK.app")])
             self.assertIn("--verify", signing.call_args_list[2].args[0])
 
+    def test_generated_budget_bytes_invalidate_runtime_source_identity_without_admitting_neighbors(self):
+        builder = load_builder("budget_source_builder")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            budget = root / "packages/vscode/src/generated/arbiterBudget.ts"
+            budget.parent.mkdir(parents=True)
+            original_bytes = b"export const READ_OPERATION_DEADLINE_MS = 120000;\n"
+            budget.write_bytes(original_bytes)
+            neighbor = budget.with_name("unreviewedBudget.ts")
+            neighbor.write_bytes(b"private unrelated source")
+            # Exercise the real Git pathspec selection, including untracked public
+            # generation outputs. A mocked listing could hide a missing source row.
+            with mock.patch.object(builder, "ROOT", root):
+                before = builder.source_identity()
+                self.assertEqual(before["files"], 1)
+                neighbor.write_bytes(b"changed unrelated source")
+                self.assertEqual(builder.source_identity(), before)
+                budget.write_bytes(b"export const READ_OPERATION_DEADLINE_MS = 120001;\n")
+                self.assertNotEqual(builder.source_identity()["sha256"], before["sha256"])
+                budget.write_bytes(original_bytes)
+                self.assertEqual(builder.source_identity(), before)
+
     def test_source_identity_covers_frontend_production_inputs(self):
         builder = load_builder("split_source_builder")
         with tempfile.TemporaryDirectory() as temporary:

@@ -7,6 +7,7 @@
 // views are written out here, never derived from the code under test.
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import { AirkctlCommandError } from '../airkctl/session';
 import { agentEntries, endpointOf, WindowAgents, type AgentScopeSource } from '../airkctl/features/windowAgents';
 
 const folder = '/work/app', docs = '/work/docs', url = 'https://127.0.0.1:5000/mcp';
@@ -41,10 +42,12 @@ function agents(answers: Record<string, Answer>, folders: string[] = [folder, do
 const names: AgentScopeSource['choiceInfo'] = (_kind, id) => id === prj(1) ? { name: 'Application set', description: 'Services & <UI>' } : id === idx(5) ? { name: 'Docs' } : undefined;
 
 test('U110 Agents reads entries, the endpoint and the workspace default of each window folder, with the complete native reports', async () => {
-    const f = agents({ 'agents list': () => report, 'agents endpoint': () => endpoint, 'scope defaults': () => defaults }, [folder, docs, '/elsewhere'],
+    const f = agents({ 'agents list': () => report, 'agents endpoint': () => endpoint, 'agents manual': argv => ({client:argv[3],scope:'project',file:'/work/app/native-target',format:'json',text:'native exact text\n'}), 'scope defaults': () => defaults }, [folder, docs, '/elsewhere'],
         { agentDefaultScope: () => ({ index_ids: [idx(5)], project_ids: [prj(1)] }), choiceInfo: names });
     const view = await f.host.read();
-    assert.deepEqual(f.calls, [['agents', 'list', '--project', folder, '--no-user'], ['agents', 'endpoint'], ['scope', 'defaults']]);
+    assert.deepEqual(f.calls, [['agents', 'list', '--project', folder, '--no-user'], ['agents', 'endpoint'], ['agents', 'manual', '--client', 'claude', '--project', folder], ['agents', 'manual', '--client', 'codex', '--project', folder], ['agents', 'manual', '--client', 'vscode', '--project', folder], ['scope', 'defaults']]);
+    assert.deepEqual(view.manual.map(entry=>entry.client),['claude','codex','vscode']);
+    assert.ok(view.manual.every(entry=>entry.text==='native exact text\n'));
     assert.equal(view.folder, folder);
     assert.deepEqual(view.folders, [folder, docs, '/elsewhere']);
     assert.deepEqual(view.entries, [
@@ -122,4 +125,17 @@ test('U110 Remove deletes only this folder\'s project entries for that agent, as
     const before = f.calls.length;
     await assert.rejects(f.host.read(), (error: any) => error.code === 'service_missing');
     assert.equal(f.calls.length + empty.calls.length, before);
+});
+
+test('typed automatic refusal keeps the complete original result and native manual entry without storing scope', async () => {
+ const manual={client:'claude' as const,scope:'project' as const,file:'/work/app/.mcp.json',format:'json' as const,text:'native exact entry\n'};
+ const refusal={reason:'automatic_policy',file:manual.file,detail:'parent grants foreign mutation',manual};
+ const original:any={exitCode:1,class:'refused',stdout:'',stderr:'',error:{airkctl_error:1,class:'refused',code:'agent_config_manual_required',message:'Manual edit required',retryable:false,native:refusal}};
+ const f=agents({'agents connect':()=>{throw new AirkctlCommandError([],original);}},[folder],{agentDefaultScope:()=>({index_ids:[idx(1)],project_ids:[]})});
+ const result=await f.host.connect('claude');assert.equal(result.status,'refused');assert.strictEqual(result.connected,original);assert.strictEqual(result.refusal,refusal);assert.strictEqual(result.manual,manual);assert.deepEqual(f.calls,[['agents','connect','--client','claude','--project',folder]]);
+});
+test('malformed typed refusal is not treated as a safe manual fallback',async()=>{
+ const original:any={exitCode:1,class:'refused',stdout:'',stderr:'',error:{native:{reason:'automatic_policy',file:folder,detail:'refused',manual:{text:5}},message:'bad'}};
+ const failure=new AirkctlCommandError([],original),f=agents({'agents connect':()=>{throw failure;}});
+ await assert.rejects(f.host.connect('claude'),error=>error===failure);
 });

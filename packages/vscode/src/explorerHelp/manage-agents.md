@@ -12,6 +12,14 @@ Agents connects coding agents to this window's folder. Choose the agent (Claude 
 
 The endpoint line shows the local MCP address (`https://127.0.0.1:PORT/mcp`) with **Copy**. The endpoint needs no token or credential: there is no connection to create, renew or revoke. It is local HTTPS with AIRK's own certificate; AIRK Admin › Agents shows certificate trust and manual configuration for each agent. Any local process that can reach 127.0.0.1 can read your indexes through it.
 
+## Set up manually
+
+**Set up manually** is always available for the selected agent. It shows the exact native target path and complete JSON or TOML entry. **Copy complete entry** copies those same bytes. Merge the AIRK entry into the named file while keeping your other servers and settings.
+
+Automatic editing can be refused when AIRK cannot safely retain the complete old file and its recovery copy, including a folder other accounts can change. The manual section opens with an explanation; **Details** retains the typed refusal and original diagnostic. A concurrent edit or unknown outcome requires reviewing the current file before changing it again. No folder permissions are changed to make an automatic edit eligible.
+
+A port change requires a fresh entry. Copy it from this view again, or run `airkctl agents endpoint`. For a selected target, use `airkctl agents manual --client claude --project PROJECT`; replace `claude` with `codex` or `vscode`, and use `--user` for a supported user-level target.
+
 ## Which indexes an agent reads
 
 Agents choose the scope on each call. Read tools take `index_ids` and `index_set_ids` (ids or names, read as a union) and `workspace` (an absolute folder path). `list_scopes` lists the indexes and index sets with their descriptions, and the stored workspace defaults.

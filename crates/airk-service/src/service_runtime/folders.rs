@@ -232,8 +232,22 @@ pub(super) fn starting_list(
     drives: &[PathBuf],
     home: Option<PathBuf>,
 ) -> Result<FolderListing> {
-    for path in drives.iter().chain(home.iter()).chain(marks.data.iter()) {
-        require_public_folder(path)?;
+    starting_list_with_check(marks, drives, home, require_public_folder)
+}
+
+fn starting_list_with_check(
+    marks: &Marks,
+    drives: &[PathBuf],
+    home: Option<PathBuf>,
+    mut check_location: impl FnMut(&Path) -> Result<()>,
+) -> Result<FolderListing> {
+    // Native OS drive inventory is presentation, not permission to access a
+    // folder. Never open/canonicalize a disconnected drive while listing it.
+    for drive in drives {
+        require_public_folder_name(drive)?;
+    }
+    for path in home.iter().chain(marks.data.iter()) {
+        check_location(path)?;
     }
     let mut entries = Vec::new();
     for drive in drives {
@@ -411,11 +425,17 @@ fn walk(path: &Path) -> Result<(Vec<Found>, bool)> {
     Ok((found, false))
 }
 
-fn require_public_folder(path: &Path) -> Result<()> {
-    let private =
-        |path: &Path| airk_core::source_policy::retained_agent_edit_path(&path.to_string_lossy());
-    if private(path) || path.canonicalize().is_ok_and(|resolved| private(&resolved)) {
+fn require_public_folder_name(path: &Path) -> Result<()> {
+    if airk_core::source_policy::retained_agent_edit_path(&path.to_string_lossy()) {
         bail!("{NOT_READABLE}: private retained configuration folders cannot be listed");
+    }
+    Ok(())
+}
+
+fn require_public_folder(path: &Path) -> Result<()> {
+    require_public_folder_name(path)?;
+    if let Ok(resolved) = path.canonicalize() {
+        require_public_folder_name(&resolved)?;
     }
     Ok(())
 }

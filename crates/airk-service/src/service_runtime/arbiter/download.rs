@@ -397,6 +397,26 @@ mod tests {
             )))))
         }
     }
+    /// A real body can transfer a prefix and then stop producing frames. The
+    /// virtual clock exercises the existing idle bound without wall-clock sleeps.
+    struct StalledAfterData(bool);
+    impl http_body::Body for StalledAfterData {
+        type Data = bytes::Bytes;
+        type Error = std::convert::Infallible;
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<std::result::Result<http_body::Frame<Self::Data>, Self::Error>>>
+        {
+            if std::mem::replace(&mut self.get_mut().0, true) {
+                std::task::Poll::Pending
+            } else {
+                std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from_static(
+                    b"hello",
+                )))))
+            }
+        }
+    }
     #[test]
     fn native_emitted_canonical_source_cases_enter_transport_without_invented_backups() -> Result<()>
     {
@@ -534,7 +554,7 @@ mod tests {
         );
         Ok(())
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn streamed_part_hash_and_length_failures_never_publish_logical_asset() -> Result<()> {
         use airk_store::service::{
             ServiceLease,
@@ -650,6 +670,23 @@ mod tests {
             .join("stage-1")
             .join(&profile.assets[3].name);
         assert_eq!(std::fs::metadata(untouched)?.len(), 0);
+        let mut stalled = transaction
+            .asset(&profile.assets[4])?
+            .context("missing stalled stage")?;
+        let whole = AssetPart {
+            bytes: 10,
+            sha256: airk_core::identity::Sha256Digest::from_bytes(
+                Sha256::digest(b"helloworld").into(),
+            ),
+            ..first.clone()
+        };
+        let idle_started = tokio::time::Instant::now();
+        let failure = consume(StalledAfterData(false), &whole, &mut stalled)
+            .await
+            .expect_err("stalled partial body must expire");
+        assert!(matches!(failure, Failure::Source(_)));
+        assert_eq!(idle_started.elapsed(), Duration::from_secs(30));
+        assert!(transaction.publish(stalled).is_err());
         drop(transaction);
         assert_eq!(store.phase(&profile)?, Some(Phase::Failed));
         assert!(store.pin(&profile).is_err());

@@ -288,6 +288,39 @@ The original U95 `airk.split.parity/1` captures and their approved recorded
 limitations remain historical replay evidence. Their explicitly named legacy
 hex-token comparison does not establish strict v2 transport parity.
 
+### Current native Status observation clocks in CLI parity
+
+The current tools parity tests compare actual native handler results with CLI
+and shell output; they do not replay or rewrite the historical U95 captures.
+Their added Status timing rule applies only to the direct native Status body
+whose `work.basis` is `instance_bound_service_metadata`. It covers exactly
+`/work/progress_sampled_unix_ms` and `/work/progress_observation_age_ms`, also
+inside the MCP envelope's parsed `/content/*/text` and `/structuredContent`.
+A document or evidence field with the same name is not normalized.
+
+Before comparison, the tests decode the original Core worker and job identities
+and reconcile their project and progress-counter job identity. The original
+`work.observed_unix_ms` must lie within the measured interval from the native
+call's dispatch through CLI completion. The registry sample clock must lie
+between that dispatch and the status source clock. A present progress age must
+exactly equal the source clock minus the retained progress observation clock;
+future observations, missing or inconsistent ages and invalid sample clocks
+refuse. Only after these checks do the two additional clock values receive
+comparison markers. Existing request/cache observation rules remain unchanged.
+Job state, queue membership, counters, publication/source/model digests and
+unknown result fields remain exact. Literal controls reject inconsistent clocks
+and prove that changed job state, counters or source hashes cannot compare equal.
+
+A tools-owned quiescence barrier observes the original fixture's automatic audit
+scheduler as well as source/semantic/setup intent and accepted pending/running
+jobs. This matters because the ordinary settlement helper's final Diagnostics
+read can create a due Verify audit after its earlier queue check. The barrier
+waits on actual native observations and verifies the observed audit's successful
+completion under the same original 90-second deadline. It adds no jobs, pause,
+fixed sleeps, retries of failed evidence reads or state normalization. These
+checks establish the exercised current native/CLI/shell boundaries; installed
+clients, other platforms and final candidate qualification retain their own gates.
+
 ### Current /2 Answer comparison boundary
 
 Fresh Answer transport tests validate each complete raw ContextResponseV2 with

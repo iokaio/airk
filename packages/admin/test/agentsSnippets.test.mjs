@@ -10,15 +10,21 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
-const bundle = await build({ stdin: { contents: `export { claudeJson, codexToml, vscodeJson } from './agents';`, resolveDir: src, sourcefile: 'u110-snippets.ts' },
+const bundle = await build({ stdin: { contents: `export { manualEntriesOf } from './agents';`, resolveDir: src, sourcefile: 'u110-snippets.ts' },
   bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
-const { claudeJson, codexToml, vscodeJson } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const { manualEntriesOf } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 const url = 'https://127.0.0.1:61021/mcp';
 
-test('U110 Claude Code, VS Code and Codex snippets name only the URL and the response-mode header', () => {
-  assert.deepEqual(JSON.parse(claudeJson(url)), { mcpServers: { airk: { type: 'http', url, headers: { 'X-AIRK-Response-Mode': 'terse' } } } });
-  assert.deepEqual(JSON.parse(vscodeJson(url)), { servers: { airk: { type: 'http', url, headers: { 'X-AIRK-Response-Mode': 'terse' } } } });
-  assert.equal(codexToml(url), `[mcp_servers.airk]\nurl = "${url}"\n\n[mcp_servers.airk.http_headers]\n"X-AIRK-Response-Mode" = "terse"\n`);
+test('native manual entries preserve exact text, target and format, while malformed rows stay unavailable', () => {
+  const entries=[{client:'claude',scope:'project',file:'/work/a & b/.mcp.json',format:'json',text:'{\n  "mcpServers": {}\n}\n'},
+    {client:'codex',scope:'user',file:'/home/a/.codex/config.toml',format:'toml',text:'[mcp_servers.airk]\nurl = "https://127.0.0.1:61021/mcp"\n'},
+    {client:'vscode',scope:'project',file:'.vscode/mcp.json',format:'json',text:'{"servers":{}}\n'}];
+  const response={phase:'done',result:{kind:'ok',envelope:{result:{manual:entries}}}};
+  assert.deepEqual(manualEntriesOf(response),entries);
+  for(const entry of entries)assert.strictEqual(manualEntriesOf(response).find(row=>row.client===entry.client),entry);
+  const invalid=[null,{}, {...entries[0],text:42},{...entries[0],format:'xml'},{...entries[0],client:'unknown'}];
+  assert.deepEqual(manualEntriesOf({phase:'done',result:{kind:'ok',envelope:{result:{manual:invalid}}}}),[]);
+  assert.deepEqual(manualEntriesOf({phase:'idle'}),[]);
 });
 
 test('U110 the Agents page source offers no credential, revoke or connection-id flow', async () => {

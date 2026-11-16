@@ -3,7 +3,8 @@
 import type { PublicationRelation } from './publications';
 import type {CapabilityFieldDisplay} from './nativeMetadataCodec';
 import type { Budget } from './generated/arbiter';
-export const WORKBENCH_CONTEXT_BUDGET: Readonly<Budget> = Object.freeze({ calls: 8, rounds: 3, fanout: 8, input_tokens: 2048, candidates: 32, max_bytes: 262144, deadline_ms: 30000 });
+import { DEFAULT_CONTEXT_BUDGET } from './generated/arbiterBudget';
+export const WORKBENCH_CONTEXT_BUDGET: Readonly<Budget> = Object.freeze({ ...DEFAULT_CONTEXT_BUDGET });
 export type Value = Record<string, unknown>;
 /** Core workbench::MAX_STEP_REPORTS: twelve calls with six bound report slots. */
 export {WORKBENCH_MAX_STEP_REPORTS} from './nativeMetadataCodec';

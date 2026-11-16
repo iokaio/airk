@@ -79,3 +79,13 @@ payloads. The existing exact owner/thread-local evaluation lease remains the
 separate private exception. Independent controls use the owning metadata planner
 and shared-set sealer to recompute legitimate set identities with wrong neural
 lengths; metadata descriptor equality alone cannot establish active eligibility.
+
+Native component qualification fixtures retain an actual Store ServiceLease and
+its admitted compute scope through every model call and session teardown. Store
+is a test-only development dependency; production crate edges are unchanged. The
+shared test guard creates fresh private control storage, grants no serialized or
+environment execution role, and releases the thread scope before its native lease.
+The existing parallel/cache, INT8 normalization and tail-retrieval cases retain
+their identities and complete original assertions. The all-profile INT8 case
+uses the provisioner's AIRK_BUNDLED_MODEL_DIR root when explicitly supplied;
+ordinary asset/catalog/ABI verification and the existing fallback remain intact.

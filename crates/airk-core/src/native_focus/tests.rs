@@ -38,7 +38,7 @@ fn request() -> Result<NativeFocusRequest> {
             remaining_ns: 30_000_000_000,
             native_retry_expires_monotonic_ns: None,
         },
-        parent_budget: Budget::default(),
+        parent_budget: historical_budget(),
         worker: WorkerIdentity {
             service: Incarnation::from_bytes([23; 16]),
             worker: Incarnation::from_bytes([24; 16]),
@@ -75,6 +75,20 @@ fn validate(request: &NativeFocusRequest) -> Result<Duration> {
         100,
     )
 }
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
+    }
+}
+
 #[test]
 fn original_worker_scope_clock_and_attempt_are_required_before_focus() -> Result<()> {
     let original = request()?;

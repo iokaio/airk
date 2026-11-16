@@ -583,6 +583,23 @@ absent.
 | MCP roots | HTTPS MCP session | When a read names no selectors and no `workspace` and the client declared `roots`, the session sends `roots/list` (once per session after initialization, refreshed on `notifications/roots/list_changed`, bounded 2 s wait) and uses the first `file:` root as `workspace`; no roots leaves the call unchanged | Served. Roots are deprecated by SEP-2577 in newer MCP protocol versions; explicit `workspace` is the primary path |
 | Agent configuration | `airkctl::agents::config` | `agents connect` writes only the URL and `X-AIRK-Response-Mode: terse`; entries are recognized by URL. `agents list` classifies an entry still carrying `Authorization`, `headersHelper`, `http_headers_helper` or `bearer_token_env_var` as `https_unknown_connection` with a repair detail; `agents repair` strips those fields and the unused VS Code credential input. `--connection-id`/`--selection-file` on connect are refused; `--open` is accepted and ignored | Served |
 
+
+**Open Workbench authority (Arbiter final plan, Steps 2–3).** The native
+Workbench runner receives an explicit authority basis from its admitted
+session owner: Project selection for catalog/window/Admin sessions, open named
+whole indexes for the agent session. Client input, an empty Project array or a
+plan cannot select this basis. The existing Project API/catalog remain
+unchanged. Open plans validate with Core's open-selection rules, freeze their
+outer index set and scope identity across prepare/execute, and refuse Project
+selectors, per-step index narrowing/widening and member-availability changes.
+Their operation catalog describes named indexes without Project-only schema
+requirements; a catalog grants no read authority. An origin-bound open
+follow-up requires that origin's index to be the already named singleton outer
+scope, otherwise it reports the missing originating-index scope and starts no
+narrowed read. Complete results, source bounds, original budgets, final delivery
+receipts and no-replay behavior retain their existing owners. No wire fields,
+existing digest inputs or persisted encodings change.
+
 ## 3. I2 — `airkctl` command contract
 
 ### 3.1 Inventory row

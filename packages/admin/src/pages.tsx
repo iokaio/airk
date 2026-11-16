@@ -17,10 +17,13 @@ import {
   Panel,
   resultOf,
   useCall,
+  type CallState,
 } from './render';
 import { ProgressPanel } from './progress';
 import { generatedAction } from './generatedActions';
 import { currentSession } from './session';
+import { useContext } from 'preact/hooks';
+import { PageVisible } from './pageVisibility';
 import type { CallResult } from './api';
 
 /** U103: live progress of one registered index, chosen from the catalog names. */
@@ -262,14 +265,51 @@ function LoginStartup(): JSX.Element {
   );
 }
 
+/** Presentation-only native field projection; the complete ResourceSnapshot stays in Details. */
+export function resourceSummaryOf(value: unknown): readonly [string, string][] {
+  if (field(value, 'status') !== 'resources') return [];
+  const snapshot = field(value, 'observation'), configuration = field(snapshot, 'configuration');
+  const count = (value: unknown): string => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : 'Unavailable';
+  const quantity = (name: string): string => count(field(snapshot, name));
+  const bytes = (value: unknown): string => {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return 'Unavailable';
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']; let size = value, unit = 0;
+    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+    return `${unit ? size.toFixed(1) : size} ${units[unit]}`;
+  };
+  const memory = (name: string): string => bytes(field(snapshot, name));
+  const readiness = field(snapshot, 'provider_drain_error') === true ? 'Provider recovery needs attention'
+    : field(snapshot, 'pressure') === true ? 'Memory pressure: background work may wait'
+    : field(snapshot, 'telemetry_complete') === true && field(snapshot, 'pressure') === false && field(snapshot, 'provider_drain_error') === false ? 'Current resource observations available'
+    : 'Resource observations incomplete or unavailable';
+  return [
+    ['Concurrent evidence requests', count(field(configuration, 'query_concurrency'))],
+    ['CPU and workers', `${quantity('logical_cpus')} logical CPUs; ${quantity('resident_workers')} of ${quantity('resident_limit')} resident worker slots`],
+    ['Service memory in use', memory('observed_rss_bytes')],
+    ['System memory available', `${memory('available_memory_bytes')} available; ${memory('detected_memory_bytes')} detected total`],
+    ['Configured memory reservation', `${memory('memory_reserved_bytes')} reserved of ${memory('memory_limit_bytes')}; ${memory('query_headroom_bytes')} query headroom`],
+    ['Work', `${quantity('running_jobs')} running jobs; ${quantity('waiting_projects')} waiting indexes`],
+    ['Resources', readiness],
+  ];
+}
+
+function ResourceSummary(props: { state: CallState }): JSX.Element {
+  if (props.state.phase === 'pending') return <p role="status">Reading current CPU, memory and request capacity...</p>;
+  const rows = resourceSummaryOf(resultOf(props.state));
+  if (!rows.length) return <p role="status">Resource status is unavailable. Refresh resources to try again; Details retains the complete outcome.</p>;
+  return <><dl class="summary">{rows.map(([label, value]) => <><dt>{label}</dt><dd>{value}</dd></>)}</dl>
+    <p class="muted">Reservations are service policy limits. They do not establish a model's measured memory use or qualification.</p></>;
+}
+
 export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => void }): JSX.Element {
-  const [view, setView] = useState<'resources' | 'tls' | 'startup' | 'lifecycle'>('resources');
+  const visible = useContext(PageVisible);
   const [resources, runResources] = useCall();
   const [trust, runTrust] = useCall();
   const [rotation, runRotation] = useCall();
   const [lifecycle, runLifecycle] = useCall();
   const [, changed] = useState(0);
   const session = currentSession();
+  useEffect(() => { if (visible && session !== null) void runResources(OPS.resources, body.resources()); }, [visible, session]);
   const lifetime = useRef<{ session: unknown; owner: ReturnType<typeof generatedAction> | null } | null>(null);
   if (lifetime.current?.session !== session) {
     lifetime.current?.owner?.dispose();
@@ -295,17 +335,16 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
   };
   return (
     <>
-      <div class="actions" aria-label="Service settings views">{([['resources', 'Resources'], ['tls', 'TLS and trust'], ['startup', 'Start at sign-in'], ['lifecycle', 'Restart or stop']] as const).map(([id, label]) =>
-        <button type="button" class={view === id ? '' : 'secondary'} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div>
-      <div hidden={view !== 'resources'}>
+      <p>Check current resources, manage optional Arbiter models, or choose a service task below.</p>
       <Panel title="Resources">
         <button type="button" onClick={() => void runResources(OPS.resources, body.resources())}>
-          Load
+          {resources.phase === 'pending' ? 'Reading resources...' : 'Refresh resources'}
         </button>
-        <Outcome state={resources} />
+        {resources.phase === 'done' ? <p class="muted">Last observed {new Date(resources.at).toLocaleTimeString()}. Refresh after changing models or service settings.</p> : null}
+        <ResourceSummary state={resources} />
+        <details><summary>Details: complete resource result</summary><Outcome state={resources} /></details>
       </Panel>
-      </div>
-      <div hidden={view !== 'tls'}>
+      <details><summary>HTTPS and certificate trust</summary>
       <Panel title="HTTPS issuer">
         <div class="row">
           <button type="button" onClick={() => void runTrust(OPS.trustStatus, body.trustStatus())}>
@@ -323,11 +362,11 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
         <Command text="airkctl service trust remove --expected-ca-sha256 <issuer-sha256>" />
         <Command text="airkctl service issuer-rotation status" />
       </Panel>
-      </div>
-      <div hidden={view !== 'startup'}>
+      </details>
+      <details><summary>Start AIRK when I sign in</summary>
       <LoginStartup />
-      </div>
-      <div hidden={view !== 'lifecycle'}>
+      </details>
+      <details><summary>Restart or stop AIRK</summary>
       <Panel title="Stop or prepare to restart">
         <p>
           Both actions stop the service and end this management session. Stop for restart records the restart
@@ -343,7 +382,7 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
           : retained?.capacity ? <p role="status">This session holds the limit of unresolved generated actions. Inspect saved requests before another lifecycle action.</p> : null}
         <Outcome state={lifecycleState} />
       </Panel>
-      </div>
+      </details>
     </>
   );
 }

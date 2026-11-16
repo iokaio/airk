@@ -64,7 +64,7 @@ test('restart guidance explains the local start before confirmation and after na
 test('R20 lifecycle body-loss unknown blocks fresh Stop and Restart keys', async () => {
   const fetch = globalThis.fetch; let calls = 0;
   globalThis.__lifecycleSession = { csrf: 'private-fixture', serviceInstance: 'fixture' };
-  globalThis.fetch = async () => { calls++; return { status: 200, text: async () => { throw Error('body rejected'); } }; };
+  globalThis.fetch = async url => { if (!String(url).endsWith('/service.resources')) calls++; return { status: 200, text: async () => { throw Error('body rejected'); } }; };
   const mounted = host();
   try { confirm(mounted.render())(); await settle(mounted.hooks); confirm(mounted.render())(); confirm(mounted.render(), 'Restart')(); await settle(mounted.hooks); assert.equal(calls, 1); }
   finally { mounted.close(); globalThis.fetch = fetch; }
@@ -72,7 +72,7 @@ test('R20 lifecycle body-loss unknown blocks fresh Stop and Restart keys', async
 test('R20 lifecycle same-session remount retains unknown original action and full transport status', async () => {
   const fetch = globalThis.fetch; let calls = 0;
   globalThis.__lifecycleSession = { csrf: 'private-fixture', serviceInstance: 'fixture' };
-  globalThis.fetch = async () => { calls++; return { status: 202, text: async () => { throw Error('body rejected'); } }; };
+  globalThis.fetch = async url => { if (!String(url).endsWith('/service.resources')) calls++; return { status: 202, text: async () => { throw Error('body rejected'); } }; };
   const first = host(), next = host();
   try {
     confirm(first.render())(); await settle(first.hooks); first.close();
@@ -85,8 +85,15 @@ test('R20 lifecycle admits one in-flight original action before rendering', asyn
   const fetch = globalThis.fetch; let calls = 0, release;
   const pending = new Promise((_resolve, reject) => { release = () => reject(Error('body rejected')); });
   globalThis.__lifecycleSession = { csrf: 'private-fixture', serviceInstance: 'fixture' };
-  globalThis.fetch = async () => { calls++; return { status: 200, text: () => pending }; };
+  globalThis.fetch = async url => { if (!String(url).endsWith('/service.resources')) calls++; return { status: 200, text: () => pending }; };
   const mounted = host();
   try { const tree = mounted.render(); confirm(tree)(); confirm(tree, 'Restart')(); const observed = calls; release(); await settle(mounted.hooks); assert.equal(observed, 1); }
   finally { mounted.close(); globalThis.fetch = fetch; }
+});
+
+test('Service reads resources on opening, independently of lifecycle mutations', async () => {
+ const fetch=globalThis.fetch,urls=[];globalThis.__lifecycleSession={csrf:'private-fixture',serviceInstance:'resource-fixture'};
+ globalThis.fetch=async url=>{urls.push(String(url));return {status:200,text:async()=>{throw Error('offline');}};};
+ const mounted=host();try {mounted.render();await settle(mounted.hooks);assert.deepEqual(urls,['/admin/api/v1/call/service.resources']);mounted.render();assert.equal(urls.length,1);}
+ finally {mounted.close();globalThis.fetch=fetch;}
 });

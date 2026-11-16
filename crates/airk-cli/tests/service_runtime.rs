@@ -3688,7 +3688,7 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
         let private = serde_json::from_value(draft)?;
         let refused = airk_cli::service_runtime::request(&root, private).await?;
         ensure!(
-            matches!(&refused, Response::Failure { code } if code == "invalid_registry_request"),
+            matches!(&refused, Response::Failure { code } if code == "index_setup_paths_overlap"),
             "native log location was admitted as source or refused for an unrelated reason: {}", serde_json::to_string(&refused)?
         );
         airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
@@ -4606,9 +4606,11 @@ fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Resu
     let version = env!("CARGO_PKG_VERSION");
     let _guard = ShutdownOnDrop(dir.clone());
     airkctl::start::start(airk, &root, version)
-        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))
+        .context("first-start admitted service start")?;
     let catalog = airk_store::service::registry::ServiceRegistry::open_saved(&root)?
-        .catalog_state()?
+        .catalog_state()
+        .context("first-start saved catalog observation")?
         .context("the first start created no index catalog")?;
     ensure!(catalog.authority_contract == 1 && catalog.activated);
     let page = airkctl::service::request(
@@ -4626,7 +4628,8 @@ fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Resu
         },
         version,
     )
-    .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))
+    .context("first-start empty catalog page")?;
     let ControlResponse::CatalogPage { page, .. } = page else {
         anyhow::bail!(
             "the index library did not answer: {}",
@@ -4638,7 +4641,8 @@ fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Resu
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let launch = airkctl::service::request(&root, ControlMethod::AdminLaunchCode {}, version)
-            .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+            .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))
+            .context("first-start Admin listener launch code")?;
         match launch {
             ControlResponse::AdminLaunchCode { .. } => break,
             ControlResponse::Failure { code } if code == "admin_listener_unavailable" => {
@@ -4668,7 +4672,8 @@ fn an_installed_first_start_creates_the_index_catalog_and_serves_admin() -> Resu
             },
             version,
         )
-        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))
+        .with_context(|| format!("first-start folder browse path={path:?}"))?;
         let ControlResponse::FolderListing { listing } = listed else {
             anyhow::bail!("no folder listing: {}", serde_json::to_string(&listed)?);
         };

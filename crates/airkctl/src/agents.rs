@@ -31,8 +31,12 @@ fn native_refusal(response: &ControlResponse) -> ErrorLine {
 
 fn answer(response: ControlResponse) -> Result<Value, ErrorLine> {
     match response {
-        ControlResponse::AgentEndpoint { endpoint } => {
-            serde_json::to_value(endpoint).map_err(|error| refused(&error.to_string()))
+        ControlResponse::AgentEndpoint { endpoint, manual } => {
+            let mut value =
+                serde_json::to_value(endpoint).map_err(|error| refused(&error.to_string()))?;
+            value["manual"] =
+                serde_json::to_value(manual).map_err(|error| refused(&error.to_string()))?;
+            Ok(value)
         }
         ControlResponse::AgentConnectionInfo { connection } => {
             serde_json::to_value(connection).map_err(|error| refused(&error.to_string()))

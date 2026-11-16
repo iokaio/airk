@@ -46,6 +46,8 @@ pub fn document() -> serde_json::Value {
     root::<ServiceStatus>(&mut generator, &mut roots);
     root::<super::SetupReceiptObservation>(&mut generator, &mut roots);
     root::<super::Entry>(&mut generator, &mut roots);
+    root::<airk_core::agent_manual::AgentManualEntry>(&mut generator, &mut roots);
+    root::<airk_core::agent_manual::AgentConfigRefusal>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

@@ -14,16 +14,17 @@ SPEC.loader.exec_module(driver)
 
 class IssuerRotationCampaignTests(unittest.TestCase):
     def test_os_trust_mutation_is_never_a_driver_action(self):
-        fixture = SimpleNamespace(install=Path("owned"), run=Mock())
+        fixture = SimpleNamespace(install=Path("owned"), run=Mock(side_effect=AssertionError("Private runtime must use the service image")), service_run=Mock())
         with self.assertRaisesRegex(AssertionError, "OS trust mutation"):
             driver.rotation(fixture, "trust-new")
-        fixture.run.assert_not_called()
+        fixture.run.assert_not_called(); fixture.service_run.assert_not_called()
 
     def test_mutation_uses_exact_reviewed_operation_and_receipt(self):
         receipt = {"schema": 1, "rotation": {"operation_id": "a" * 32}, "receipt_sha256": "b" * 64}
-        fixture = SimpleNamespace(install=Path("owned"), run=Mock(return_value=SimpleNamespace(stdout=json.dumps(receipt))))
+        fixture = SimpleNamespace(install=Path("owned"), run=Mock(side_effect=AssertionError("Private runtime must use the service image")), service_run=Mock(return_value=SimpleNamespace(stdout=json.dumps(receipt))))
         self.assertEqual(driver.rotation(fixture, "commit", receipt), receipt)
-        self.assertEqual(fixture.run.call_args.args, ("runtime", "http-issuer-rotation", "--install-dir", Path("owned"),
+        fixture.run.assert_not_called()
+        self.assertEqual(fixture.service_run.call_args.args, ("runtime", "http-issuer-rotation", "--install-dir", Path("owned"),
             "--action", "commit", "--operation-id", "a" * 32, "--expected-receipt-sha256", "b" * 64))
 
     def test_scope_can_advance_clock_but_not_replace_grant_or_projects(self):

@@ -72,9 +72,12 @@ pub(super) fn validate_request(purpose: SessionPurpose, request: &protocol::Quer
             "context partition attempt mismatch"
         );
         if partition.is_ordinary_focus() {
-            // Actual host clock/expiry refusal precedes storage and broker admission.
+            // Decode before sampling the comparison clock: decoding an expired
+            // zero-remaining budget must not produce a later Instant than an
+            // already-sampled left operand and accidentally admit storage work.
+            let original = airk_host::read_attempt::decode(*attempt)?;
             ensure!(
-                std::time::Instant::now() < airk_host::read_attempt::decode(*attempt)?.deadline(),
+                std::time::Instant::now() < original.deadline(),
                 "singleton Focus original read deadline expired"
             );
         } else {

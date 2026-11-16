@@ -204,6 +204,20 @@ fn overrun_token_budget() -> ContextResponseV2 {
     value
 }
 
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
+    }
+}
+
 #[test]
 fn current_request_preserves_all_public_maxima_but_refuses_other_versions_and_authority()
 -> Result<()> {
@@ -373,11 +387,11 @@ fn whole_card_reason_role_relevance_and_gap_must_agree() -> Result<()> {
     card.action = ContextAction::NoJustifiedRead;
     card.gap = Gap::Definition;
     card.reason = ContextReason::NoVerifiedUsefulRead;
-    assert!(terminal.validate(&Budget::default()).is_err());
+    assert!(terminal.validate(&historical_budget()).is_err());
     terminal.gaps = vec![Gap::Constraint];
-    assert!(terminal.validate(&Budget::default()).is_err());
+    assert!(terminal.validate(&historical_budget()).is_err());
     terminal.gaps = vec![Gap::Definition];
-    terminal.validate(&Budget::default())?;
+    terminal.validate(&historical_budget())?;
     Ok(())
 }
 
@@ -401,38 +415,38 @@ fn exact_unit_history_and_partition_prevent_stale_or_packed_sufficiency() -> Res
         reason: "Current policy is disabled; old work is an internal historical observation."
             .into(),
     }];
-    historical.validate(&Budget::default())?; // representation is NOT permission to deliver revoked NN data
+    historical.validate(&historical_budget())?; // representation is NOT permission to deliver revoked NN data
     assert_eq!(historical.records[0].scope.configuration_revision, 1);
     assert_eq!(historical.applications[0].scope.configuration_revision, 2);
     let mut foreign = historical.clone();
     foreign.applications[0].scope.authorization = digest(99);
-    assert!(foreign.validate(&Budget::default()).is_err());
+    assert!(foreign.validate(&historical_budget()).is_err());
     foreign = historical.clone();
     foreign.applications[0].scope.publication.revision = digest(99);
-    assert!(foreign.validate(&Budget::default()).is_err());
+    assert!(foreign.validate(&historical_budget()).is_err());
     historical.assessment_history[0].applicability = AssessmentApplicability::Current;
-    assert!(historical.validate(&Budget::default()).is_err());
-    response().validate(&Budget::default())?;
+    assert!(historical.validate(&historical_budget()).is_err());
+    response().validate(&historical_budget())?;
     for applicability in [
         AssessmentApplicability::HistoricalAfterRead,
         AssessmentApplicability::BasisOmitted,
     ] {
         let mut value = response();
         value.assessment_history[0].applicability = applicability;
-        assert!(value.validate(&Budget::default()).is_err());
+        assert!(value.validate(&historical_budget()).is_err());
     }
     let mut value = response();
     value.records.clear();
     value.paragraphs.clear();
     value.omitted_count = 1;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = response();
     value.assessment_history[0].partition.index_id =
         IndexId::from_identity(Incarnation::from_bytes([99; 16]));
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = response();
     value.records[0].canonical_result["hits"][0]["text"] = json!("changed");
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     Ok(())
 }
 
@@ -472,33 +486,33 @@ fn ordinals_are_sparse_global_subsets_not_a_one_assessment_cap_or_budget_reset()
         }
         old.assessment_history.push(later);
         old.work.input_tokens = 200;
-        assert!(old.validate(&Budget::default()).is_err());
+        assert!(old.validate(&historical_budget()).is_err());
         old.assessment_history[0].applicability = AssessmentApplicability::HistoricalAfterRead;
-        assert!(old.validate(&Budget::default()).is_err());
+        assert!(old.validate(&historical_budget()).is_err());
         old.assessment.coverage = PartitionCoverage::Unassessed {
             reason: AssessmentUnavailable::NewEvidence,
         };
         old.stop = PartitionTermination::NoProgress;
         old.assessment.termination = old.stop;
         old.gaps.clear();
-        old.validate(&Budget::default())?;
+        old.validate(&historical_budget())?;
     }
     let mut value = response();
     value.assessment_history[0].ordinal = 3;
     value.assessment.coverage = PartitionCoverage::Assessed { ordinal: 3 };
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     let mut early = value.assessment_history[0].clone();
     early.ordinal = 1;
     early.applicability = AssessmentApplicability::HistoricalAfterRead;
     value.assessment_history.insert(0, early);
     value.work.input_tokens = 200;
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     value.assessment_history[1].ordinal = 1;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     value.assessment_history[1].ordinal = 4;
     let budget = Budget {
         rounds: 4,
-        ..Budget::default()
+        ..historical_budget()
     };
     assert!(value.validate(&budget).is_err());
     Ok(())
@@ -523,12 +537,12 @@ fn unknown_postdispatch_work_blocks_later_optional_decisions_and_never_becomes_c
         work_unknown: true,
         advice: None,
     };
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     let mut later = response().assessment_history.remove(0);
     later.ordinal = 2;
     value.assessment_history.push(later);
     value.work.input_tokens = 200;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     Ok(())
 }
 
@@ -620,12 +634,12 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     full["transport_future"] = json!({"complete":[1,2,3]});
     full["publication"] = serde_json::to_value(&original.assessment.scope.publication)?;
     let before = full.clone();
-    ContextResponseV2::from_canonical(&full, &Budget::default())?;
+    ContextResponseV2::from_canonical(&full, &historical_budget())?;
     assert_eq!(full, before);
     full["publication"]["generation"] = json!(99);
-    assert!(ContextResponseV2::from_canonical(&full, &Budget::default()).is_err());
+    assert!(ContextResponseV2::from_canonical(&full, &historical_budget()).is_err());
     let decoded: ContextResponseV2 = serde_json::from_slice(&serde_json::to_vec(&original)?)?;
-    decoded.validate(&Budget::default())?;
+    decoded.validate(&historical_budget())?;
     assert_eq!(
         decoded.records[0].canonical_result,
         original.records[0].canonical_result
@@ -649,7 +663,7 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
         let mut value = serde_json::to_value(response())?;
         value["assessment_history"][0]["result"]["advice"]["work"][field] = json!(u64::MAX);
         let decoded: ContextResponseV2 = serde_json::from_value(value)?;
-        assert!(decoded.validate(&Budget::default()).is_err(), "{field}");
+        assert!(decoded.validate(&historical_budget()).is_err(), "{field}");
     }
     let mut measured = response();
     let AssessmentResult::Selected { advice, .. } = &mut measured.assessment_history[0].result
@@ -657,9 +671,9 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
         unreachable!()
     };
     advice.work.queue_us = Some(12);
-    assert!(measured.validate(&Budget::default()).is_err());
+    assert!(measured.validate(&historical_budget()).is_err());
     measured.work.queue_us = Some(12);
-    measured.validate(&Budget::default())?;
+    measured.validate(&historical_budget())?;
     let mut previous = measured.assessment_history[0].clone();
     previous.ordinal = 1;
     previous.applicability = AssessmentApplicability::HistoricalAfterRead;
@@ -667,9 +681,9 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     measured.assessment.coverage = PartitionCoverage::Assessed { ordinal: 3 };
     measured.assessment_history.insert(0, previous);
     measured.work.input_tokens = 200;
-    assert!(measured.validate(&Budget::default()).is_err());
+    assert!(measured.validate(&historical_budget()).is_err());
     measured.work.queue_us = Some(24);
-    measured.validate(&Budget::default())?;
+    measured.validate(&historical_budget())?;
     let mut overrun = response();
     let AssessmentResult::Selected { advice, .. } = &mut overrun.assessment_history[0].result
     else {
@@ -677,11 +691,11 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     };
     advice.work.queue_us = Some(30_000_001);
     overrun.work.queue_us = advice.work.queue_us;
-    assert!(overrun.validate(&Budget::default()).is_err());
+    assert!(overrun.validate(&historical_budget()).is_err());
     let failed = overrun_deadline();
-    failed.validate(&Budget::default())?;
+    failed.validate(&historical_budget())?;
     let decoded: ContextResponseV2 = serde_json::from_slice(&serde_json::to_vec(&failed)?)?;
-    decoded.validate(&Budget::default())?;
+    decoded.validate(&historical_budget())?;
     assert_eq!(decoded.work.queue_us, Some(30_000_001));
     let AssessmentResult::Unavailable { work, .. } = &decoded.assessment_history[0].result else {
         unreachable!()
@@ -701,27 +715,27 @@ fn joint_advice_rejects_next_read_masquerading_and_retains_complete_native_value
     overflow.assessment_history.push(later);
     overflow.work.input_tokens = 200;
     overflow.work.queue_us = Some(u64::MAX);
-    assert!(overflow.validate(&Budget::default()).is_err());
+    assert!(overflow.validate(&historical_budget()).is_err());
     let violation = overrun_token_budget();
-    violation.validate(&Budget::default())?;
+    violation.validate(&historical_budget())?;
     assert_eq!(violation.work.input_tokens, 2050);
     let mut false_success = violation.clone();
     false_success.stop = PartitionTermination::Covered;
     false_success.assessment.termination = false_success.stop;
     false_success.gaps = vec![Gap::Sufficient];
-    assert!(false_success.validate(&Budget::default()).is_err());
+    assert!(false_success.validate(&historical_budget()).is_err());
     let mut later = violation.clone();
     let mut event = response().assessment_history.remove(0);
     event.ordinal = 2;
     later.assessment_history.push(event);
     later.work.input_tokens = 2150;
-    assert!(later.validate(&Budget::default()).is_err());
+    assert!(later.validate(&historical_budget()).is_err());
     Ok(())
 }
 
 #[test]
 fn emit_context_action_semantic_cases() -> Result<()> {
-    let budget = Budget::default();
+    let budget = historical_budget();
     let mut cases = Vec::new();
     let mut add = |name: &str, input: ContextResponseV2, accepted: bool| -> Result<()> {
         assert_eq!(input.validate(&budget).is_ok(), accepted, "{name}");
@@ -817,18 +831,18 @@ fn nested_focus_costs_are_additive_and_unknown_work_cannot_support_current_conte
     packet.candidate_count = 2;
     packet.work.calls = 2;
     packet.work.candidates = 3;
-    assert!(packet.validate(&Budget::default()).is_err());
+    assert!(packet.validate(&historical_budget()).is_err());
     packet.work.input_tokens = 190;
     packet.work.compile_us = Some(1);
     packet.work.inference_us = Some(2);
-    packet.validate(&Budget::default())?;
+    packet.validate(&historical_budget())?;
     let raw = &mut packet.records[1].canonical_result["focus"]["receipt"];
     raw["applied"] = false.into();
     raw["availability"] = "failed".into();
     raw["ranked_order"] = raw["original_order"].clone();
     raw["observed_input_tokens"] = Value::Null;
     raw["work"]["input_tokens"] = 0.into();
-    assert!(packet.validate(&Budget::default()).is_err());
+    assert!(packet.validate(&historical_budget()).is_err());
     packet.stop = PartitionTermination::Unsupported;
     packet.gaps = vec![Gap::Unsupported];
     packet.assessment.coverage = PartitionCoverage::Unassessed {
@@ -836,6 +850,69 @@ fn nested_focus_costs_are_additive_and_unknown_work_cannot_support_current_conte
     };
     packet.assessment.termination = PartitionTermination::Unsupported;
     packet.assessment_history[0].applicability = AssessmentApplicability::HistoricalAfterRead;
-    packet.validate(&Budget::default())?;
+    packet.validate(&historical_budget())?;
+    Ok(())
+}
+
+fn semantic_source_closure_cases() -> Result<Value> {
+    let context = include_bytes!("../context_action.rs");
+    let calibration = include_bytes!("calibration.rs");
+    let terminal = include_bytes!("calibration/terminal.rs");
+    let focus = super::super::focus::semantic_policy_digest()?;
+    let original = semantic_policy_digest_for_sources(context, calibration, terminal, focus)?;
+    assert_eq!(original, semantic_policy_digest()?);
+    let mut cases = Vec::new();
+    for (id, part) in [
+        ("context_source", 0),
+        ("class_admission_source", 1),
+        ("terminal_global_winner_source", 2),
+    ] {
+        let mut sources = [context.to_vec(), calibration.to_vec(), terminal.to_vec()];
+        sources[part].extend_from_slice(b"\n// independent semantic-source mutation\n");
+        let changed =
+            semantic_policy_digest_for_sources(&sources[0], &sources[1], &sources[2], focus)?;
+        assert_ne!(
+            original, changed,
+            "{id} must invalidate prior task-policy identity"
+        );
+        cases.push(
+            json!({"id":id,"original":original,"mutated":changed,"old_identity_accepted":false}),
+        );
+    }
+    let crlf = std::str::from_utf8(terminal)?
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    assert_eq!(
+        original,
+        semantic_policy_digest_for_sources(context, calibration, crlf.as_bytes(), focus)?
+    );
+    assert!(semantic_policy_digest_for_sources(context, calibration, b"lone\rCR", focus).is_err());
+    Ok(
+        json!({"schema":"airk.arbiter.context-terminal-semantic-source-cases/1","original":original,"source_paths":["arbiter/context_action.rs","arbiter/context_action/calibration.rs","arbiter/context_action/calibration/terminal.rs"],"cases":cases,"crlf_canonicalization_preserved":true,"lone_CR_refused":true,"synthetic_mutations_only":true,"qualification_granted":false}),
+    )
+}
+#[test]
+fn joint_semantic_policy_binds_terminal_winner_and_class_sources() -> Result<()> {
+    assert_eq!(
+        semantic_source_closure_cases()?["cases"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    Ok(())
+}
+#[test]
+#[ignore = "explicit fresh native semantic-source fixture output required"]
+fn emit_terminal_semantic_source_closure_cases() -> Result<()> {
+    let output = std::path::PathBuf::from(
+        std::env::var_os("AIRK_TERMINAL_SEMANTIC_SOURCE_CASES_OUTPUT")
+            .ok_or_else(|| anyhow::anyhow!("semantic source output missing"))?,
+    );
+    ensure!(!output.exists(), "fresh semantic source output required");
+    std::fs::write(
+        output,
+        serde_json::to_vec_pretty(&semantic_source_closure_cases()?)?,
+    )?;
     Ok(())
 }

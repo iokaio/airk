@@ -43,6 +43,12 @@ pub(super) struct Owner {
     #[cfg(feature = "local-inference")]
     assets: Arc<airk_store::service::arbiter_assets::AssetStore>,
 }
+#[cfg(feature = "local-inference")]
+pub(super) struct Shutdown {
+    focus: Result<lifecycle::StageShutdown>,
+    context: Result<lifecycle::StageShutdown>,
+    deadline: Instant,
+}
 impl Owner {
     pub(super) fn new(
         ownership: Arc<airk_store::service::ServiceLease>,
@@ -90,6 +96,29 @@ impl Owner {
         #[cfg(not(feature = "local-inference"))]
         let _ = log;
         Ok(self)
+    }
+    #[cfg(feature = "local-inference")]
+    pub(in crate::service_runtime) fn begin_shutdown(&self, deadline: Instant) -> Shutdown {
+        // Fence/capture/cancel BOTH stages before ingress and connection drain.
+        Shutdown {
+            focus: self.focus.begin_shutdown(),
+            context: self.context.begin_shutdown(),
+            deadline,
+        }
+    }
+    #[cfg(feature = "local-inference")]
+    pub(in crate::service_runtime) async fn shutdown(&self, shutdown: Shutdown) -> Result<()> {
+        let Shutdown {
+            focus,
+            context,
+            deadline,
+        } = shutdown;
+        let focus = async { self.focus.finish_shutdown(focus?, deadline).await };
+        let context = async { self.context.finish_shutdown(context?, deadline).await };
+        let (focus, context) = tokio::join!(focus, context);
+        focus?;
+        context?;
+        Ok(())
     }
     fn stage(&self, stage: Stage) -> &StageOwner {
         match stage {

@@ -414,3 +414,8 @@ body.vscode-light:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .a
 .indexing-scope-list label span { display: flex; flex-direction: column; gap: 4px; }
 .indexing-scope-list small { color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
 .indexing-delete { margin: 12px 0 20px; }
+
+.rail > ul { display: flex; flex-direction: column; flex: 1; }
+.rail .rail-divider { border-top: 1px solid var(--airk-border); margin-top: .5rem; padding-top: .5rem; }
+.rail .rail-help { margin-top: auto; padding-top: .5rem; }
+@media (max-width: 480px) { .rail > ul { flex-direction: row; } .rail .rail-divider { border-top: 0; border-left: 1px solid var(--airk-border); margin: 0 .25rem; padding: 0 .25rem; } .rail .rail-help { margin: 0; padding: 0; } }

@@ -3,6 +3,7 @@ import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
 import type { WebviewMessageOf } from '../explorerContracts';
+import { DESTINATION_ICONS } from '../../../ui/src/navigation';
 
 /** Complete canonical native data survives the friendly cards and both copies. */
 export function CompleteNativeResponse(props: { value?: Record<string, unknown> }) {
@@ -37,17 +38,7 @@ export function BrandMark() {
     </svg>;
 }
 
-const ICONS: Record<string, string> = {
-    overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
-    search: 'M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15M16 16l5 5',
-    code: 'm8 6-6 6 6 6M16 6l6 6-6 6M14 3l-4 18',
-    docs: 'M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h6',
-    evidence: 'M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6zM8 12l3 3 5-6',
-    review: 'M9 5h12M9 12h12M9 19h12M2 5l1 1 2-2M2 12l1 1 2-2M2 19l1 1 2-2',
-    strategies: 'M4 4h6v6H4zM14 14h6v6h-6zM14 7h5v7M7 10v7h7',
-    manage: 'M4 7h16M4 17h16M8 4v6M16 14v6',
-    help: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M9 9a3 3 0 1 1 4 3c-1 .5-1 1-1 2M12 17h.01',
-};
+const ICONS: Readonly<Record<string, string>> = { ...DESTINATION_ICONS, indexing: DESTINATION_ICONS.indexes, manage: DESTINATION_ICONS.service };
 export function WorkspaceIcon(props: { name: string }) {
     return <svg class="workspace-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS[props.name] ?? ICONS.overview} /></svg>;
 }

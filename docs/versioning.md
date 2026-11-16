@@ -1,5 +1,86 @@
 # Versioning from local installation to publication
 
+**Current source candidate: 1.8.207 (15 November 2026).** Native and extension
+manifests and lockfiles agree. The
+[1.8.207 record](releases/release-1.8.207.md) distinguishes implemented changes
+from pending artifact, installed, platform and model qualification. The
+[Arbiter final plan](arbiter/final-plan.md) governs current execution, and the
+[execution ledger](simplify/one-process-ledger.md) retains exact outcomes.
+Version 1.9.0 is reserved for final delivery after its applicable gates pass.
+
+Use one numeric `major.minor.patch` version for the Rust workspace, every local
+AIRK crate in `Cargo.lock`, `packages/vscode/package.json` and both root package
+entries in `packages/vscode/package-lock.json`. Compiled images, runtime metadata,
+native packages and VSIX must match that source version. The unused 1.8.207
+increment has already been applied for this milestone; do not repeat it for the
+same candidate or rewrite an earlier binary, package or receipt to match it.
+A later changed installable candidate needs its own reviewed unused version.
+
+```console
+python scripts/release-version.py check --expected 1.8.207
+```
+
+After a version or interface change, regenerate native Help, the native-emitted
+UI fixtures, shared Help manifest and Explorer catalog through their owners,
+then compile and seal the affected UI assets before building the matching native
+pair. Packaging consumes tested artifacts. Exact build and qualification order
+is in [CI and builds](ci-and-builds.md); a source-version check alone proves
+neither runtime behavior nor release readiness.
+
+AIRK Service and the optional universal VSIX are separate products. Current
+agents use the verified loopback HTTPS endpoint with no MCP token; TLS issuer
+trust and Host/Origin protections remain. Each read names indexes, index sets or
+a workspace default. Use `airkctl agents manual` or **Set up manually** for the
+Rust-owned target file and complete entry when automatic editing cannot protect
+the entire file and recovery copy. Regenerate that entry after a service port
+change. Historical scoped-credential and stable-launcher instructions below are
+obsolete for current agent setup; see [agent integration](agent-integration.md)
+and [installation](service-installation.md) for current contracts and recovery.
+
+Current-version index regeneration is allowed when an upgrade cannot preserve
+the supported contract. Source files, unrelated user work and historical state
+identities remain protected. A product version does not override independent
+persisted-format, installation, namespace, index or recovery fences. Installed
+acceptance uses isolated fixtures and must exercise applicable clean, upgrade,
+interruption/recovery, repair, silent and uninstall paths; the user's actual
+installation is preserved unless separately authorized.
+
+## Current publication authority
+
+Local candidate implementation, packaging and testing do not authorize a public
+release. Current work on `feat/arbiter-final` allows reviewed local human
+DCO-signed milestone commits. Push, PR creation, merge, deployment and publication
+require their separate authorization. Keep existing owner and ACL policies,
+private artifacts and historical evidence intact.
+
+Public release still requires all applicable gates on the identified source,
+including workspace/doctest, real transport, supported platform, installed and
+artifact qualification. Final-series optional-model publication also requires
+all three qualified selected profiles, rights/source maps and the native
+publication capture. A local Windows pass does not qualify another platform.
+Missing hosts, evidence or public availability remain explicit blockers.
+
+The release workflow continues to require reviewed human DCO changes through
+the protected PR/merge flow and full successful main CI on the exact final
+commit. Promote one authenticated platform candidate set from that run and
+attempt; dirty local artifacts are not substitutes. After concrete artifacts and
+all required gates are ready, publication needs explicit approval through the
+[release workflow](release-workflow.md). GitHub and Marketplace use the same
+reviewed tested version; its GitHub tag adds `v`. Never allocate a different
+version after testing, overwrite a release with changed bytes or manufacture a
+sign-off. A failed publication job retries only its original matching artifacts.
+The version-PR fallback does not replace reviewed version choice or these gates.
+
+<details>
+<summary>Historical development and predecessor installation guidance (9–13 November 2026)</summary>
+
+The retained text below describes its original 1.8.x source and artifacts. Its
+statements about a “current” 1.8.35 or 1.8.23 version, candidate build progress,
+scoped agent credentials, predecessor bootstrap and stopped work are dated
+history. They do not override the current source, tokenless agent contract,
+installation contract, active implementation instruction or publication rules
+above. Original versions, artifact claims and failed evidence are preserved.
+
 Runtime installation and upgrades display a VS Code progress notification labeled Installing AIRK runtime, Updating AIRK runtime or Checking AIRK installation, with the current stage: version and payload checks, staging, native activation, agent connection updates, project registration and cleanup. Progress uses actual stages without an invented percentage. The 1.8.14 implementation checkpoints and drains an admitted modern service before replacement; clients reconnect to its verified HTTPS endpoint. Success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate. Final installed qualification is recorded separately below.
 
 Historical 1.5.4–1.8.13 installation records the exact activation intent before stopping the verified optional manager and terminating approved predecessor processes, including older versions and Windows clients holding the stable launcher. Captured native process identities prevent PID reuse from redirecting termination. All captured processes share a five-second exit wait; verification, manager control, copying and startup are additional. Historical macOS installation uses authenticated graceful shutdown. The 1.8.14 migration retains version-specific predecessor retirement, rather than assuming those old processes implement the new checkpoint protocol. See [installation](service-installation.md) for ownership and platform limits.
@@ -117,3 +198,5 @@ and hashes; none is relabeled as a new implementation or promoted artifact.
 5. After explicit publication authorization, publish the verified artifacts through the [release workflow](release-workflow.md). GitHub and Marketplace use that same reviewed tested numeric version; its GitHub tag adds the `v` prefix. Publication must not silently allocate or rewrite a version after testing. Complete partial publication with the original matching artifacts and retry only the failed jobs. Never overwrite an existing version with different bytes.
 
 The release-time draft version PR is a fallback when both destinations already contain a completed version. It does not replace the maintainer's reviewed version choice or permit publishing before the promoted source and main CI are ready. The user requested the 1.8.19 local candidate on 9 November 2026, superseding the 1.8.16 retry version and the unbuilt 1.8.17 working number while retaining its persisted-state baseline and historical receipts. The user requested 1.8.20 on 10 November 2026 for the login-startup correction, because 1.8.19 was already installed for manual testing. The one-process artifact 1.8.22 keeps its original version and failed evidence. The next candidate, 1.8.23, uses the user's standing authorization of 10 November 2026 for the next unused patch number per installer build; its source manifests and lockfiles are now synchronized. Later promotion remains separately reviewed and qualified, without an automatic patch increase per phase. See [CI and builds](ci-and-builds.md), [extension deployment](extension-deployment.md), and [Windows builds](windows-local-build.md).
+
+</details>

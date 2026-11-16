@@ -7,6 +7,11 @@ export const MAIN_DESTINATIONS = [
   { id: 'activity', title: 'Activity', browser: 'activity', editor: 'manage/activity' },
   { id: 'agents', title: 'Agents', browser: 'agents', editor: 'manage/agents' },
   { id: 'service', title: 'Service', browser: 'service', editor: 'manage/service' },
+  { id: 'code', title: 'Code', browser: 'search', editor: 'code/symbols' },
+  { id: 'docs', title: 'Documents', browser: 'search', editor: 'docs/facts' },
+  { id: 'evidence', title: 'Evidence', browser: 'search', editor: 'evidence/inspector' },
+  { id: 'review', title: 'Review', browser: 'search', editor: 'review/changes' },
+  { id: 'strategies', title: 'Strategies', browser: 'search', editor: 'strategies/library' },
   { id: 'help', title: 'Help', browser: 'help', editor: 'help' },
 ] as const;
 export type Destination = typeof MAIN_DESTINATIONS[number]['id'];
@@ -16,7 +21,9 @@ export function browserDestination(page: string): Destination | null {
   return MAIN_DESTINATIONS.find(entry => entry.browser === page)?.id ?? null;
 }
 export function editorDestination(route: string): Destination | null {
-  if (route.startsWith('search/') || isEvidenceToolRoute(route)) return 'search';
+  if (route.startsWith('search/')) return 'search';
+  const group = MAIN_DESTINATIONS.find(entry => entry.editor.split('/')[0] === route.split('/')[0] && isEvidenceToolRoute(route));
+  if (group) return group.id;
   if (route.startsWith('indexing/') || route === 'manage/overview') return 'indexes';
   if (route === 'manage/usage' || route === 'manage/logs') return 'activity';
   if (route === 'manage/storage' || route === 'manage/repair') return 'service';
@@ -51,3 +58,19 @@ export function evidenceToolsPresentation(host:'editor'|'browser',lastRoute?:str
       ...(host==='editor'?group.entries.map(([route,label])=>({...node('button',`${group.title}: ${label}`),route}))
         :[...group.entries.filter(([route])=>browserRoutes.includes(route)).map(([route,label])=>({...node('button',`${group.title}: ${label}`),route})),...(group.entries.some(([route])=>!browserRoutes.includes(route))?[node('p',`Editor workflows: ${group.entries.filter(([route])=>!browserRoutes.includes(route)).map(([,label])=>label).join(', ')}. Their browser migration remains incomplete; scopes and host actions are separate.`)]:[]),{...node('a',`Read ${group.title} guide`),href:`#help?guide=${encodeURIComponent(group.guide)}`}]))));
 }
+
+/** Original destination-keyed vectors, shared by both rails. */
+export const DESTINATION_ICONS: Readonly<Record<Destination, string>> = Object.freeze({
+  overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+  search: 'M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15M16 16l5 5',
+  indexes: 'M3 5h18v5H3zM3 14h18v5H3zM6 7.5h.01M6 16.5h.01',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
+  agents: 'M5 8h14v12H5zM12 3v5M9 12h.01M15 12h.01M9 16h6M2 12h3M19 12h3',
+  service: 'M4 7h16M4 17h16M8 4v6M16 14v6',
+  code: 'm8 6-6 6 6 6M16 6l6 6-6 6M14 3l-4 18',
+  docs: 'M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h6',
+  evidence: 'M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6zM8 12l3 3 5-6',
+  review: 'M9 5h12M9 12h12M9 19h12M2 5l1 1 2-2M2 12l1 1 2-2M2 19l1 1 2-2',
+  strategies: 'M4 4h6v6H4zM14 14h6v6h-6zM14 7h5v7M7 10v7h7',
+  help: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M9 9a3 3 0 1 1 4 3c-1 .5-1 1-1 2M12 17h.01',
+});

@@ -29,7 +29,90 @@ fn edit_failed(error: config::EditFailure) -> ErrorLine {
         }
         config::EditFailureKind::Refused => (ExitClass::Refused, "agent_config_edit_refused"),
     };
-    ErrorLine::new(class, code, false, &error.to_string())
+    let reason = match error.kind {
+        config::EditFailureKind::Refused => {
+            airk_core::agent_manual::AgentConfigRefusalReason::AutomaticPolicy
+        }
+        config::EditFailureKind::ConflictRetained => {
+            airk_core::agent_manual::AgentConfigRefusalReason::ConflictRetained
+        }
+        config::EditFailureKind::OutcomeUnknown => {
+            airk_core::agent_manual::AgentConfigRefusalReason::OutcomeUnknown
+        }
+    };
+    let mut line = ErrorLine::new(class, code, false, &error.to_string());
+    line.native = serde_json::to_value(airk_core::agent_manual::AgentConfigRefusal {
+        reason,
+        detail: error.to_string(),
+        file: String::new(),
+        manual: None,
+    })
+    .ok();
+    line
+}
+
+fn edit_failed_at(
+    error: config::EditFailure,
+    file: &Path,
+    manual: Option<&airk_core::agent_manual::AgentManualEntry>,
+) -> ErrorLine {
+    let mut line = edit_failed(error);
+    if let Some(native) = line.native.as_mut() {
+        native["file"] = json!(file);
+        native["manual"] = json!(manual);
+    }
+    line
+}
+
+fn manual_client(client: super::Client) -> airk_core::agent_manual::ManualClient {
+    match client {
+        super::Client::Claude => airk_core::agent_manual::ManualClient::Claude,
+        super::Client::Codex => airk_core::agent_manual::ManualClient::Codex,
+        super::Client::Vscode => airk_core::agent_manual::ManualClient::Vscode,
+    }
+}
+
+fn manual_entry(
+    client: super::Client,
+    scope: Scope,
+    file: &Path,
+    server_key: &str,
+    url: &str,
+) -> Result<airk_core::agent_manual::AgentManualEntry, ErrorLine> {
+    let file = file
+        .to_str()
+        .ok_or_else(|| refused("manual configuration target is not UTF-8"))?
+        .to_owned();
+    airk_core::agent_manual::entry(
+        manual_client(client),
+        match scope {
+            Scope::Project => airk_core::agent_manual::ManualScope::Project,
+            Scope::User => airk_core::agent_manual::ManualScope::User,
+        },
+        file,
+        server_key,
+        url.parse().map_err(refused)?,
+    )
+    .map_err(refused)
+}
+
+/// Read-only canonical manual setup for the selected client and exact target.
+pub fn manual(
+    inputs: &Inputs<'_>,
+    client: super::Client,
+    scope: Scope,
+    server_key: &str,
+) -> Result<Value, ErrorLine> {
+    let project = inputs
+        .projects
+        .first()
+        .ok_or_else(|| refused("manual setup needs a project folder"))?;
+    let file = target_file(agent(client), scope, project)?;
+    let endpoint = crate::agents::endpoint(inputs.control, inputs.version)?;
+    let url = endpoint["url"]
+        .as_str()
+        .ok_or_else(|| refused("the AIRK service's HTTPS endpoint names no URL"))?;
+    serde_json::to_value(manual_entry(client, scope, &file, server_key, url)?).map_err(refused)
 }
 
 /// The client `connect` writes for.
@@ -176,8 +259,17 @@ pub fn connect(
         .cloned()
         .ok_or_else(|| refused("connect needs a project folder"))?;
     let file = target_file(agent, scope, &project)?;
-    config::preflight_edit(&file).map_err(edit_failed)?;
-    let endpoint = crate::agents::endpoint(inputs.control, inputs.version)?;
+    let admission = config::preflight_edit(&file);
+    let endpoint = crate::agents::endpoint(inputs.control, inputs.version);
+    // A refused write remains refused even if the service is unavailable. Public
+    // endpoint metadata supplies manual recovery; it grants no write authority.
+    let manual = endpoint
+        .as_ref()
+        .ok()
+        .and_then(|endpoint| endpoint["url"].as_str())
+        .and_then(|url| manual_entry(client, scope, &file, server_key, url).ok());
+    admission.map_err(|error| edit_failed_at(error, &file, manual.as_ref()))?;
+    let endpoint = endpoint?;
     let url = endpoint["url"]
         .as_str()
         .map(str::to_owned)
@@ -189,7 +281,7 @@ pub fn connect(
         true,
         |source| config::connect(agent, scope, source, server_key, &url),
     )
-    .map_err(edit_failed)?;
+    .map_err(|error| edit_failed_at(error, &file, manual.as_ref()))?;
     Ok(json!({
         "schema": 1,
         "client": agent.name(),
@@ -198,6 +290,7 @@ pub fn connect(
         "serverKey": server_key,
         "url": url,
         "changed": changed,
+        "manual": manual,
     }))
 }
 

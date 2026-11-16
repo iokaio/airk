@@ -32,6 +32,8 @@ mod tests;
 mod toml;
 #[cfg(test)]
 mod writer_test_support;
+#[cfg(test)]
+pub(crate) use writer_test_support::Editable as EditableFixture;
 
 pub(crate) use crate::contract::{Agent, Class, Entry, Scope, Transport};
 pub(crate) use classify::{Classifier, FileReport, revalidate_entry};

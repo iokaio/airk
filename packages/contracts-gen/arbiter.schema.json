@@ -417,6 +417,66 @@
       ],
       "type": "object"
     },
+    "ClassDisposition": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ContextActionClass"
+        },
+        "support": {
+          "$ref": "#/$defs/ClassSupport"
+        }
+      },
+      "required": [
+        "action",
+        "support"
+      ],
+      "type": "object"
+    },
+    "ClassSupport": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "const": "unsupported",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "qualification": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Sha256Digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "supported",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CompilerProfile": {
       "additionalProperties": false,
       "properties": {
@@ -1569,6 +1629,52 @@
       "pattern": "^[0-9a-f]{32}$",
       "type": "string"
     },
+    "IndependenceAnalysis": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_cases": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "accepted_sample": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "action": {
+          "$ref": "#/$defs/ContextActionClass"
+        },
+        "criteria_freeze": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "effective_independent_cases": {
+          "description": "Must be justified by the separately approved exact cluster analysis.\nIt is not inferred from the number of task rows or repositories.",
+          "format": "double",
+          "type": "number"
+        },
+        "method": {
+          "type": "string"
+        },
+        "repository_clusters": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "criteria_freeze",
+        "accepted_sample",
+        "accepted_cases",
+        "repository_clusters",
+        "effective_independent_cases",
+        "method"
+      ],
+      "type": "object"
+    },
     "IndexApplication": {
       "additionalProperties": false,
       "properties": {
@@ -1649,6 +1755,16 @@
             "$ref": "#/$defs/JointAssetBinding"
           },
           "type": "object"
+        },
+        "class_support": {
+          "description": "Absent on historical /1; /2 explicitly accounts for all four classes.",
+          "items": {
+            "$ref": "#/$defs/ClassDisposition"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "compiler": {
           "$ref": "#/$defs/Sha256Digest"
@@ -2336,6 +2452,26 @@
       ],
       "type": "object"
     },
+    "ReadChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "operation": {
+          "$ref": "#/$defs/NativeRead"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "operation",
+        "target"
+      ],
+      "type": "object"
+    },
     "Readout": {
       "enum": [
         "decision_symbol",
@@ -2639,6 +2775,328 @@
       ],
       "type": "string"
     },
+    "TerminalAnnotations": {
+      "additionalProperties": false,
+      "properties": {
+        "human_review_reference": {
+          "description": "Descriptive attribution only; exact original file needs separate approval.",
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/TerminalHumanLabel"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "human_review_reference",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "TerminalCriteria": {
+      "additionalProperties": false,
+      "properties": {
+        "calibration_population": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "confirmation_population": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "freeze": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Exact preregistered criteria source; independently approved at promotion."
+        },
+        "maximum_false_acceptance_upper": {
+          "format": "double",
+          "type": "number"
+        },
+        "minimum_cal_accepted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_cal_population": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_confirmation_accepted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_confirmation_population": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_coverage": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "freeze",
+        "calibration_population",
+        "confirmation_population",
+        "minimum_cal_population",
+        "minimum_confirmation_population",
+        "minimum_cal_accepted",
+        "minimum_confirmation_accepted",
+        "minimum_coverage",
+        "maximum_false_acceptance_upper"
+      ],
+      "type": "object"
+    },
+    "TerminalHumanLabel": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_whole_cards": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "action": {
+          "$ref": "#/$defs/ContextActionClass"
+        },
+        "id": {
+          "type": "string"
+        },
+        "repository_cluster": {
+          "type": "string"
+        },
+        "visible_input": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "repository_cluster",
+        "visible_input",
+        "accepted_whole_cards"
+      ],
+      "type": "object"
+    },
+    "TerminalObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_whole_cards": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/ReadChoice"
+          },
+          "type": "array"
+        },
+        "human_annotations": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "id": {
+          "type": "string"
+        },
+        "native_capture": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "question": {
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecord"
+          },
+          "type": "array"
+        },
+        "repository_cluster": {
+          "type": "string"
+        },
+        "roster": {
+          "$ref": "#/$defs/ContextActionRoster"
+        },
+        "scores": {
+          "description": "None retains an unscored refusal/failure in the complete population denominator.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "repository_cluster",
+        "question",
+        "choices",
+        "roster",
+        "records",
+        "accepted_whole_cards",
+        "human_annotations",
+        "native_capture"
+      ],
+      "type": "object"
+    },
+    "TerminalQualification": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JointAssetBinding"
+          },
+          "type": "object"
+        },
+        "calibration": {
+          "items": {
+            "$ref": "#/$defs/TerminalObservation"
+          },
+          "type": "array"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "confirmation": {
+          "items": {
+            "$ref": "#/$defs/TerminalObservation"
+          },
+          "type": "array"
+        },
+        "criteria": {
+          "$ref": "#/$defs/TerminalCriteria"
+        },
+        "independence_analysis": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "rule": {
+          "$ref": "#/$defs/JointRule"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "compiler",
+        "task_policy",
+        "assets",
+        "rule",
+        "criteria",
+        "calibration",
+        "confirmation",
+        "independence_analysis"
+      ],
+      "type": "object"
+    },
+    "TerminalRawCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JointAssetBinding"
+          },
+          "type": "object"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "execution_identity": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "native_execution_receipt": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Actual native custody/source receipt, independently reviewed with capture."
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/TerminalRawRow"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "compiler",
+        "task_policy",
+        "assets",
+        "execution_identity",
+        "native_execution_receipt",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "TerminalRawRow": {
+      "additionalProperties": false,
+      "properties": {
+        "compiled_input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scores": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "visible_input": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "id",
+        "visible_input"
+      ],
+      "type": "object"
+    },
     "Work": {
       "additionalProperties": false,
       "properties": {
@@ -2736,7 +3194,11 @@
     "ContextRequestV2",
     "ContextResponseV2",
     "ContextActionRoster",
-    "JointCalibration"
+    "JointCalibration",
+    "TerminalQualification",
+    "TerminalAnnotations",
+    "TerminalRawCapture",
+    "IndependenceAnalysis"
   ],
   "title": "AIRK Arbiter Core contract"
 }

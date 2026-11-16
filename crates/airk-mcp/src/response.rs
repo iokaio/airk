@@ -7,6 +7,10 @@ use serde_json::{Map, Value};
 
 #[cfg(test)]
 mod identity_tests;
+mod open_status;
+pub use open_status::OpenStatusSession;
+#[cfg(test)]
+mod open_status_tests;
 use std::sync::Mutex;
 
 /// Bound optional receipt bytes in the actual native SDK representation before
@@ -494,13 +498,7 @@ impl Session {
             );
         }
         // Explicit diagnostic/capability/change tools always disclose their status.
-        let explicit = include_status
-            || object
-                .get("status_detail")
-                .is_some_and(|value| value == "summary")
-            || diagnostic_execution(object)
-            || object.contains_key("adapters")
-            || object.contains_key("baseline_status");
+        let explicit = explicit_status(object, include_status);
         self.status(object, explicit);
         terse_envelope(object);
     }
@@ -518,11 +516,24 @@ impl Session {
         .into_iter()
         .flatten()
         .find(|p| p.get("token").is_some());
+        // A prior Terse render keeps only the exact token. Its parsed native
+        // incarnation preserves the same rebuild boundary as a Full envelope.
+        let incarnation = publication
+            .and_then(|publication| publication.get("incarnation"))
+            .cloned()
+            .or_else(|| {
+                publication?
+                    .get("token")?
+                    .as_str()?
+                    .parse::<airk_core::identity::RevisionToken>()
+                    .ok()
+                    .map(|token| serde_json::json!(token.incarnation))
+            });
         let binding = serde_json::json!([
             object
                 .get("collection")
                 .or_else(|| publication.and_then(|p| p.get("collection"))),
-            publication.and_then(|p| p.get("incarnation")),
+            incarnation,
         ]);
         let Ok(binding) = serde_json::to_vec(&binding) else {
             return;
@@ -578,6 +589,16 @@ impl Session {
             }
         }
     }
+}
+
+fn explicit_status(object: &Map<String, Value>, include_status: bool) -> bool {
+    include_status
+        || object
+            .get("status_detail")
+            .is_some_and(|value| value == "summary")
+        || diagnostic_execution(object)
+        || object.contains_key("adapters")
+        || object.contains_key("baseline_status")
 }
 
 pub(crate) fn terse_envelope(object: &mut Map<String, Value>) {

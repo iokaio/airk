@@ -63,14 +63,15 @@ test('editor Evidence tools routes to original guided owner and preserves same-o
  }catch(error){t.diagnostic(JSON.stringify({stage,browser_ownership:browser?.observation}));throw error;}finally{try{await browser?.close();}finally{t.diagnostic(JSON.stringify({browser_ownership:browser?.observation}));}}
 });
 
-test('browser Evidence tools shows honest guided limitations and retains its actual query owner while toggling views',
+test('browser Evidence tools shows its supported guided routes and retains its actual query owner while toggling views',
  {skip:browserAvailable?false:'Chromium unavailable.'},async t=>{
  const browser=await browserHarness();try{
   const result=await build({stdin:{contents:`import {h,render} from 'preact';import {useState} from 'preact/hooks';import {SearchWorkspace} from './app';function Host(){const [tools,setTools]=useState(true);return h(SearchWorkspace,{route:{page:'search',params:new URLSearchParams(tools?{view:'tools'}:{}),seq:1},onView:setTools});}render(h(Host,{}),document.body);`,resolveDir:`${root}/packages/admin/src`,sourcefile:'browser-hub-test.tsx'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',jsxImportSource:'preact'});
   await browser.evaluate(`window.nativeFetches=0;window.fetch=()=>{window.nativeFetches++;throw Error('No authenticated native session in this DOM test');};`);await browser.evaluate(result.outputFiles[0].text);
   await browser.observed(`document.querySelector('[aria-label="Evidence tools hub"]')`);
   assert.equal(await browser.evaluate('window.nativeFetches'),0,'hub first entry never mounts or runs the query owner');
-  assert.equal(await browser.evaluate(`document.body.textContent.includes('Browser workflow migration is not complete')`),true);
+  assert.equal(await browser.evaluate(`document.body.textContent.includes('Browser workflow migration is not complete')`),false,'completed guided routes are no longer described as unavailable');
+  assert.deepEqual(await browser.evaluate(`Object.fromEntries([...document.querySelectorAll('[aria-label="Evidence tools hub"] section section')].map(section=>[section.querySelector('h3').textContent,[...section.querySelectorAll('button')].map(button=>button.textContent)]))`),{Code:['Code: Symbols','Code: Textual references','Code: Selected-source outline'],Documents:['Documents: Document facts'],Evidence:['Evidence: Inspector','Evidence: Check citations','Evidence: Indexed changes'],Review:['Review: Git changes','Review: Impact candidates','Review: Test candidates'],Strategies:['Strategies: Library','Strategies: Studio','Strategies: Planner']});
   assert.equal(await browser.evaluate(`document.querySelectorAll('[aria-label="Evidence tools hub"] a[href^="#help?guide="]').length`),5);
   await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Query').click()`);
   await browser.observed(`document.querySelector('input[placeholder="Where is request cancellation handled?"]')`);

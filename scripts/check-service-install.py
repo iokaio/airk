@@ -249,7 +249,7 @@ def parity_envelope(envelope, transport):
 
 def modern_client_lifecycle(invoke, binary, installed_main, install, control, source, data, health, evidence_file,
                             *, stopped_probe=None, cli=None):
-    """Actual native grant/enrollment and two independent service-owned TLS sessions.
+    """Explicit-index reads and two independent tokenless service-owned TLS sessions.
 
     With a split pair's `cli` (airkctl), user commands run there and the
     pre-split runtime operations run on `binary` (airk) behind the U93 selector.
@@ -286,28 +286,19 @@ def modern_client_lifecycle(invoke, binary, installed_main, install, control, so
     proof = {"project": project, "selection": selected, "index_job": observed, "connections": [], "responses": []}
     def retain():
         evidence_file.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
-    def enroll():
-        identifier = uuid.uuid4().hex
-        proof.setdefault("enrollment_attempts", []).append({"connection_id":identifier,
-            "selection":{"kind":"scoped","selection":selected}, "client":"unknown"})
-        retain()
-        connection = transport.enroll_native(
-            lambda *arguments, timeout=None: service(*arguments, timeout=timeout),
-            install, control, {"kind": "scoped", "selection": selected}, identifier)
-        expected, actual = dict(selected), dict(connection["selection"]["selection"])
-        expected.pop("expected_catalog_revision"); actual.pop("expected_catalog_revision")
-        if connection["connection_id"] != identifier or connection["selection"]["kind"] != "scoped" or expected != actual:
-            raise RuntimeError("Owned HTTPS enrollment changed immutable authority")
+    def open_client():
+        endpoint = transport.read_endpoint(control)
         native = rpc("health")["observation"]
-        transport.validate_native_identity(connection, native)
+        transport.validate_native_identity(endpoint, native)
         if native["instance"] != health["instance"]:
-            raise RuntimeError("Client enrollment replaced the installed service")
-        proof["connections"].append(connection); retain()
-        return transport.McpClient(connection, control)
+            raise RuntimeError("Opening a client replaced the installed service")
+        scope = {"index_ids": [selected["index_id"]]}
+        proof["connections"].append({"endpoint": endpoint, "scope": scope}); retain()
+        return transport.McpClient(endpoint, control, scope=scope)
     first, second = None, None
     try:
-        first = enroll()
-        second = enroll()
+        first = open_client()
+        second = open_client()
         for number, client in enumerate((first, second)):
             client.send({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"installed-http-lifetime","version":"1"}}})
             response = client.receive(1)

@@ -27,3 +27,7 @@ sha2.workspace = true
 tempfile.workspace = true
 ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
+
+# Actual service-lease ownership for native component qualification only.
+[dev-dependencies]
+airk-store.workspace = true

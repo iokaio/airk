@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-pub(super) struct Editable {
+pub(crate) struct Editable {
     _temp: tempfile::TempDir,
     path: PathBuf,
 }

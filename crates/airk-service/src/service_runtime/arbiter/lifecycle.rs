@@ -12,6 +12,12 @@ pub(super) struct State {
     serial: u64,
     accepted_configure_revision: u64,
     busy: bool,
+    stopping: bool,
+    settled: Arc<tokio::sync::Notify>,
+    charges: Vec<(
+        Sha256Digest,
+        airk_kernel::service_resources::OptionalRelease,
+    )>,
     profile: Option<Sha256Digest>,
     phase: Availability,
     reason: String,
@@ -28,6 +34,9 @@ impl Default for State {
             serial: 0,
             accepted_configure_revision: 0,
             busy: false,
+            stopping: false,
+            settled: Arc::new(tokio::sync::Notify::new()),
+            charges: Vec::new(),
             profile: None,
             phase: Availability::Disabled,
             reason: String::new(),
@@ -68,6 +77,7 @@ fn start(
     let mut state = shared
         .lock()
         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+    ensure!(!state.stopping, "Arbiter lifecycle is stopping");
     ensure!(
         !state.busy,
         "Arbiter lifecycle operation remains active; cancel or wait for its original result"
@@ -105,6 +115,7 @@ fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
             };
             state.reason = bounded_reason(user_failure_reason(error));
         }
+        state.settled.notify_waiters();
     }
 }
 /// Final user-facing reason for a failed operation. A source-class download
@@ -210,7 +221,10 @@ fn rollback_current_intent(
     let state = shared
         .lock()
         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-    if state.serial != serial || state.accepted_configure_revision > expected.revision {
+    if state.stopping
+        || state.serial != serial
+        || state.accepted_configure_revision > expected.revision
+    {
         return Ok(None);
     }
     rollback(configuration, expected, prior, stage)
@@ -223,7 +237,9 @@ fn restore_cancellation(
     profile: Sha256Digest,
 ) -> Result<CancellationToken> {
     ensure!(
-        state.serial == serial && state.accepted_configure_revision <= restored_revision,
+        !state.stopping
+            && state.serial == serial
+            && state.accepted_configure_revision <= restored_revision,
         "Arbiter rollback operation superseded by accepted Configure"
     );
     let cancel = CancellationToken::new();
@@ -284,6 +300,42 @@ struct WarmContext<'a> {
     rollback_pins: &'a mut Vec<PinnedAssets>,
     admission: Option<&'a DeferredAdmission>,
 }
+async fn remember_charge(
+    shared: &Arc<Mutex<State>>,
+    manifest: Sha256Digest,
+    charge: airk_kernel::service_resources::OptionalRelease,
+) -> Result<()> {
+    std::future::poll_fn(|cx| {
+        let mut state = match shared.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                    "Arbiter lifecycle unavailable"
+                )));
+            }
+        };
+        if state.stopping {
+            return std::task::Poll::Ready(Err(anyhow::anyhow!("Arbiter lifecycle is stopping")));
+        }
+        state.charges.retain(|(_, known)| {
+            let mut observed = known.wait();
+            // A completed successful observation is the only pruning proof.
+            !matches!(
+                std::future::Future::poll(std::pin::Pin::new(&mut observed), cx),
+                std::task::Poll::Ready(Ok(()))
+            )
+        });
+        if state.charges.len() >= airk_kernel::service_resources::MAX_OPTIONAL_RESERVATIONS {
+            return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                "Actual optional charge observation capacity remains occupied"
+            )));
+        }
+        state.charges.push((manifest, charge.clone()));
+        std::task::Poll::Ready(Ok(()))
+    })
+    .await
+}
+
 async fn release_actual(
     handle: &Handle,
     manifest: Sha256Digest,
@@ -380,7 +432,12 @@ async fn warm(
                 .filter(|profile| profile.manifest == old)
                 .context("Arbiter prior disk rollback is unproven; its resident was preserved")?;
             // Keep the old verified files pinned through new activation/rollback.
-            rollback_pins.push(store.pin(rollback)?);
+            let rollback = rollback.clone();
+            let rollback_store = store.clone();
+            rollback_pins.push(
+                super::assets::owned_asset_operation(async move { rollback_store.pin(&rollback) })
+                    .await?,
+            );
             admitted_current(configuration, expected, stage, cancel, admission)?;
             let release = handle.resident(old)?.reservation().release_observer();
             phase(
@@ -406,6 +463,7 @@ async fn warm(
     };
     let release = reservation.release_observer();
     admitted_current(configuration, expected, stage, cancel, admission)?;
+    remember_charge(shared, manifest, release.clone()).await?;
     let handle = management.ensure(expected.clone()).await?;
     admitted_current(configuration, expected, stage, cancel, admission)?;
     handle.configure(expected.clone())?;
@@ -639,7 +697,12 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                     let (cached, cached_source) = continuation
                         .take()
                         .context("No further cached stage continuation is admitted")?;
-                    store.pin(cached.description())?;
+                    let cached_description = cached.description().clone();
+                    let cached_store = store.clone();
+                    super::assets::owned_asset_operation(async move {
+                        cached_store.pin(&cached_description)
+                    })
+                    .await?;
                     warm(
                         cached,
                         cached_source,
@@ -760,8 +823,15 @@ fn next_pending(
     if state.serial != settled_serial {
         return Ok(None);
     }
+    if state.stopping {
+        state.pending = None;
+        state.busy = false;
+        state.settled.notify_waiters();
+        return Ok(None);
+    }
     let Some(prepared) = state.pending.take() else {
         state.busy = false;
+        state.settled.notify_waiters();
         return Ok(None);
     };
     state.serial = state
@@ -812,6 +882,7 @@ fn settle_and_resume(
                 state.reason = bounded_reason(format!(
                     "Cached latest selection could not be admitted: {error:#}"
                 ));
+                state.settled.notify_waiters();
             }
         }
     }
@@ -1562,6 +1633,227 @@ impl StageOwner {
         Ok(())
     }
 }
+pub(super) struct StageShutdown {
+    native: Option<NativeShutdown>,
+    charges: Vec<airk_kernel::service_resources::OptionalRelease>,
+    capture_error: Option<anyhow::Error>,
+}
+struct NativeShutdown {
+    handle: Handle,
+    stage: Stage,
+    targets: Vec<Sha256Digest>,
+}
+fn shutdown_targets(
+    latest: Option<Sha256Digest>,
+    active: Option<Sha256Digest>,
+    warming: Option<Sha256Digest>,
+) -> Vec<Sha256Digest> {
+    let mut targets = [latest, active, warming]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+fn shutdown_observation_live(deadline: Instant) -> Result<()> {
+    ensure!(
+        tokio::time::Instant::now() < tokio::time::Instant::from_std(deadline),
+        "Original Arbiter shutdown observation cutoff expired; actual work remains owned"
+    );
+    Ok(())
+}
+fn begin_shutdown(shared: &Arc<Mutex<State>>, stage: Stage) -> Result<StageShutdown> {
+    let (handle, latest, known_targets, mut charges, may_have_native) = {
+        let mut state = shared
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+        state.stopping = true;
+        state.pending = None;
+        (
+            state.handle.clone(),
+            state.profile,
+            state
+                .charges
+                .iter()
+                .map(|(manifest, _)| *manifest)
+                .collect::<Vec<_>>(),
+            state
+                .charges
+                .iter()
+                .map(|(_, charge)| charge.clone())
+                .collect::<Vec<_>>(),
+            matches!(
+                state.phase,
+                Availability::Ready | Availability::Warming | Availability::Draining
+            ),
+        )
+    };
+    let mut capture_error = None;
+    let mut native = None;
+    if let Some(handle) = handle {
+        match handle.observation_for(stage) {
+            Ok(observed) => {
+                let mut targets =
+                    shutdown_targets(latest, observed.active_profile, observed.warming_profile);
+                targets.extend(known_targets.iter().copied());
+                targets.sort();
+                targets.dedup();
+                if let Some(active) = observed.active_profile {
+                    // Capture the ACTUAL resident, including retained rollback,
+                    // before release enqueue can revoke resident admission.
+                    match handle.resident(active) {
+                        Ok(resident) => charges.push(resident.reservation().release_observer()),
+                        Err(error) if !known_targets.contains(&active) => {
+                            capture_error = Some(error.context(
+                                "Actual resident charge unavailable before shutdown release",
+                            ))
+                        }
+                        Err(_) => {} // Original authentic observer already owns this release proof.
+                    }
+                }
+                if observed
+                    .warming_profile
+                    .is_some_and(|warming| !known_targets.contains(&warming))
+                {
+                    capture_error = Some(anyhow::anyhow!(
+                        "Native warm has no original charge observation owner"
+                    ));
+                }
+                native = Some(NativeShutdown {
+                    handle,
+                    stage,
+                    targets,
+                });
+            }
+            Err(error) => {
+                capture_error =
+                    Some(error.context("Actual native stage observation unavailable at shutdown"))
+            }
+        }
+    }
+    // Cancellation comes AFTER capturing any actual resident charge observer.
+    // A stopping fence already prevents restoration and future admission.
+    {
+        let mut state = shared
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+        cancel_current(&mut state);
+        state.cancel.cancel();
+    }
+    if let Some(native) = &native {
+        for target in &native.targets {
+            if let Err(error) = native.handle.release_profile(*target) {
+                capture_error = Some(error.context("Native shutdown release was not accepted"));
+            }
+        }
+    }
+    if may_have_native && charges.is_empty() {
+        capture_error = Some(anyhow::anyhow!(
+            "Actual native charge release has no retained observation proof"
+        ));
+    }
+    Ok(StageShutdown {
+        native,
+        charges,
+        capture_error,
+    })
+}
+
+async fn wait_for_settlement(shared: &Arc<Mutex<State>>, deadline: Instant) -> Result<()> {
+    let settled = shared
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+        .settled
+        .clone();
+    loop {
+        shutdown_observation_live(deadline)?;
+        let observation = settled.notified();
+        tokio::pin!(observation);
+        // Register before checking state, including completion before first poll.
+        observation.as_mut().enable();
+        {
+            let state = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+            ensure!(state.stopping, "Arbiter shutdown was not fenced");
+            if !state.busy {
+                return Ok(());
+            }
+        }
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), observation)
+            .await
+            .context(
+                "Original Arbiter shutdown cutoff expired before actual lifecycle settlement",
+            )?;
+    }
+}
+async fn wait_shutdown_charges(
+    charges: Vec<airk_kernel::service_resources::OptionalRelease>,
+    deadline: Instant,
+) -> Result<()> {
+    for charge in charges {
+        shutdown_observation_live(deadline)?;
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), charge.wait())
+            .await
+            .context("Original Arbiter shutdown cutoff expired before actual charge release")??;
+        shutdown_observation_live(deadline)?;
+    }
+    Ok(())
+}
+async fn finish_shutdown(
+    shared: &Arc<Mutex<State>>,
+    shutdown: StageShutdown,
+    deadline: Instant,
+) -> Result<()> {
+    let StageShutdown {
+        native,
+        charges,
+        capture_error,
+    } = shutdown;
+    wait_for_settlement(shared, deadline).await?;
+    if let Some(error) = capture_error {
+        return Err(error);
+    }
+    if let Some(native) = &native {
+        for target in &native.targets {
+            shutdown_observation_live(deadline)?;
+            native
+                .handle
+                .wait_profile_released(*target, deadline)
+                .await?;
+        }
+    }
+    wait_shutdown_charges(charges, deadline).await?;
+    if let Some(native) = native {
+        let actual = native.handle.observation_for(native.stage)?;
+        ensure!(
+            actual.active_profile.is_none()
+                && actual.warming_profile.is_none()
+                && actual.queued == 0
+                && actual.running == 0,
+            "Actual native stage work remains after shutdown release observations"
+        );
+    }
+    shutdown_observation_live(deadline)
+}
+
+impl StageOwner {
+    pub(super) fn begin_shutdown(&self) -> Result<StageShutdown> {
+        begin_shutdown(&self.lifecycle, self.stage)
+    }
+    pub(super) async fn finish_shutdown(
+        &self,
+        shutdown: StageShutdown,
+        deadline: Instant,
+    ) -> Result<()> {
+        finish_shutdown(&self.lifecycle, shutdown, deadline).await
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests;
+
 impl Drop for StageOwner {
     fn drop(&mut self) {
         if let Ok(mut state) = self.lifecycle.lock() {
@@ -2121,7 +2413,7 @@ mod tests {
         assert_eq!(state.profile, None);
         Ok(())
     }
-    fn pending_fixture(revision: u64, byte: u8) -> Result<PreparedLaunch> {
+    pub(super) fn pending_fixture(revision: u64, byte: u8) -> Result<PreparedLaunch> {
         struct Unread;
         impl airk_retrieval::arbiter::runtime::AssetSource for Unread {
             fn read_asset(&self, _: &Asset) -> Result<Vec<u8>> {

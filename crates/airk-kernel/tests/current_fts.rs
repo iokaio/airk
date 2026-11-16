@@ -2,7 +2,7 @@
 //! Production FTS5 query semantics and the explicit rebuild boundary.
 use airk_core::SearchQuery;
 use airk_kernel::Kernel;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 
 #[test]
@@ -295,5 +295,69 @@ fn fts_preparation_grows_capacity_from_authenticated_input_sizes() -> Result<()>
             .hits
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn managed_diagnostics_owner_opens_while_rollback_overlay_refuses_reads_and_writer() -> Result<()> {
+    use airk_core::identity::Incarnation;
+    use airk_store::{
+        quota::Quota,
+        service::{collection::Collection, data_scope},
+    };
+    for bytes in [0, 512] {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source");
+        let data = base.join("data");
+        let control = base.join("control");
+        fs::create_dir(&source)?;
+        fs::create_dir(&control)?;
+        let original = b"captured immutable source\n";
+        fs::write(source.join("captured.txt"), original)?;
+        let _bound = data_scope::bind(&data, &control, Incarnation::from_bytes([91; 16]))?;
+        let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let collection =
+            Collection::existing(&data, source.to_str().context("source path")?, "fixture")?;
+        let store = collection.selected_store()?;
+        let scope = store
+            .current_scope(source.to_str().context("source path")?, "fixture")?
+            .context("Current scope missing")?;
+        let quota = Quota::for_store(&store)?;
+        let capacity = serde_json::from_slice::<serde_json::Value>(&fs::read(
+            store.directory().join("current-owner.json"),
+        )?)?["capacity"]
+            .as_u64()
+            .context("Current capacity missing")?;
+        let database = store.directory().join("current.sqlite3");
+        let journal = store.directory().join("current.sqlite3-journal");
+        let main_bytes = fs::read(&database)?;
+        let injected = vec![0u8; bytes];
+        fs::write(&journal, &injected)?;
+        drop(kernel);
+        let diagnostic =
+            Kernel::open_service_collection_for_diagnostics(&source, Some(data), "fixture")?;
+        let error = diagnostic
+            .read_file("captured.txt", 1, 1, 4096)
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("rollback sidecar cannot overlay service WAL storage"),
+            "{error:#}"
+        );
+        let writer = store.lock()?;
+        let error = store
+            .current_write(&writer, &quota, &scope, capacity)
+            .err()
+            .context("writer admitted rollback overlay")?;
+        assert_eq!(
+            error.to_string(),
+            "rollback sidecar cannot overlay service WAL storage"
+        );
+        assert_eq!(fs::read(&database)?, main_bytes);
+        assert_eq!(fs::read(&journal)?, injected);
+        assert_eq!(fs::read(source.join("captured.txt"))?.as_slice(), original);
+    }
     Ok(())
 }

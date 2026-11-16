@@ -48,10 +48,24 @@ pub(crate) fn ranking() -> Result<FocusApplicationReceipt> {
         },
     })
 }
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
+    }
+}
+
 #[test]
 fn relevance_ranking_preserves_complete_future_bodies_and_unscored_tail() -> Result<()> {
     let ranking = ranking()?;
-    ranking.validate(&Budget::default())?;
+    ranking.validate(&historical_budget())?;
     let original = vec![
         json!({"text":"first","future":{"secret_known_only_to_owner":1}}),
         json!({"text":"second"}),
@@ -59,7 +73,7 @@ fn relevance_ranking_preserves_complete_future_bodies_and_unscored_tail() -> Res
         json!({"text":"unscored","future_array":[1,2,3]}),
     ];
     assert_eq!(
-        ranking.reorder(&original, &ranking.original_order, &Budget::default())?,
+        ranking.reorder(&original, &ranking.original_order, &historical_budget())?,
         vec![
             original[2].clone(),
             original[0].clone(),
@@ -69,7 +83,11 @@ fn relevance_ranking_preserves_complete_future_bodies_and_unscored_tail() -> Res
     );
     assert!(
         ranking
-            .reorder(&original[..3], &ranking.original_order, &Budget::default())
+            .reorder(
+                &original[..3],
+                &ranking.original_order,
+                &historical_budget()
+            )
             .is_err()
     );
     Ok(())
@@ -79,9 +97,9 @@ fn exact_ties_remain_stable_and_never_borrow_sufficiency_authority() -> Result<(
     let mut value = ranking()?;
     value.scores[2] = FocusScore::from_logits(digest(22), 0., 1.)?;
     value.ranked_order = vec![digest(20), digest(22), digest(21), digest(23)];
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     value.ranked_order.swap(0, 1);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     assert!(
         serde_json::from_value::<context_action::ContextActionAdvice>(serde_json::to_value(
             &value
@@ -95,19 +113,19 @@ fn malformed_duplicate_missing_and_nonprefix_scores_refuse() -> Result<()> {
     let original = ranking()?;
     let mut value = original.clone();
     value.ranked_order.pop();
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.ranked_order[0] = digest(99);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.original_order[3] = digest(20);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.scores.swap(0, 1);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.scores[0].relevance = 0.9;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     assert!(FocusScore::from_logits(digest(1), f32::NAN, 0.).is_err());
     assert!(FocusScore::from_logits(digest(1), 0., f32::INFINITY).is_err());
     Ok(())
@@ -117,16 +135,16 @@ fn failed_partial_work_keeps_original_order_and_truthful_cost_without_replay() -
     let mut value = ranking()?;
     value.applied = false;
     value.availability = Availability::Failed;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     value.ranked_order = value.original_order.clone();
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     assert_eq!(value.work.input_tokens, 90);
     assert_eq!(value.scored_count, 3);
     value.observed_input_tokens = Some(101);
     value.work.input_tokens = 101;
-    value.validate(&Budget::default())?;
+    value.validate(&historical_budget())?;
     value.work.calls = 1;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     Ok(())
 }
 #[test]
@@ -135,32 +153,32 @@ fn observed_work_original_deadline_and_missing_completion_never_become_applied()
     let mut value = original.clone();
     value.observed_input_tokens = None;
     value.work.input_tokens = 0;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.work.inference_us = Some(30_000_001);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.work.inference_us = Some(u64::MAX);
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original.clone();
     value.reserved_input_tokens = 89;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     let mut value = original;
     value.identity = None;
-    assert!(value.validate(&Budget::default()).is_err());
+    assert!(value.validate(&historical_budget()).is_err());
     Ok(())
 }
 #[test]
 fn native_focus_receipt_fixture_emitter() -> Result<()> {
     let applied = ranking()?;
-    applied.validate(&Budget::default())?;
+    applied.validate(&historical_budget())?;
     let mut failed = applied.clone();
     failed.applied = false;
     failed.availability = Availability::Failed;
     failed.ranked_order = failed.original_order.clone();
-    failed.validate(&Budget::default())?;
+    failed.validate(&historical_budget())?;
     let document = json!({"schema":"airk.arbiter.focus-semantic-cases/1","qualification":false,
-        "budget":Budget::default(),"cases":[{"id":"complete_prefix","receipt":applied},{"id":"failed_atomic_fallback","receipt":failed}]});
+        "budget":historical_budget(),"cases":[{"id":"complete_prefix","receipt":applied},{"id":"failed_atomic_fallback","receipt":failed}]});
     let mut document = document;
     document["compact_not_applied"] = serde_json::to_value(
         FocusObservation::not_applied_if_fits(
@@ -415,7 +433,7 @@ fn compact_focus_notice_is_known_predispatch_and_never_consumes_native_custody()
         512,
     )?
     .unwrap();
-    observation.validate(&Budget::default())?;
+    observation.validate(&historical_budget())?;
     assert!(observation.receipt().is_none());
     assert!(
         FocusObservation::not_applied_if_fits(
@@ -434,7 +452,7 @@ fn compact_focus_notice_is_known_predispatch_and_never_consumes_native_custody()
     let mut raw = serde_json::to_value(&observation)?;
     raw["work_unknown"] = true.into();
     let forged: FocusObservation = serde_json::from_value(raw)?;
-    assert!(forged.validate(&Budget::default()).is_err());
+    assert!(forged.validate(&historical_budget()).is_err());
     Ok(())
 }
 pub(crate) fn search_record(record_scope: ScopeBinding) -> Result<EvidenceRecord> {
@@ -476,7 +494,7 @@ pub(crate) fn search_record(record_scope: ScopeBinding) -> Result<EvidenceRecord
 #[test]
 fn observed_focus_work_uses_only_typed_search_root_and_retains_unknown_actual_cost() -> Result<()> {
     let original = search_record(scope())?;
-    let summary = observed_focus_work(std::slice::from_ref(&original), &Budget::default())?;
+    let summary = observed_focus_work(std::slice::from_ref(&original), &historical_budget())?;
     assert_eq!(summary.work.input_tokens, 90);
     assert_eq!(summary.work.inference_us, Some(2));
     assert_eq!(summary.work.candidates, 3);
@@ -484,14 +502,14 @@ fn observed_focus_work_uses_only_typed_search_root_and_retains_unknown_actual_co
     let mut wrong = original.clone();
     wrong.operation = NativeRead::Context;
     assert_eq!(
-        observed_focus_work(&[wrong], &Budget::default())?
+        observed_focus_work(&[wrong], &historical_budget())?
             .work
             .input_tokens,
         0
     );
     let mut duplicate = original.clone();
     duplicate.id = digest(56);
-    assert!(observed_focus_work(&[original.clone(), duplicate], &Budget::default()).is_err());
+    assert!(observed_focus_work(&[original.clone(), duplicate], &historical_budget()).is_err());
     let mut unknown = original;
     {
         let raw = &mut unknown.canonical_result["focus"]["receipt"];
@@ -501,11 +519,13 @@ fn observed_focus_work_uses_only_typed_search_root_and_retains_unknown_actual_co
         raw["observed_input_tokens"] = serde_json::Value::Null;
         raw["work"]["input_tokens"] = 0.into();
     }
-    assert!(observed_focus_work(std::slice::from_ref(&unknown), &Budget::default())?.work_unknown);
+    assert!(
+        observed_focus_work(std::slice::from_ref(&unknown), &historical_budget())?.work_unknown
+    );
     let raw = &mut unknown.canonical_result["focus"]["receipt"];
     raw["observed_input_tokens"] = 101.into();
     raw["work"]["input_tokens"] = 101.into();
-    assert!(observed_focus_work(&[unknown], &Budget::default())?.failed_token_overrun);
+    assert!(observed_focus_work(&[unknown], &historical_budget())?.failed_token_overrun);
     Ok(())
 }
 

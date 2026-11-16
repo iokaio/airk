@@ -35,52 +35,76 @@ fn component_adapter() -> Result<()> {
     };
     let (root, data, args): (std::path::PathBuf, std::path::PathBuf, Vec<String>) =
         serde_json::from_str(request.to_str().context("invalid component request")?)?;
-    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let kernel = airk_kernel::Kernel::open_collection(root, Some(data), "component-performance")?;
-    let value = match args.as_slice() {
-        ["collections", "vectors", "install", model] => {
-            serde_json::to_value(kernel.install_vector_model(Path::new(model))?)?
-        }
-        [
-            "collections",
-            "vectors",
-            "selection",
-            "set",
-            "--file",
-            policy,
-        ] => serde_json::to_value(
-            kernel.configure_vector_selection(serde_json::from_slice(&fs::read(policy)?)?)?,
-        )?,
-        ["index"] => serde_json::to_value(kernel.index()?)?,
-        ["index", "--full"] => serde_json::to_value(kernel.reindex()?)?,
-        ["status"] => serde_json::to_value(kernel.status()?)?,
-        ["info", path] => serde_json::to_value(kernel.file_info(path)?)?,
-        [
-            "search",
-            text,
-            "--mode",
-            mode @ ("vector" | "lexical"),
-            rest @ ..,
-        ] => {
-            let prefix = match rest {
-                [] => None,
-                ["--path-prefix", value] => Some((*value).to_owned()),
-                _ => anyhow::bail!("unsupported component search"),
-            };
-            let query = airk_core::SearchQuery {
-                text: (*text).into(),
-                path_prefix: prefix,
-                limit: 10,
-                max_bytes: 4096,
-            };
-            serde_json::to_value(if *mode == "vector" {
-                kernel.semantic_search(&query)?
-            } else {
-                kernel.search(&query)?
+    // Each isolated component child owns a real private native lease. Model
+    // loading, every synchronous forward and model teardown stay on its joined
+    // compute thread; an environment variable never supplies inference authority.
+    let control = tempfile::Builder::new()
+        .prefix("airk-component-compute-")
+        .tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let ownership =
+        std::sync::Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+    let compute = std::thread::Builder::new()
+        .name("airk-component-compute".into())
+        .spawn(move || -> Result<Value> {
+            airk_kernel::inference_owner::run_service_inference(ownership, || -> Result<Value> {
+                let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+                let kernel = airk_kernel::Kernel::open_collection(
+                    root,
+                    Some(data),
+                    "component-performance",
+                )?;
+                let value = match args.as_slice() {
+                    ["collections", "vectors", "install", model] => {
+                        serde_json::to_value(kernel.install_vector_model(Path::new(model))?)?
+                    }
+                    [
+                        "collections",
+                        "vectors",
+                        "selection",
+                        "set",
+                        "--file",
+                        policy,
+                    ] => serde_json::to_value(kernel.configure_vector_selection(
+                        serde_json::from_slice(&fs::read(policy)?)?,
+                    )?)?,
+                    ["index"] => serde_json::to_value(kernel.index()?)?,
+                    ["index", "--full"] => serde_json::to_value(kernel.reindex()?)?,
+                    ["status"] => serde_json::to_value(kernel.status()?)?,
+                    ["info", path] => serde_json::to_value(kernel.file_info(path)?)?,
+                    [
+                        "search",
+                        text,
+                        "--mode",
+                        mode @ ("vector" | "lexical"),
+                        rest @ ..,
+                    ] => {
+                        let prefix = match rest {
+                            [] => None,
+                            ["--path-prefix", value] => Some((*value).to_owned()),
+                            _ => anyhow::bail!("unsupported component search"),
+                        };
+                        let query = airk_core::SearchQuery {
+                            text: (*text).into(),
+                            path_prefix: prefix,
+                            limit: 10,
+                            max_bytes: 4096,
+                        };
+                        serde_json::to_value(if *mode == "vector" {
+                            kernel.semantic_search(&query)?
+                        } else {
+                            kernel.search(&query)?
+                        })?
+                    }
+                    _ => anyhow::bail!("unsupported component operation: {args:?}"),
+                };
+                Ok(value)
             })?
-        }
-        _ => anyhow::bail!("unsupported component operation: {args:?}"),
-    };
+        })?;
+    let value = compute
+        .join()
+        .map_err(|_| anyhow::anyhow!("component compute thread panicked"))??;
+    // The synchronous native scope has returned and the actual thread joined.
+    control.close()?;
     fs::write(
         std::env::var_os("AIRK_PERF_RESULT").context("component result missing")?,
         serde_json::to_vec(&value)?,

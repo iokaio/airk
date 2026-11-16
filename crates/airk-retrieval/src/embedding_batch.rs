@@ -414,9 +414,11 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "local-inference")]
     #[test]
     #[ignore = "requires AIRK_TEST_MODEL_DIR with verified local ONNX assets"]
     fn real_model_parallel_vectors_cache_and_bypass_are_exact() -> Result<()> {
+        let _native_owner = crate::native_inference::fixture::NativeCompute::admit()?;
         let model =
             EmbeddingModel::open(std::path::Path::new(&std::env::var("AIRK_TEST_MODEL_DIR")?))?;
         ensure!(

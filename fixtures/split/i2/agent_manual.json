@@ -1,0 +1,47 @@
+{
+  "entries": [
+    {
+      "client": "claude",
+      "file": ".mcp.json",
+      "format": "json",
+      "scope": "project",
+      "text": "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:57421/mcp\"\n    }\n  }\n}\n"
+    },
+    {
+      "client": "claude",
+      "file": ".mcp.json",
+      "format": "json",
+      "scope": "project",
+      "text": "{\n  \"mcpServers\": {\n    \"airk-\\\"scope\\\\x\": {\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:57429/mcp\"\n    }\n  }\n}\n"
+    },
+    {
+      "client": "codex",
+      "file": ".codex/config.toml",
+      "format": "toml",
+      "scope": "project",
+      "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:57421/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+    },
+    {
+      "client": "codex",
+      "file": ".codex/config.toml",
+      "format": "toml",
+      "scope": "project",
+      "text": "[mcp_servers.\"airk-\\\"scope\\\\x\"]\nurl = \"https://127.0.0.1:57429/mcp\"\n\n[mcp_servers.\"airk-\\\"scope\\\\x\".http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+    },
+    {
+      "client": "vscode",
+      "file": ".vscode/mcp.json",
+      "format": "json",
+      "scope": "project",
+      "text": "{\n  \"servers\": {\n    \"airk\": {\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:57421/mcp\"\n    }\n  }\n}\n"
+    },
+    {
+      "client": "vscode",
+      "file": ".vscode/mcp.json",
+      "format": "json",
+      "scope": "project",
+      "text": "{\n  \"servers\": {\n    \"airk-\\\"scope\\\\x\": {\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:57429/mcp\"\n    }\n  }\n}\n"
+    }
+  ],
+  "schema": "airk.agent-manual-cases/1"
+}

@@ -15,12 +15,29 @@ const SELECTORS: &[&str] = &["project_ids", "index_ids", "member_availability"];
 /// Catalog for combined sessions. Legacy sessions retain their closed input
 /// catalog and cannot silently acquire a broader authority.
 pub fn operation_catalog() -> Value {
+    operation_catalog_for(AuthorityBasis::Projects)
+}
+
+/// The session owner supplies this basis after admitting its authority. Empty
+/// Project arrays never create open authority or widen a frozen selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityBasis {
+    Projects,
+    OpenIndexes,
+}
+
+/// Describe the admitted session's selection form; this grants no authority.
+pub fn operation_catalog_for(basis: AuthorityBasis) -> Value {
     let mut catalog = super::operation_catalog();
     for (name, operation) in catalog["operations"].as_object_mut().unwrap().iter_mut() {
         if name == "query_scope" {
             continue;
         }
         let properties = operation["properties"].as_object_mut().unwrap();
+        if basis == AuthorityBasis::OpenIndexes {
+            properties.insert("index_ids".into(), json!({"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"},"description":"When supplied, must exactly match the session's frozen named indexes; no per-step narrowing or widening."}));
+            continue;
+        }
         for (key, pattern) in [
             ("project_ids", "^prj_[0-9a-f]{32}$"),
             ("index_ids", "^idx_[0-9a-f]{32}$"),
@@ -48,7 +65,12 @@ pub fn operation_catalog() -> Value {
             .unwrap()
             .extend(constraints.as_array().unwrap().iter().cloned());
     }
-    catalog["scope"] = json!("explicit frozen Project/index selection");
+    catalog["scope"] = match basis {
+        AuthorityBasis::Projects => json!("explicit frozen Project/index selection"),
+        AuthorityBasis::OpenIndexes => {
+            json!("frozen named whole indexes; no Project selection or per-step scope changes")
+        }
+    };
     // U107: one declaration for every operation with `limit` (the combined
     // capabilities reply embeds this catalog under the public body bound, so
     // it is not repeated per operation; the MCP catalogs describe it).
@@ -57,8 +79,11 @@ pub fn operation_catalog() -> Value {
     catalog
 }
 
-fn canonical(mut selection: QuerySelection) -> Result<QuerySelection> {
-    selection.validate()?;
+fn canonical(mut selection: QuerySelection, basis: AuthorityBasis) -> Result<QuerySelection> {
+    match basis {
+        AuthorityBasis::Projects => selection.validate()?,
+        AuthorityBasis::OpenIndexes => selection.validate_open()?,
+    }
     selection.project_ids.sort();
     if let Some(indexes) = selection.index_ids.as_mut() {
         indexes.sort();
@@ -134,7 +159,11 @@ fn parse_combined_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
     Ok((steps, needs))
 }
 
-fn selected_args(args: &Map<String, Value>, inherited: &QuerySelection) -> Result<QuerySelection> {
+fn selected_args(
+    args: &Map<String, Value>,
+    inherited: &QuerySelection,
+    basis: AuthorityBasis,
+) -> Result<QuerySelection> {
     if !SELECTORS.iter().any(|key| args.contains_key(*key)) {
         return Ok(inherited.clone());
     }
@@ -142,7 +171,15 @@ fn selected_args(args: &Map<String, Value>, inherited: &QuerySelection) -> Resul
         .iter()
         .filter_map(|key| args.get(*key).map(|value| ((*key).into(), value.clone())))
         .collect();
-    let selection = canonical(serde_json::from_value(Value::Object(value))?)?;
+    let selection = canonical(serde_json::from_value(Value::Object(value))?, basis)?;
+    if basis == AuthorityBasis::OpenIndexes {
+        ensure!(
+            selection.index_ids == inherited.index_ids
+                && selection.member_availability == inherited.member_availability,
+            "open plan steps cannot change the frozen named index selection"
+        );
+        return Ok(selection);
+    }
     ensure!(
         selection
             .project_ids
@@ -177,11 +214,12 @@ fn validate_combined_step(
     prefix: &str,
     bound: bool,
     inherited: &QuerySelection,
+    basis: AuthorityBasis,
 ) -> Result<()> {
     if step.tool == "query_scope" {
         return validate_step(step, prefix, bound);
     }
-    let selection = selected_args(&step.args, inherited)?;
+    let selection = selected_args(&step.args, inherited, basis)?;
     let mut native = step.clone();
     for key in SELECTORS {
         native.args.remove(*key);
@@ -236,9 +274,10 @@ fn narrowed_origin(
     args: &mut Map<String, Value>,
     record: &Value,
     inherited: &QuerySelection,
+    basis: AuthorityBasis,
 ) -> Result<()> {
     let index = origin_index(record)?;
-    let mut selected = selected_args(args, inherited)?;
+    let mut selected = selected_args(args, inherited, basis)?;
     ensure!(
         selected
             .index_ids
@@ -249,11 +288,18 @@ fn narrowed_origin(
     let projects: Vec<QueryProjectId> =
         serde_json::from_value(record["origin"]["project_ids"].clone())?;
     unique_bounded(&projects, 32)?;
-    selected.project_ids.retain(|id| projects.contains(id));
-    ensure!(
-        !selected.project_ids.is_empty(),
-        "bound origin is outside selected Project memberships"
-    );
+    if basis == AuthorityBasis::OpenIndexes {
+        ensure!(
+            projects.is_empty() && selected.index_ids.as_deref() == Some(&[index]),
+            "open dependency requires its originating index as the outer named scope"
+        );
+    } else {
+        selected.project_ids.retain(|id| projects.contains(id));
+        ensure!(
+            !selected.project_ids.is_empty(),
+            "bound origin is outside selected Project memberships"
+        );
+    }
     selected.index_ids = Some(vec![index]);
     install_selection(args, &selected)?;
     if let Some(token) = record["origin"]["publication"]["token"].as_str() {
@@ -268,6 +314,7 @@ fn expand_combined(
     outputs: &BTreeMap<String, Value>,
     cap: usize,
     inherited: &QuerySelection,
+    basis: AuthorityBasis,
 ) -> Result<(Vec<Map<String, Value>>, bool)> {
     let Some(binding) = step.bind.first() else {
         return Ok((vec![step.args.clone()], false));
@@ -303,14 +350,14 @@ fn expand_combined(
         let record = *identities.values().next().unwrap();
         let mut args = step.args.clone();
         args.insert("path".into(), record["citation"]["path"].clone());
-        narrowed_origin(&mut args, record, inherited)?;
+        narrowed_origin(&mut args, record, inherited, basis)?;
         return Ok((vec![args], false));
     }
     let mut args_list = Vec::new();
     let mut seen = BTreeSet::new();
     for record in &records {
         let mut args = step.args.clone();
-        narrowed_origin(&mut args, record, inherited)?;
+        narrowed_origin(&mut args, record, inherited, basis)?;
         if binding.select == "selected_symbol_ids" {
             let id = record.pointer("/fact/code/symbol_id").or_else(|| record.pointer("/fact/symbol_id")).and_then(Value::as_str).context("dependency has no native symbol IDs; use an explicit compact:false lookup at the cited origin")?;
             args.insert("symbol".into(), json!(id));
@@ -349,6 +396,29 @@ pub async fn execute<F, Fut>(
     request: Request,
     selection: QuerySelection,
     scope_identity: Sha256Digest,
+    reader: F,
+) -> Result<ResultEnvelope>
+where
+    F: FnMut(String, Map<String, Value>) -> Fut,
+    Fut: Future<Output = Result<Value>>,
+{
+    execute_with_basis(
+        request,
+        selection,
+        scope_identity,
+        AuthorityBasis::Projects,
+        reader,
+    )
+    .await
+}
+
+/// Execute within the authority basis already admitted by the session owner.
+/// The basis is private adapter context, never decoded from plan/client input.
+pub async fn execute_with_basis<F, Fut>(
+    request: Request,
+    selection: QuerySelection,
+    scope_identity: Sha256Digest,
+    basis: AuthorityBasis,
     mut reader: F,
 ) -> Result<ResultEnvelope>
 where
@@ -370,7 +440,7 @@ where
             == 1,
         "choose text, recipe or plan"
     );
-    let selection = canonical(selection)?;
+    let selection = canonical(selection, basis)?;
     let started = Instant::now();
     let mut needs = Vec::new();
     let mut plan = if let Some(plan) = request.plan {
@@ -409,7 +479,7 @@ where
     );
     if let Some(previous) = &plan.query_scope {
         ensure!(
-            serde_json::to_value(canonical(previous.clone())?)?
+            serde_json::to_value(canonical(previous.clone(), basis)?)?
                 == serde_json::to_value(&selection)?,
             "combined plan selection changed; prepare again"
         );
@@ -539,7 +609,7 @@ where
         {
             step.args.insert("reply_detail".into(), json!(detail));
         }
-        let own_selection = selected_args(&step.args, &selection)?;
+        let own_selection = selected_args(&step.args, &selection, basis)?;
         if step.tool != "query_scope" {
             install_selection(&mut step.args, &own_selection)?;
         }
@@ -571,7 +641,13 @@ where
                     .clone(),
             );
         }
-        validate_combined_step(step, &plan.path_prefix, step.bind.is_empty(), &selection)?;
+        validate_combined_step(
+            step,
+            &plan.path_prefix,
+            step.bind.is_empty(),
+            &selection,
+            basis,
+        )?;
         if needs_origin(&step.tool)
             && step.bind.is_empty()
             && own_selection
@@ -664,6 +740,7 @@ where
             &outputs,
             plan.budgets.fanout.saturating_sub(fanout),
             &selection,
+            basis,
         ) {
             Ok(expanded) => expanded,
             Err(error) => {
@@ -732,6 +809,7 @@ where
                 &plan.path_prefix,
                 true,
                 &selection,
+                basis,
             )?;
             let at = Instant::now();
             result.calls += 1;
@@ -777,7 +855,7 @@ where
                             .push(format!("{}: payload budget exceeded", step.id));
                     } else {
                         let records = locations(&value)?;
-                        let selected = selected_args(&args, &selection)?;
+                        let selected = selected_args(&args, &selection, basis)?;
                         for record in &records {
                             let origin: crate::combined_reads::QualifiedOrigin =
                                 serde_json::from_value(record["origin"].clone())
@@ -987,6 +1065,160 @@ mod tests {
     }
     fn request(value: Value) -> Request {
         serde_json::from_value(value).unwrap()
+    }
+
+    fn open_selection() -> QuerySelection {
+        QuerySelection {
+            project_ids: vec![],
+            index_ids: Some(vec![index(2), index(3)]),
+            member_availability: MemberAvailability::Report,
+        }
+    }
+
+    #[test]
+    fn explicit_open_basis_executes_capabilities_without_project_authority() -> Result<()> {
+        let calls = RefCell::new(Vec::new());
+        let result = run(execute_with_basis(
+            request(
+                json!({"schema":REQUEST_SCHEMA,"mode":"execute","verification":"off",
+                "plan":{"steps":[{"id":"form","tool":"capabilities","args":{}}]}}),
+            ),
+            open_selection(),
+            identity(),
+            AuthorityBasis::OpenIndexes,
+            |tool, args| {
+                calls.borrow_mut().push((tool, args));
+                async { Ok(json!({"formats":["Rust","Markdown"],"complete":true})) }
+            },
+        ))?;
+        assert_eq!(result.status, "complete");
+        assert!(result.executed);
+        assert_eq!(result.calls, 1);
+        assert_eq!(result.plan.query_scope, Some(open_selection()));
+        assert_eq!(
+            result.steps[0].result,
+            Some(json!({"formats":["Rust","Markdown"],"complete":true}))
+        );
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "capabilities");
+        assert_eq!(calls[0].1["project_ids"], json!([]));
+        assert_eq!(calls[0].1["index_ids"], json!([index(2), index(3)]));
+        Ok(())
+    }
+
+    #[test]
+    fn open_prepared_plan_preserves_scope_and_rejects_changed_authority() -> Result<()> {
+        let prepared = run(execute_with_basis(
+            request(json!({"schema":REQUEST_SCHEMA,"text":"/capabilities","verification":"off"})),
+            open_selection(),
+            identity(),
+            AuthorityBasis::OpenIndexes,
+            |_, _| async { panic!("prepare cannot dispatch") },
+        ))?;
+        assert!(!prepared.executed);
+        let executed = run(execute_with_basis(
+            request(json!({"schema":REQUEST_SCHEMA,"mode":"execute","plan":prepared.plan.clone()})),
+            open_selection(),
+            identity(),
+            AuthorityBasis::OpenIndexes,
+            |_, _| async { Ok(json!({"complete":true})) },
+        ))?;
+        assert_eq!(executed.status, "complete");
+        assert_eq!(executed.plan.digest, prepared.plan.digest);
+        for basis in [AuthorityBasis::Projects, AuthorityBasis::OpenIndexes] {
+            let changed = if basis == AuthorityBasis::Projects {
+                identity()
+            } else {
+                Sha256Digest::from_bytes([8; 32])
+            };
+            assert!(run(execute_with_basis(
+                request(json!({"schema":REQUEST_SCHEMA,"mode":"execute","plan":prepared.plan.clone()})),
+                open_selection(), changed, basis,
+                |_, _| async { panic!("changed authority cannot dispatch") },
+            )).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn open_steps_refuse_projects_and_named_index_changes_before_dispatch() {
+        for args in [
+            json!({"project_ids":[project()],"index_ids":[index(2),index(3)]}),
+            json!({"index_ids":[index(2)]}),
+            json!({"index_ids":[index(2),index(3),index(9)]}),
+            json!({"index_ids":[]}),
+            json!({"index_ids":[index(2),index(3)],"member_availability":"require"}),
+        ] {
+            assert!(
+                run(execute_with_basis(
+                    request(
+                        json!({"schema":REQUEST_SCHEMA,"mode":"execute","verification":"off",
+                    "plan":{"steps":[{"id":"form","tool":"capabilities","args":args}]}})
+                    ),
+                    open_selection(),
+                    identity(),
+                    AuthorityBasis::OpenIndexes,
+                    |_, _| async { panic!("scope change cannot dispatch") },
+                ))
+                .is_err(),
+                "{args}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_origin_binding_cannot_narrow_a_multi_index_session() -> Result<()> {
+        let record = json!({"origin":{"index_id":index(2),"project_ids":[]}});
+        let mut args = Map::new();
+        assert!(
+            narrowed_origin(
+                &mut args,
+                &record,
+                &open_selection(),
+                AuthorityBasis::OpenIndexes
+            )
+            .is_err()
+        );
+        assert!(args.is_empty());
+        let singleton = QuerySelection {
+            index_ids: Some(vec![index(2)]),
+            ..open_selection()
+        };
+        narrowed_origin(&mut args, &record, &singleton, AuthorityBasis::OpenIndexes)?;
+        assert_eq!(args["project_ids"], json!([]));
+        assert_eq!(args["index_ids"], json!([index(2)]));
+        Ok(())
+    }
+
+    #[test]
+    fn open_catalog_describes_named_indexes_without_grant_project_constraints() {
+        let open = operation_catalog_for(AuthorityBasis::OpenIndexes);
+        let grant = operation_catalog();
+        for name in ["search", "capabilities", "read_file"] {
+            assert!(
+                open["operations"][name]["properties"]
+                    .get("project_ids")
+                    .is_none()
+            );
+            assert_eq!(
+                open["operations"][name]["properties"]["index_ids"]["minItems"],
+                1
+            );
+            assert!(open["operations"][name].get("allOf").is_none());
+            assert!(
+                grant["operations"][name]["properties"]
+                    .get("project_ids")
+                    .is_some()
+            );
+            assert!(
+                grant["operations"][name]["allOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["then"]["required"] == json!(["project_ids"]))
+            );
+        }
     }
 
     #[test]

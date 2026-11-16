@@ -133,6 +133,68 @@ fn marks_name_installation_locations_and_index_roots_by_compared_path() {
 }
 
 #[test]
+fn starting_drive_shortcuts_do_not_invoke_native_folder_observation() -> Result<()> {
+    let drive = PathBuf::from(if cfg!(windows) { r"Z:\" } else { "/" });
+    let listing = starting_list_with_check(
+        &Marks::default(),
+        std::slice::from_ref(&drive),
+        None,
+        |_| panic!("opaque OS drive inventory must not open or canonicalize a drive"),
+    )?;
+    assert_eq!(listing.entries.len(), 1);
+    assert_eq!(listing.entries[0].path, shown(&drive));
+    assert_eq!(listing.entries[0].start, Some(FolderStart::Drive));
+    assert!(listing.path.is_none());
+    Ok(())
+}
+
+#[test]
+fn starting_home_and_data_keep_native_privacy_checks_and_refusals() -> Result<()> {
+    let home = PathBuf::from("/home/fictional");
+    let data = PathBuf::from("/srv/fictional/indexes");
+    let marks = Marks {
+        data: Some(data.clone()),
+        ..Default::default()
+    };
+    let mut observed = Vec::new();
+    let listing = starting_list_with_check(&marks, &[], Some(home.clone()), |path| {
+        observed.push(path.to_path_buf());
+        Ok(())
+    })?;
+    assert_eq!(observed, [home.clone(), data.clone()]);
+    assert_eq!(listing.entries.len(), 2);
+    for refused in [home, data] {
+        let error = starting_list_with_check(
+            &marks,
+            &[],
+            Some(PathBuf::from("/home/fictional")),
+            |path| {
+                if path == refused.as_path() {
+                    bail!(
+                        "{NOT_READABLE}: private retained configuration folders cannot be listed"
+                    );
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().starts_with(NOT_READABLE));
+    }
+    Ok(())
+}
+
+#[test]
+fn lexical_private_drive_names_refuse_without_native_observation() {
+    let private = PathBuf::from("/.airk/agent-edits/v1/private-transaction");
+    let error = starting_list_with_check(&Marks::default(), &[private], None, |_| {
+        panic!("lexical private-path refusal must precede native observation")
+    })
+    .unwrap_err();
+    assert!(error.to_string().starts_with(NOT_READABLE));
+    assert!(!error.to_string().contains("private-transaction"));
+}
+
+#[test]
 fn the_starting_list_offers_drives_home_and_the_data_location() {
     let locations = Locations {
         program: "/srv/airk/program".into(),

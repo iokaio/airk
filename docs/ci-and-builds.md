@@ -436,6 +436,49 @@ F06a qualification requires exact first status on an existing healthy saved inde
 
 The opt-in CLI `runtime_install::native_connection_tests` use `AIRK_F03_RUNTIME` and `AIRK_F03_APPROVED_SHA256` for a freshly built, independently reviewed pair; the historical variable names also apply to later candidates. Set `TEMP`/`TMP` to an owned fixture directory outside source roots and `AIRK_NATIVE_EOF_DIAGNOSTIC_DIR` to a fresh external diagnostics parent. The EOF matrix creates exclusive per-scenario directories and retains child stderr and the first status reply there. Run the selected tests with `--ignored --test-threads=1`. Never supply an installed user runtime or existing user state as fixture storage. These tests preserve their exact timeout/receipt assertions and exercise unregistered source, registered source and installed pinned-project initialization, catalog/help and EOF while the installer lock is held.
 
+### Current macOS I4 installed journey
+
+`check-current-macos-install.py` is an opt-in driver for the actual current DMG
+wrapper and I4 installation. Run it only on a matching native Mac logged in as
+its standard human user, after reviewing the exact tested source pair, signed
+pair, notarized DMG and installer manifest. It refuses occupied or retained AIRK
+locations, processes and login definitions. The fixed pointer is resolved from
+the native home; alternate accounts, `HOME` overrides and ACL changes do not
+isolate this journey. Existing source checkouts remain untouched. Process
+preflight parses PID, UID and the complete executable path, then matches only
+current/retained AIRK executable basenames for this UID, as the native Mac
+`PROC_UID_ONLY` audit does. Cached Python, Node or CMake below `airk-builds` are
+not AIRK processes. Other users' AIRK rows are retained as observations and grant
+no termination or cleanup authority.
+
+```sh
+python3 -B scripts/check-current-macos-install.py --allow-install --target aarch64-apple-darwin --runtime-dir <tested-source-pair> --signed-dir <verified-signing-directory> --installer <candidate.dmg> --manifest <installer.json> --approved-installer-sha256 <reviewed-dmg-digest> --approved-manifest-sha256 <reviewed-manifest-digest> --out <fresh-human-owned-evidence-directory>
+```
+
+The driver delegates artifact checks to the existing packaging/signing owners,
+checks the complete mounted roster and canonical wrapper, then uses `--silent`
+with fresh explicit program/data/state/cache/log roots. It validates native I4
+and setup receipts, same-user service image/health, original-operation wrapper
+reconciliation, actual Stop/Start and keep-data removal. Kernel events retain
+original observation deadlines, rejecting read/kernel results at or after their
+original boundary. Only an `ESRCH` registration race permits one read of the
+original PID to establish actual absence; permission and other errors remain
+unknown. Failures retain requests, mounts and diagnostics
+without automatic replay or cleanup. Headless setup skips certificate trust and
+login startup. A disabled/pending Login Items registration is not disproved by
+an absent launchd job, and native admission failures remain failures.
+
+A real upgrade additionally requires all six `--previous-` inputs matching the
+current input options, for a genuine strictly older independently approved
+installer/source/signed pair. Without them `upgrade_exercised` remains false.
+Successful original-operation reconciliation does not qualify interrupted
+recovery, model execution, read transports, login consent, Intel or oldest macOS.
+The older `check-macos-login.py` is historical schema-1 coverage;
+`check-macos-direct-runtime.py` consumes schema-2 runtime operations and does not
+qualify this current I4 journey. The new driver's mock/pure tests run with
+`python -B -m unittest scripts.tests.test_current_macos_install -v`; they establish
+harness guards only. Actual candidate execution remains a separate gate.
+
 ### Focused status and Mac loader regressions
 
 Run these checks while investigating cold-status timing, before another hosted run:

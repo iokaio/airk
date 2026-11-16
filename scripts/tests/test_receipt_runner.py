@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import signal
 import sys
 import tempfile
 import unittest
@@ -129,6 +130,187 @@ class Receipts(unittest.TestCase):
             for name in ('TEMP','TMP','TMPDIR'):
                 self.assertEqual(environment[name],str(private))
 
+    def test_child_git_environment_has_no_synthetic_trust_configuration(self):
+        inherited = {key:value for key,value in RUNNER.os.environ.items() if not key.upper().startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            args = RUNNER.parse(["--groups", "", "git-environment", sys.executable, "-c", "pass"])
+            with patch.dict(RUNNER.os.environ, inherited, clear=True):
+                environment = RUNNER.environment(args, out)
+            self.assertFalse(any(key.upper().startswith("GIT_") for key in environment))
+            child = subprocess.run([sys.executable, "-I", "-B", "-c", "import json,os; print(json.dumps({k:v for k,v in os.environ.items() if k.upper().startswith('GIT_')}))"],
+                env=environment, capture_output=True, text=True, check=True, timeout=15)
+            self.assertEqual(json.loads(child.stdout), {})
+
+    def test_child_preserves_explicit_inherited_git_overrides_for_native_refusal(self):
+        inherited = {key:value for key,value in RUNNER.os.environ.items() if not key.upper().startswith("GIT_")}
+        explicit = {"GIT_CONFIG_COUNT":"1", "GIT_CONFIG_KEY_0":"core.fsmonitor", "GIT_CONFIG_VALUE_0":"unreviewed-fixture-command", "GIT_CONFIG_GLOBAL":"explicit-user-config"}
+        inherited.update(explicit)
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            args = RUNNER.parse(["--groups", "", "inherited-git", sys.executable, "-c", "pass"])
+            with patch.dict(RUNNER.os.environ, inherited, clear=True):
+                environment = RUNNER.environment(args, out)
+            self.assertEqual({key:value for key,value in environment.items() if key.upper().startswith("GIT_")}, explicit)
+            child = subprocess.run([sys.executable, "-I", "-B", "-c", "import json,os; print(json.dumps({k:v for k,v in os.environ.items() if k.upper().startswith('GIT_')}))"],
+                env=environment, capture_output=True, text=True, check=True, timeout=15)
+            self.assertEqual(json.loads(child.stdout), explicit)
+
+    def test_authentic_flushed_start_and_runner_snapshot_precede_real_child(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            source = ROOT / 'scripts/tests/test_receipt_runner.py'
+            child = (
+                'import hashlib,json,sys; from pathlib import Path; '
+                'start=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); '
+                'assert start["status"]=="started" and start["passed"] is False; '
+                'assert start["exit_code"] is None and start["elapsed_seconds"] is None; '
+                'assert start["child"]["state"]=="not_observed"; '
+                'assert start["command_inputs"]["scripts/tests/test_receipt_runner.py"]=='
+                'hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest(); '
+                'assert start["runner_sha256"]==hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest(); '
+                'assert start["runtime_seal"] is None; print("authentic start preceded child")')
+            result = self.run_runner(out, 'durable-start', sys.executable, '-c', child,
+                str(out / 'durable-start-start.json'), str(out / 'durable-start-runner.py'), str(source),
+                extra=('--groups', ''))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            start = json.loads((out / 'durable-start-start.json').read_text(encoding='utf-8'))
+            receipt = json.loads((out / 'durable-start.json').read_text(encoding='utf-8'))
+            self.assertEqual(start['status'], 'started')
+            self.assertIsNone(start['ended_unix'])
+            self.assertIsNone(start['runner_exit_code'])
+            self.assertEqual(receipt['start_receipt']['sha256'], RUNNER.digest(out / 'durable-start-start.json'))
+            self.assertEqual(receipt['status'], 'completed')
+            self.assertTrue(receipt['passed'])
+            self.assertEqual(receipt['child']['state'], 'exited')
+            self.assertEqual(receipt['child']['returncode'], 0)
+            self.assertGreaterEqual(receipt['ended_unix'], receipt['started_unix'])
+            self.assertGreaterEqual(receipt['elapsed_seconds'], 0)
+            self.assertIn('authentic start preceded child', (out / 'durable-start.log').read_text())
+
+    def test_sigint_records_actual_running_child_without_claiming_settlement_or_replay(self):
+        original_popen = subprocess.Popen
+        previous_handler = signal.getsignal(signal.SIGINT)
+        children = []
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            def spawn(command, **options):
+                start = json.loads((out / 'interrupted-start.json').read_text(encoding='utf-8'))
+                self.assertEqual(start['status'], 'started')
+                process = original_popen(command, stdin=subprocess.PIPE, **options)
+                wait = process.wait
+                children.append((process, wait))
+                def interrupt_wait():
+                    signal.raise_signal(signal.SIGINT)
+                    self.fail('SIGINT did not interrupt the wait')
+                process.wait = interrupt_wait
+                return process
+            try:
+                with patch.object(RUNNER.subprocess, 'Popen', side_effect=spawn) as launch, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = RUNNER.main(['--groups', '', '--out', str(out), 'interrupted', sys.executable,
+                        '-c', 'import sys; sys.stdin.buffer.read(); print("owned child released", flush=True)'])
+                self.assertEqual(status, 130)
+                launch.assert_called_once()
+                receipt = json.loads((out / 'interrupted.json').read_text(encoding='utf-8'))
+                self.assertEqual(receipt['status'], 'interrupted')
+                self.assertFalse(receipt['passed'])
+                self.assertTrue(receipt['interrupted'])
+                self.assertEqual(receipt['interruption']['reason'], 'SIGINT')
+                self.assertEqual(receipt['child']['pid'], children[0][0].pid)
+                self.assertEqual(receipt['child']['state'], 'running')
+                self.assertIsNone(receipt['child']['returncode'])
+                self.assertIsNone(receipt['exit_code'])
+                self.assertIn('descendant settlement is not certified', receipt['child']['scope'])
+                self.assertIsNone(children[0][0].poll())
+                self.assertIs(signal.getsignal(signal.SIGINT), previous_handler)
+            finally:
+                # Release/reap only the exact Popen child this test created.
+                # The earlier receipt remains the honest interruption snapshot.
+                for child, wait in children:
+                    child.stdin.close()
+                    self.assertEqual(wait(timeout=15), 0)
+
+    def test_keyboard_interrupt_during_launch_retains_unknown_child_and_prelaunch_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            runtime = out / 'runtime'; runtime.mkdir()
+            identity = {'version': 'fixture', 'files': {'airk': 'a' * 64}, 'executables': ['airk']}
+            with patch.object(RUNNER, 'runtime_identity', return_value=identity) as seal, \
+                    patch.object(RUNNER.subprocess, 'Popen', side_effect=KeyboardInterrupt) as launch, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(['--groups', '', '--out', str(out), '--runtime', str(runtime),
+                                      'launch-interrupted', sys.executable, '-c', 'pass'])
+            self.assertEqual(status, 130)
+            launch.assert_called_once()
+            seal.assert_called_once()
+            receipt = json.loads((out / 'launch-interrupted.json').read_text())
+            start = json.loads((out / 'launch-interrupted-start.json').read_text())
+            self.assertEqual(start['runtime_seal'], identity)
+            self.assertEqual(receipt['runtime_seal'], identity)
+            self.assertIsNone(receipt['runtime_unchanged'])
+            self.assertIsNone(receipt['child']['pid'])
+            self.assertEqual(receipt['child']['state'], 'not_observed')
+            self.assertFalse(receipt['passed'])
+            self.assertEqual(receipt['interruption']['reason'], 'KeyboardInterrupt')
+
+    def test_interrupt_during_evidence_is_nonpass_even_after_observed_zero_child_exit(self):
+        calls = []
+        def observe(groups):
+            calls.append(groups)
+            if len(calls) == 2:
+                signal.raise_signal(signal.SIGINT)
+            return {}
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            with patch.object(RUNNER, 'observe', side_effect=observe), contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(['--groups', '', '--out', str(out), 'evidence-interrupted',
+                                      sys.executable, '-c', 'pass'])
+            self.assertEqual(status, 130)
+            receipt = json.loads((out / 'evidence-interrupted.json').read_text())
+            self.assertTrue(receipt['inputs_unchanged'])
+            self.assertEqual(receipt['child']['state'], 'exited')
+            self.assertEqual(receipt['child']['returncode'], 0)
+            self.assertEqual(receipt['exit_code'], 0)
+            self.assertEqual(receipt['runner_exit_code'], 130)
+            self.assertEqual(receipt['status'], 'interrupted')
+            self.assertFalse(receipt['passed'])
+
+    def test_existing_start_cannot_replay_or_overwrite_an_uncertain_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            start = out / 'retained-start.json'
+            original = b'{"status":"started","original":"retained exact bytes"}\n'
+            start.write_bytes(original)
+            with patch.object(RUNNER.subprocess, 'Popen') as launch, self.assertRaises(FileExistsError):
+                RUNNER.main(['--groups', '', '--out', str(out), 'retained', sys.executable, '-c', 'pass'])
+            launch.assert_not_called()
+            self.assertEqual(start.read_bytes(), original)
+            self.assertEqual(sorted(path.name for path in out.iterdir()), ['retained-start.json'])
+
+    def test_launch_failure_and_postprocess_failure_retain_nonpass_dispositions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            with contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(['--groups', '', '--out', str(out), 'launch-failed', str(out / 'missing-command')])
+            self.assertEqual(status, 127)
+            receipt = json.loads((out / 'launch-failed.json').read_text())
+            self.assertEqual(receipt['status'], 'launch_failed')
+            self.assertFalse(receipt['passed'])
+            self.assertEqual(receipt['execution_error']['type'], 'FileNotFoundError')
+            self.assertIsNone(receipt['exit_code'])
+            with patch.object(RUNNER, 'observe', side_effect=[{}, PermissionError('retained final evidence refusal')]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(['--groups', '', '--out', str(out), 'evidence-failed', sys.executable, '-c', 'pass'])
+            self.assertEqual(status, 5)
+            receipt = json.loads((out / 'evidence-failed.json').read_text())
+            self.assertEqual(receipt['status'], 'evidence_failed')
+            self.assertFalse(receipt['passed'])
+            self.assertIsNone(receipt['inputs_unchanged'])
+            self.assertEqual(receipt['child']['returncode'], 0)
+            self.assertEqual(receipt['evidence_errors'][0]['operation'], 'input_groups')
+            self.assertEqual(receipt['evidence_errors'][0]['type'], 'PermissionError')
+
     def run_runner(self, out, *command, extra=()):
         argv = [sys.executable, str(ROOT / "scripts/dev/receipt_runner.py"), "--groups", "fixtures",
                 "--out", str(out), *extra, *command]
@@ -186,6 +368,117 @@ class Receipts(unittest.TestCase):
                 self.assertEqual((out / (name + "-junit.xml")).exists(), expected)
                 if expected:
                     self.assertEqual(receipt["junit"]["sha256"], RUNNER.digest(junit))
+
+
+
+class CargoTimingAttribution(unittest.TestCase):
+    def test_direct_cargo_requires_requested_timings(self):
+        for command in (["cargo", "build", "--timings"], ["cargo.exe", "nextest", "run", "--timings"],
+                        ["cargo", "clippy", "--timings=html"]):
+            self.assertTrue(RUNNER.cargo_timing_command(command, ROOT), command)
+        for command in (["cargo", "metadata"], ["cargo", "fmt", "--all"], []):
+            self.assertFalse(RUNNER.cargo_timing_command(command, ROOT), command)
+
+    def test_owned_maintained_build_wrappers_keep_indirect_timings(self):
+        commands = [
+            [sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"],
+            [sys.executable, "-I", "-B", "scripts/build-service-container.py", "--destination", "artifacts/container"],
+            [sys.executable, "scripts/dev-check.py", "-p", "airkctl"],
+            [sys.executable, "scripts/build-local-service-installer.py", "--force-build"],
+            ["pwsh", "-NoProfile", "-File", "scripts/build-local-service-installer.ps1", "-ForceBuild"],
+            ["pwsh", "-NoProfile", "-File", "scripts/build-local-installers.ps1", "-ForceBuild"],
+            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json", "--",
+                sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"],
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(RUNNER.cargo_timing_command(command, ROOT))
+
+    def test_unrelated_or_nonbuilding_modes_cannot_adopt_another_cargo_report(self):
+        commands = [
+            [sys.executable, "-c", "print('cargo build --timings')"],
+            [sys.executable, "scripts/tests/test_local_wrappers.py"],
+            [sys.executable, str(ROOT.parent / "other/scripts/build-service-runtime.py")],
+            ["node", "--test", "some.test.cjs"],
+            ["pwsh", "-Command", "cargo build --timings"],
+            [sys.executable, "scripts/build-local-installers.ps1", "-ForceBuild"],
+            ["pwsh", "-File", "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"],
+            [sys.executable, "scripts/dev-check.py", "-p", "airkctl", "--dry-run"],
+            [sys.executable, "scripts/build-local-service-installer.py", "--runtime-dir", "tested", "--admin-inventory", "checked.json"],
+            ["pwsh", "-File", "scripts/build-local-service-installer.ps1", "-RuntimeDir", "tested", "-AdminInventory", "checked.json"],
+            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json"],
+            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json", "--", sys.executable, "-c", "pass"],
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(RUNNER.cargo_timing_command(command, ROOT))
+
+    def timing_receipt(self, command, *, banner=True, outside=False, stale=False):
+        # A fake child creates this test's private artifacts and Cargo banner.
+        # The newest alias deliberately belongs to another owner. No Cargo runs.
+        class Child:
+            pid = 12345
+            returncode = 0
+            def wait(self): return 0
+            def poll(self): return 0
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            target = out / "target"
+            timing = target / "cargo-timings/cargo-timing-observed.html"
+            alias = timing.with_name("cargo-timing.html")
+            def launch(*args, **kwargs):
+                timing.parent.mkdir(parents=True)
+                timing.write_bytes(b"the command's actual saved Cargo report")
+                RUNNER.os.utime(timing, (999 if stale else 1001, 999 if stale else 1001))
+                alias.write_bytes(b"newer incidental alias from another Cargo owner")
+                RUNNER.os.utime(alias, (1002, 1002))
+                reported = timing
+                if outside:
+                    reported = out / "other-target/cargo-timings/cargo-timing-observed.html"
+                    reported.parent.mkdir(parents=True)
+                    reported.write_bytes(b"unselected target report")
+                    RUNNER.os.utime(reported, (1001, 1001))
+                if banner:
+                    kwargs["stdout"].write(f"      Timing report saved to {reported}\n".encode())
+                return Child()
+            with patch.object(RUNNER, "ROOT", ROOT), patch.object(RUNNER.subprocess, "Popen", side_effect=launch), \
+                    patch.object(RUNNER.time, "time", return_value=1000), contextlib.redirect_stdout(io.StringIO()):
+                status = RUNNER.main(["--groups", "", "--out", str(out), "--target-dir", str(target), "timing-owner", *command])
+            self.assertEqual(status, 0)
+            receipt = json.loads((out / "timing-owner.json").read_text(encoding="utf-8"))
+            copied = out / "timing-owner-cargo-timing.html"
+            return receipt, copied.read_bytes() if copied.exists() else None
+
+    def test_fresh_incidental_report_is_not_copied_for_python_or_node(self):
+        for command in ([sys.executable, "-c", "pass"], ["node", "a-script.cjs"]):
+            with self.subTest(command=command):
+                receipt, copied = self.timing_receipt(command)
+                self.assertNotIn("cargo_timings", receipt)
+                self.assertIsNone(copied)
+                self.assertEqual(receipt["status"], "completed")
+                self.assertTrue(receipt["passed"])
+
+    def test_exact_logged_report_survives_a_newer_concurrent_alias_for_cargo_and_builder(self):
+        for command in (["cargo", "build", "--timings"], [sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"]):
+            with self.subTest(command=command):
+                receipt, copied = self.timing_receipt(command)
+                self.assertEqual(receipt["cargo_timings"], "timing-owner-cargo-timing.html")
+                self.assertEqual(copied, b"the command's actual saved Cargo report")
+
+    def test_capable_wrapper_without_actual_cargo_banner_never_claims_incidental_timings(self):
+        receipt, copied = self.timing_receipt([sys.executable, "scripts/dev-check.py", "-p", "airkctl"], banner=False)
+        self.assertNotIn("cargo_timings", receipt)
+        self.assertIsNone(copied)
+
+    def test_logged_report_from_another_target_is_not_this_receipts_evidence(self):
+        receipt, copied = self.timing_receipt(["cargo", "build", "--timings"], outside=True)
+        self.assertNotIn("cargo_timings", receipt)
+        self.assertIsNone(copied)
+
+    def test_stale_logged_report_cannot_be_replaced_by_a_fresh_incidental_alias(self):
+        receipt, copied = self.timing_receipt(["cargo", "build", "--timings"], stale=True)
+        self.assertNotIn("cargo_timings", receipt)
+        self.assertIsNone(copied)
 
 
 if __name__ == "__main__":

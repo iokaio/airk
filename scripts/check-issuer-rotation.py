@@ -62,7 +62,7 @@ def rotation(fixture, action, receipt=None, **flags):
         args += ["--operation-id", receipt["rotation"]["operation_id"], "--expected-receipt-sha256", receipt["receipt_sha256"]]
     for key, value in flags.items():
         args += ["--" + key.replace("_", "-"), str(value)]
-    value = json.loads(fixture.run(*args).stdout)
+    value = json.loads(fixture.service_run(*args).stdout)
     assert value["schema"] == 1
     return value
 
@@ -128,7 +128,7 @@ def main():
     original_network = replacement = None
     primary = None
     try:
-        assert fixture.single_image, "This acceptance campaign requires an approved schema-2 runtime"
+        assert fixture.single_image, "This acceptance campaign requires an approved single-image or matched-pair runtime"
         fixture.start()
         original_health = fixture.managed_health.copy()
         root, data = owner / "sources", owner / "data"
@@ -140,13 +140,12 @@ def main():
         fixture.configure("issuer-fixture", {"operation": "vectors", "enabled": False})
         fixture.job("issuer-fixture", "index")
         publication = fixture.published_status("issuer-fixture")["publication"]
-        connection_id = uuid.uuid4().hex
-        before = fixture.enroll_http({"kind": "scoped", "selection": fixture.scopes["issuer-fixture"]}, connection_id)
+        scope = {"index_ids": [fixture.scopes["issuer-fixture"]["index_id"]]}
+        before = fixture.http_endpoint()
         transport.validate_native_identity(before, fixture.managed_health)
-        original_network = transport.McpClient(before, fixture.control)
+        original_network = transport.McpClient(before, fixture.control, scope=scope)
         handshake(original_network)
         report["before_read"] = search(original_network)
-        credential_sha = digest(transport.private_bytes(before["credential_file"], fixture.control, 103))
         assert not (fixture.control / "http-1/user-trust-1.json").exists(), "Fresh fixture unexpectedly owns OS trust"
 
         prepared = prepare(fixture)
@@ -165,23 +164,19 @@ def main():
         assert fixture.managed_health["instance"] != original_health["instance"]
         for field in ("runtime_sha256", "executable_sha256"):
             assert fixture.managed_health[field] == original_health[field]
-        after = json.loads(fixture.run("runtime", "http-connection-info", "--install-dir", fixture.install,
-                                      "--connection-id", connection_id).stdout)
-        same_scope(before["selection"], after["selection"])
-        assert after["connection_id"] == connection_id
-        assert digest(transport.private_bytes(after["credential_file"], fixture.control, 103)) == credential_sha
-        assert after["endpoint"]["ca_sha256"] == record["new_ca_sha256"]
+        after = fixture.http_endpoint()
+        assert after["ca_sha256"] == record["new_ca_sha256"]
         transport.validate_native_identity(after, fixture.managed_health)
-        report["old_only_tls_refused"] = stale_issuer_refused(after["endpoint"], old_ca)
+        report["old_only_tls_refused"] = stale_issuer_refused(after, old_ca)
         try:
             rpc(original_network, 99, "tools/list", {})
         except (OSError, http.client.HTTPException, ValueError) as error:
             report["old_session_unusable"] = type(error).__name__
         else:
             raise AssertionError("Predecessor HTTP session survived issuer replacement")
-        replacement = transport.McpClient(after, fixture.control)
+        replacement = transport.McpClient(after, fixture.control, scope=scope)
         replacement.connection.close()
-        port = int(after["endpoint"]["url"].split(":")[-1].split("/")[0])
+        port = int(after["url"].split(":")[-1].split("/")[0])
         replacement.connection = http.client.HTTPSConnection("127.0.0.1", port, context=overlap, timeout=60)
         handshake(replacement)
         report["after_read"] = search(replacement)
@@ -202,7 +197,7 @@ def main():
         assert not (fixture.control / "http-1/user-trust-1.json").exists()
         # Drop the overlap client's context and reconnect using only the new
         # local issuer plus unchanged system roots. No OS trust was installed.
-        replacement = transport.McpClient(after, fixture.control)
+        replacement = transport.McpClient(after, fixture.control, scope=scope)
         handshake(replacement)
         report["post_finalize_read"] = search(replacement)
 
@@ -214,7 +209,9 @@ def main():
         assert digest((fixture.control / "http-1/tls-identity.json").read_bytes()) == active_sha
         assert not (Path(cancel["rotation"]["new_ca_certificate_file"]).parent / "tls-identity.json").exists()
         report["post_abort_read"] = search(replacement)
-        report["credential_bytes_unchanged"] = True
+        assert not list((fixture.control / "http-1").glob("credential-*.token")), "Tokenless issuer campaign created read credential artifacts"
+        report["credential_artifacts_created"] = False
+        report["explicit_scope"] = scope
         report["scope_and_publication_unchanged"] = True
         report["passed"] = True
     except BaseException as error:

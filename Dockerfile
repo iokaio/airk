@@ -93,6 +93,7 @@ COPY packages/vscode/src/explorerStrategyDrafts.ts ./packages/vscode/src/explore
 COPY packages/vscode/src/explorerStrategyPlanner.ts ./packages/vscode/src/explorerStrategyPlanner.ts
 COPY packages/vscode/src/explorerStrategyRunnerCore.ts ./packages/vscode/src/explorerStrategyRunnerCore.ts
 COPY packages/vscode/src/generated/arbiter.d.ts ./packages/vscode/src/generated/arbiter.d.ts
+COPY packages/vscode/src/generated/arbiterBudget.ts ./packages/vscode/src/generated/arbiterBudget.ts
 COPY packages/vscode/src/indexingCatalog.ts ./packages/vscode/src/indexingCatalog.ts
 COPY packages/vscode/src/nativeMessageLimits.ts ./packages/vscode/src/nativeMessageLimits.ts
 COPY packages/vscode/src/nativeMetadataCodec.d.ts ./packages/vscode/src/nativeMetadataCodec.d.ts
@@ -107,6 +108,12 @@ COPY packages/vscode/src/workbenchRender.ts ./packages/vscode/src/workbenchRende
 COPY fixtures/split/arbiter/public_answer_cases.json ./fixtures/split/arbiter/public_answer_cases.json
 COPY fixtures/split/arbiter/context_action_cases.json ./fixtures/split/arbiter/context_action_cases.json
 COPY fixtures/split/arbiter/native_context_action_cases.json ./fixtures/split/arbiter/native_context_action_cases.json
+COPY fixtures/split/arbiter/budget_cases.json ./fixtures/split/arbiter/budget_cases.json
+COPY fixtures/split/arbiter/download_origin_cases.json ./fixtures/split/arbiter/download_origin_cases.json
+COPY fixtures/split/arbiter/focus_only_allowance_cases.json ./fixtures/split/arbiter/focus_only_allowance_cases.json
+COPY fixtures/split/arbiter/native_focus_request.json ./fixtures/split/arbiter/native_focus_request.json
+COPY fixtures/split/i2/transport_budget.json ./fixtures/split/i2/transport_budget.json
+COPY packages/admin/src/dataRootDefault.ts ./packages/admin/src/dataRootDefault.ts
 COPY fixtures/split/arbiter/combined_answer_cases.json ./fixtures/split/arbiter/combined_answer_cases.json
 COPY packages/admin/src/arbiter.tsx ./packages/admin/src/arbiter.tsx
 COPY packages/admin/src/preparedActions.tsx ./packages/admin/src/preparedActions.tsx

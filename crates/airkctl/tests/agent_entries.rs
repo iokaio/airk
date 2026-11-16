@@ -1,7 +1,71 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exact removal through the actual CLI; explicit control roots need no installed pointer.
-use serde_json::Value;
-use std::{path::Path, process::Command};
+use serde_json::{Value, json};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
+
+/// Existing-file edits exercise actual native retention eligibility. These
+/// newly created fixture paths never adopt or change a user's configuration.
+struct Editable {
+    _temp: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl Editable {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap().join("private");
+        airk_ipc::endpoint::prepare_root(&path).unwrap();
+        let path = PathBuf::from(
+            path.to_str()
+                .unwrap()
+                .strip_prefix(r"\\?\")
+                .unwrap_or(path.to_str().unwrap()),
+        );
+        let fixture = Self { _temp: temp, path };
+        fixture.git(&["init", "--quiet", "--template="]);
+        let excludes = fixture.path.join("empty-excludes");
+        std::fs::write(&excludes, b"").unwrap();
+        fixture.git(&["config", "core.excludesFile", excludes.to_str().unwrap()]);
+        std::fs::write(fixture.path.join(".gitignore"), b".airk/\n").unwrap();
+        std::fs::write(fixture.path.join("package.json"), br#"{"name":"airk-exact-entry-fixture","version":"0.0.0","packageManager":"npm@11.12.1","files":["payload"],"main":"payload/main.js"}"#).unwrap();
+        std::fs::create_dir(fixture.path.join("payload")).unwrap();
+        std::fs::write(fixture.path.join("payload/main.js"), b"fixture\n").unwrap();
+        fixture
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn git(&self, arguments: &[&str]) {
+        use airk_process::bounded_command::{Invocation, execute_with_timeout};
+        let git = std::env::split_paths(&std::env::var_os("PATH").expect("fixture Git PATH"))
+            .map(|directory| directory.join(if cfg!(windows) { "git.exe" } else { "git" }))
+            .find(|path| path.is_absolute() && path.is_file())
+            .expect("retained-edit integration fixtures require Git")
+            .canonicalize()
+            .unwrap();
+        let mut args = vec![
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            self.path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(arguments);
+        let output =
+            execute_with_timeout(&Invocation::new(git, &args), Duration::from_secs(5)).unwrap();
+        assert!(
+            output.success,
+            "isolated fixture Git setup failed: {}",
+            output.text
+        );
+    }
+}
 
 fn command(project: &Path, action: &str, selectors: &[Value]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_airkctl"));
@@ -39,7 +103,7 @@ fn selected(entries: &[Value], key: &str) -> Value {
 
 #[test]
 fn exact_entry_cli_removes_only_selected_rows_across_agent_files() {
-    let project = tempfile::tempdir().unwrap();
+    let project = Editable::new();
     let files = [
         (
             ".mcp.json",
@@ -98,7 +162,7 @@ fn exact_entry_cli_removes_only_selected_rows_across_agent_files() {
 
 #[test]
 fn exact_entry_cli_prevalidates_the_whole_batch_before_writing() {
-    let project = tempfile::tempdir().unwrap();
+    let project = Editable::new();
     let file = project.path().join(".mcp.json");
     let original =
         "{\"mcpServers\":{\"airk-a\":{\"command\":\"airk\"},\"airk-b\":{\"command\":\"airk\"}}}\n";
@@ -131,7 +195,7 @@ fn exact_entry_cli_prevalidates_the_whole_batch_before_writing() {
 
 #[test]
 fn exact_entry_cli_preserves_a_shared_copilot_credential_input_until_last_reference() {
-    let project = tempfile::tempdir().unwrap();
+    let project = Editable::new();
     let file = project.path().join(".vscode/mcp.json");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let source = r#"{
@@ -170,7 +234,7 @@ fn exact_entry_cli_preserves_a_shared_copilot_credential_input_until_last_refere
 
 #[test]
 fn exact_entry_cli_keeps_partial_action_receipts_and_refused_source() {
-    let project = tempfile::tempdir().unwrap();
+    let project = Editable::new();
     let claude = project.path().join(".mcp.json");
     std::fs::write(
         &claude,
@@ -182,14 +246,9 @@ fn exact_entry_cli_keeps_partial_action_receipts_and_refused_source() {
     let conflicting = r#"{"servers":{"airk-second":{"type":"http","url":"https://127.0.0.1:62133/mcp","headers":{"Authorization":"Bearer ${input:airkToken_11111111111111111111111111111111}"}}},"inputs":[{"id":"airkToken_11111111111111111111111111111111","type":"promptString"}]}"#;
     std::fs::write(&copilot, conflicting).unwrap();
     let entries = listed(project.path());
-    let output = command(
-        project.path(),
-        "remove",
-        &[
-            selected(&entries, "airk-first"),
-            selected(&entries, "airk-second"),
-        ],
-    );
+    let first = selected(&entries, "airk-first");
+    let second = selected(&entries, "airk-second");
+    let output = command(project.path(), "remove", &[first.clone(), second.clone()]);
     assert!(
         output.status.success(),
         "existing partial-result transport: {output:?}"
@@ -197,6 +256,14 @@ fn exact_entry_cli_keeps_partial_action_receipts_and_refused_source() {
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     let actions = result["actions"].as_array().unwrap();
     assert_eq!(actions.len(), 2);
+    assert_eq!(
+        result,
+        json!({"schema": 1, "actions": [
+        {"file": first["file"], "serverKey": "airk-first", "connectionId": null, "changed": true, "error": null},
+        {"file": second["file"], "serverKey": "airk-second", "connectionId": "11111111111111111111111111111111", "changed": null,
+            "error": "Conflicting AIRK credential input; existing configuration preserved."}
+    ], "blockers": []})
+    );
     assert_eq!(actions[0]["serverKey"], "airk-first");
     assert_eq!(actions[0]["changed"], true);
     assert!(actions[0]["error"].is_null());
@@ -214,4 +281,58 @@ fn exact_entry_cli_keeps_partial_action_receipts_and_refused_source() {
             .contains("airk-first")
     );
     assert_eq!(std::fs::read_to_string(copilot).unwrap(), conflicting);
+}
+
+/// A valid selector is not authority to retain an arbitrary complete file.
+/// Shared parents and private targets without proven Git/npm exclusions refuse.
+#[test]
+fn exact_entry_cli_refuses_shared_or_unreviewed_whole_file_retention() {
+    const POLICY: &str = "Automatic config editing was refused; apply the edit manually: Automatic editing cannot safely retain a recovery copy here. Apply the agent configuration edit manually.";
+    const SHARED: &str = "Automatic config editing was refused; apply the edit manually: parent grants foreign mutation";
+    const FOREIGN_ACCESS: &str = "Automatic config editing was refused; apply the edit manually: private object grants foreign access";
+    for private in [false, true] {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = if private {
+            let directory = temporary.path().join("private-without-git-or-package");
+            airk_ipc::endpoint::prepare_root(&directory).unwrap();
+            directory
+        } else {
+            temporary.path().to_path_buf()
+        };
+        let file = project.join(".mcp.json");
+        let original = b"{\"mcpServers\":{\"airk-refused\":{\"command\":\"airk\"}},\"unrelatedSecret\":\"fictional-private-field\"}\n";
+        std::fs::write(&file, original).unwrap();
+        let selector = selected(&listed(&project), "airk-refused");
+        let output = command(&project, "remove", std::slice::from_ref(&selector));
+        assert!(
+            output.status.success(),
+            "partial-result transport: {output:?}"
+        );
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let error = result["actions"][0]["error"]
+            .as_str()
+            .expect("retention refusal detail");
+        if private {
+            assert_eq!(error, POLICY);
+        } else {
+            // D8 checks parent mutation and private object access before Git/npm
+            // eligibility. A shared temporary target can refuse at either fence;
+            // an already protected temporary target still lacks recovery policy.
+            assert!(
+                [SHARED, FOREIGN_ACCESS, POLICY].contains(&error),
+                "unexpected native refusal: {error}"
+            );
+        }
+        assert_eq!(
+            result,
+            json!({"schema":1,"actions":[{
+            "file":selector["file"],"serverKey":"airk-refused","connectionId":null,
+            "changed":null,"error":error
+        }],"blockers":[]})
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+        assert!(!project.join(".airk").exists());
+        assert!(!project.join("missing-control").exists());
+    }
 }

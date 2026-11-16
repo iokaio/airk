@@ -14,10 +14,12 @@ const bundled = await build({ stdin: { contents: `export * from './packages/ui/s
 });
 const actual = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
 
-test('both hosts retain the seven intended main destinations and exact existing route targets', () => {
+test('both hosts retain the twelve intended main destinations and exact existing route targets', () => {
   assert.deepEqual(actual.MAIN_DESTINATIONS.map(({ title, browser, editor }) => [title, browser, editor]), [
     ['Overview', 'overview', 'overview'], ['Search', 'search', 'search/query'], ['Indexes', 'index-library', 'indexing/library'],
-    ['Activity', 'activity', 'manage/activity'], ['Agents', 'agents', 'manage/agents'], ['Service', 'service', 'manage/service'], ['Help', 'help', 'help'],
+    ['Activity', 'activity', 'manage/activity'], ['Agents', 'agents', 'manage/agents'], ['Service', 'service', 'manage/service'],
+    ['Code', 'search', 'code/symbols'], ['Documents', 'search', 'docs/facts'], ['Evidence', 'search', 'evidence/inspector'],
+    ['Review', 'search', 'review/changes'], ['Strategies', 'search', 'strategies/library'], ['Help', 'help', 'help'],
   ]);
   for (const entry of actual.MAIN_DESTINATIONS) {
     assert.ok(actual.browserRoute(entry.browser, 1)); assert.ok(actual.editorRoute(entry.editor));
@@ -38,7 +40,7 @@ test('retained editor evidence workflows and management links still parse withou
     'review/changes', 'review/impact', 'review/tests', 'strategies/library', 'strategies/studio', 'strategies/planner',
     'indexing/window', 'indexing/projects', 'manage/overview', 'manage/storage', 'manage/repair', 'manage/usage', 'manage/logs']) assert.ok(actual.editorRoute(route), route);
   assert.equal(actual.editorDestination('manage/logs'), 'activity'); assert.equal(actual.editorDestination('manage/repair'), 'service');
-  assert.equal(actual.editorDestination('review/tests'), 'search');
+  assert.equal(actual.editorDestination('review/tests'), 'review');
   assert.equal(actual.editorRoute('search/tools').tab,'tools');
 });
 
@@ -47,8 +49,8 @@ test('Evidence tools retains every guided route and browser limitations without 
   assert.deepEqual(actual.EVIDENCE_TOOLS.flatMap(group=>group.entries.map(([route])=>route)),[
     'code/symbols','code/references','code/outline','docs/facts','evidence/inspector','evidence/checker','evidence/changes',
     'review/changes','review/impact','review/tests','strategies/library','strategies/studio','strategies/planner']);
-  for(const route of ['code/symbols','docs/facts','evidence/checker','review/tests','strategies/planner']){
-    assert.ok(actual.editorRoute(route));assert.equal(actual.editorDestination(route),'search');assert.equal(actual.isEvidenceToolRoute(route),true);
+  for(const [route,destination] of [['code/symbols','code'],['docs/facts','docs'],['evidence/checker','evidence'],['review/tests','review'],['strategies/planner','strategies']]){
+    assert.ok(actual.editorRoute(route));assert.equal(actual.editorDestination(route),destination);assert.equal(actual.isEvidenceToolRoute(route),true);
   }
   assert.equal(actual.isEvidenceToolRoute('code/arbitrary'),false);assert.equal(actual.isEvidenceToolRoute('command:execute'),false);
   const flatten=node=>typeof node==='string'?[node]:[node,...node.children.flatMap(flatten)];

@@ -1003,6 +1003,26 @@ impl FixtureForeground {
     }
 }
 
+impl Drop for FixtureForeground {
+    fn drop(&mut self) {
+        match self.child.try_wait() {
+            Ok(Some(_)) => {
+                let _ = self.child.wait();
+            }
+            other => {
+                // Only this actual spawned Child is terminated. No PID lookup,
+                // canonical Stop receipt or successful cleanup is manufactured.
+                let killed = self.child.kill();
+                let reaped = self.child.wait();
+                eprintln!(
+                    "unexpected owned foreground escape; retained {}: observed={other:?}, kill={killed:?}, wait={reaped:?}",
+                    self.owner.display()
+                );
+            }
+        }
+    }
+}
+
 /// Read the real fresh service before stopping it; keep every native field and
 /// bind all samples to one verified service instance.
 pub(super) fn observe_empty_installed_fixture(

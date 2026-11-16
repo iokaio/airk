@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
+    }
+}
+
 #[test]
 fn retained_disabled_configuration_bytes_are_independent_and_identity_bound() -> Result<()> {
     let bytes = include_bytes!("../../../../fixtures/arbiter/configuration-disabled-v2.json");
@@ -118,12 +132,12 @@ fn request_cannot_inflate_original_work_or_add_execution_authority() -> Result<(
     let mut request = ContextRequest {
         schema: REQUEST_SCHEMA.into(),
         question: "Where is this defined and tested?".into(),
-        budget: Budget::default(),
+        budget: historical_budget(),
     };
     request.validate()?;
     request.budget.rounds = 5;
     assert!(request.validate().is_err());
-    request.budget = Budget::default();
+    request.budget = historical_budget();
     let mut value = serde_json::to_value(request)?;
     value["enroll_all_indexes"] = true.into();
     assert!(serde_json::from_value::<ContextRequest>(value).is_err());
@@ -430,18 +444,20 @@ fn request_budget_ceilings_are_literal_8192_tokens_and_120000_ms() {
     let ok = Budget {
         input_tokens: 8192,
         deadline_ms: 120_000,
-        ..Budget::default()
+        ..historical_budget()
     };
     assert!(ok.validate().is_ok());
     for (tokens, deadline) in [(8193, 120_000), (8192, 120_001), (0, 120_000), (8192, 0)] {
         let budget = Budget {
             input_tokens: tokens,
             deadline_ms: deadline,
-            ..Budget::default()
+            ..historical_budget()
         };
         assert!(budget.validate().is_err(), "{tokens}/{deadline}");
     }
-    // Compiler and Context profile token ceilings use the same literal bound.
-    assert_eq!(Budget::default().input_tokens, 2048);
-    assert_eq!(Budget::default().deadline_ms, 30_000);
+    // Shipping defaults and explicit historical controls have different identities.
+    assert_eq!(Budget::default().input_tokens, 8192);
+    assert_eq!(Budget::default().deadline_ms, 120_000);
+    assert_eq!(historical_budget().input_tokens, 2048);
+    assert_eq!(historical_budget().deadline_ms, 30_000);
 }

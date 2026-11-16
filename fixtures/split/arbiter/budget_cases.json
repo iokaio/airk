@@ -1,0 +1,106 @@
+{
+  "cases": [
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 120000,
+        "fanout": 8,
+        "input_tokens": 8192,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "new_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 120000,
+        "fanout": 8,
+        "input_tokens": 8193,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "token_overflow"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 120001,
+        "fanout": 8,
+        "input_tokens": 8192,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "deadline_overflow"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 120000,
+        "fanout": 8,
+        "input_tokens": 0,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "zero_tokens"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 0,
+        "fanout": 8,
+        "input_tokens": 8192,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "zero_deadline"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 8,
+        "candidates": 32,
+        "deadline_ms": 30000,
+        "fanout": 8,
+        "input_tokens": 2048,
+        "max_bytes": 262144,
+        "rounds": 3
+      },
+      "id": "historical_control"
+    }
+  ],
+  "default_budget": {
+    "calls": 8,
+    "candidates": 32,
+    "deadline_ms": 120000,
+    "fanout": 8,
+    "input_tokens": 8192,
+    "max_bytes": 262144,
+    "rounds": 3
+  },
+  "historical_control": {
+    "calls": 8,
+    "candidates": 32,
+    "deadline_ms": 30000,
+    "fanout": 8,
+    "input_tokens": 2048,
+    "max_bytes": 262144,
+    "rounds": 3
+  },
+  "operation_deadline_ms": 120000,
+  "qualification": false,
+  "schema": "airk.arbiter.budget-cases/1",
+  "selected_focus_pair_tokens": 512,
+  "transport_deadline_ms": 125000,
+  "transport_overhead_ms": 5000
+}

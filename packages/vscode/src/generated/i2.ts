@@ -10,6 +10,29 @@ export const I2_CONTRACT = 1;
 export type Agent = "codex" | "claude" | "copilot" | "gemini" | "antigravity" | "cursor" | "roo" | "junie";
 
 /**
+ * A presentation projection of the native writer outcome, never retry authority.
+ */
+export type AgentConfigRefusal = {
+    detail: string;
+    file: string;
+    manual?: AgentManualEntry | null;
+    reason: AgentConfigRefusalReason;
+};
+
+export type AgentConfigRefusalReason = "automatic_policy" | "conflict_retained" | "outcome_unknown";
+
+/**
+ * Exact text to merge into the named configuration file; never replace unrelated entries.
+ */
+export type AgentManualEntry = {
+    client: ManualClient;
+    file: string;
+    format: ManualFormat;
+    scope: ManualScope;
+    text: string;
+};
+
+/**
  * The §6.4 classes, plus `unreadable` for a present file that could not be
  * read or parsed (it could hide a broken entry).
  */
@@ -82,6 +105,12 @@ export type Installation = {
 };
 
 export type InstallationState = "complete" | "incomplete" | "not_found" | "unverified";
+
+export type ManualClient = "claude" | "codex" | "vscode";
+
+export type ManualFormat = "json" | "toml";
+
+export type ManualScope = "project" | "user";
 
 export type NativeAdminChunk = {
     data: Array<number>;

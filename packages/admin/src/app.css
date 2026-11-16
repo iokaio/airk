@@ -955,3 +955,12 @@ button.au-tab:focus-visible {
 
 /* Preserve the first article glyph across fractional scroll positioning. */
 .bundled-help article { scroll-margin-top: 1px; }
+
+.destination-icon { width: 1.2rem; height: 1.2rem; flex: none; }
+button.nav { display: flex; align-items: center; gap: .65rem; }
+.nav-divider { border-top: 1px solid var(--airk-border); margin-top: .5rem; }
+.nav-help { margin-top: auto; }
+.layout > nav { position: sticky; top: 0; align-self: start; height: calc(100vh - 41px); overflow-y: auto; }
+@media (max-width: 850px) { nav .nav-label { display: none; } button.nav { justify-content: center; } }
+@media (max-width: 850px) and (min-width: 721px) { .layout { grid-template-columns: 4rem minmax(0, 1fr); } }
+@media (max-width: 720px) { .layout > nav { position: static; height: auto; } .nav-help { margin-top: 0; margin-left: auto; } }

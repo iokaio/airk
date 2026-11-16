@@ -73,6 +73,53 @@ def universal_candidate(directory, version=SPLIT, preview=False, commit=COMMIT, 
 
 
 class VsixContracts(unittest.TestCase):
+    def test_native_budget_constants_have_one_exact_reviewed_module_and_loader_path(self):
+        self.assertIn("generated/arbiterBudget.js", package.MODULES)
+        self.assertIn("out/generated/arbiterBudget.js", package.update_inventory_paths())
+        self.assertEqual(package.resolve_import("workbenchContracts.js", "./generated/arbiterBudget"), "generated/arbiterBudget.js")
+        self.assertEqual(package.resolve_import("airkctl/session.js", "../generated/arbiterBudget"), "generated/arbiterBudget.js")
+        self.assertIsNotNone(package.LOADER_NAME.fullmatch("out/generated/arbiterBudget.js"))
+        for name in ("out/generated/other.js", "out/generated/arbiterbudget.js", "out/generated/arbiterBudget.json", "out/generated/arbiterBudget.js/other.js", "out/generated/../arbiterBudget.js"):
+            with self.subTest(name=name):
+                self.assertIsNone(package.LOADER_NAME.fullmatch(name))
+        self.assertIsNone(package.resolve_import("workbenchContracts.js", "./generated/other"))
+
+    def test_vsix_manifest_includes_only_the_exact_native_budget_generated_module(self):
+        source = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        result = package.runtime_package(source)
+        self.assertEqual([name for name in result["files"] if "generated" in name],
+                         ["out/generated/arbiterBudget.js"])
+        for refused in ("out/generated/*.js", "out/generated/**", "out/**/*.js",
+                        "out/generated/i2.js", "out/generated/other.js"):
+            with self.subTest(refused=refused):
+                self.assertNotIn(refused, result["files"])
+        self.assertNotIn("out/generated/arbiterBudget.js", source["files"],
+                         "packaging must not mutate the source manifest")
+
+    def test_native_budget_module_closure_is_staged_exactly_and_missing_or_extra_import_refuses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            compiled = root / "compiled"
+            (compiled / "generated").mkdir(parents=True)
+            consumer = compiled / "workbenchContracts.js"
+            budget = compiled / "generated/arbiterBudget.js"
+            consumer.write_text('require("./generated/arbiterBudget");', encoding="utf-8")
+            expected = b"exports.READ_OPERATION_DEADLINE_MS=120000;"
+            budget.write_bytes(expected)
+            with mock.patch.object(package, "MODULES", ("workbenchContracts.js", "generated/arbiterBudget.js")):
+                package.stage_runtime_modules(compiled, root / "stage")
+                self.assertEqual((root / "stage/generated/arbiterBudget.js").read_bytes(), expected)
+                consumer.write_text('require("./generated/other");', encoding="utf-8")
+                (compiled / "generated/other.js").write_text("exports.unreviewed=true;", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
+                    package.stage_runtime_modules(compiled, root / "unreviewed")
+                self.assertFalse((root / "unreviewed").exists())
+                consumer.write_text('require("./generated/arbiterBudget");', encoding="utf-8")
+                budget.unlink()
+                with self.assertRaisesRegex(ValueError, "Invalid or oversized runtime module: generated/arbiterBudget.js"):
+                    package.stage_runtime_modules(compiled, root / "missing")
+                self.assertFalse((root / "missing").exists())
+
     def test_workbench_answer_navigation_is_an_exact_required_host_module(self):
         self.assertIn("workbenchAnswerNavigation.js", package.MODULES)
         self.assertEqual(package.resolve_import("workbenchView.js", "./workbenchAnswerNavigation"), "workbenchAnswerNavigation.js")
@@ -160,7 +207,7 @@ class VsixContracts(unittest.TestCase):
                 (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
                 (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
                 for name in ("out/fixture.js", "out/airkctl/agents/fixture.js", "out/fixture.css", "images/fixture.png",
-                             "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md", "out/help-manifest.json"):
+                             "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md", "out/help-manifest.json", "out/generated/arbiterBudget.js"):
                     file = root / name
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(b"public packaging fixture")
@@ -454,7 +501,7 @@ class VsixContracts(unittest.TestCase):
             (compiled / "test").mkdir()
             (compiled / "test" / "private.test.js").write_text("not runtime", encoding="utf-8")
             (compiled / "extension.js.map").write_text("not runtime", encoding="utf-8")
-            (compiled / "generated").mkdir()
+            (compiled / "generated").mkdir(exist_ok=True)
             (compiled / "generated" / "i2.js").write_text("not runtime", encoding="utf-8")
             stage = Path(directory) / "stage"
             package.stage_runtime_modules(compiled, stage)

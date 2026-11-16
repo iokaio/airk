@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Explicit browser change inputs over the same bounded Review algorithm as the editor.
+import { READ_TRANSPORT_DEADLINE_MS } from '../../vscode/src/generated/arbiterBudget';
 import {useEffect,useRef,useState} from 'preact/hooks';
 import {createReviewOperations,DEFAULT_TEST_PATTERN,type ReviewPage,type ChangeKind} from '../../ui/src/review';
 import {FactHandles} from '../../vscode/src/explorerFacts';
@@ -27,7 +28,7 @@ export function BrowserReviewScreen(props:{route:BrowserReviewRoute;scopeIdentit
    const changes=manualReviewChanges(input,sourceFormat,sourceKind),capture=props.capture();
    if(capture.indexIds.length!==1||!capture.backingBinding)throw Error('Review needs one explicit originating index with native backing metadata. Narrow the named scope above and apply it.');
    const current=()=>{try{capture.checkCurrent();if(!active.current||generation.current!==owner||presentation.current.epoch!==viewEpoch||presentation.current.route!==route)throw Error('The Review view changed.');}catch{throw new EvidenceFailure({code:'STALE_BINDING',message:'The captured Review scope or input was replaced; no further reads were sent.'});}};
-   const port:EvidenceReadPort={call:async(tool,args,options)=>{current();pendingReads++;const original=capture.read(tool.replace(/^airk_/,''),args);original.then(()=>{pendingReads--;},()=>{pendingReads--;});const reply=await boundedWorkflowRead(original,options?.timeout??30000).catch(failure=>{current();throw failure;});current();reads.push(reply);return capturedSingleIndexResult(capture,reply);}};
+   const port:EvidenceReadPort={call:async(tool,args,options)=>{current();pendingReads++;const original=capture.read(tool.replace(/^airk_/,''),args);original.then(()=>{pendingReads--;},()=>{pendingReads--;});const reply=await boundedWorkflowRead(original,options?.timeout??READ_TRANSPORT_DEADLINE_MS).catch(failure=>{current();throw failure;});current();reads.push(reply);return capturedSingleIndexResult(capture,reply);}};
    const operations=createReviewOperations({sourceKind:'manual',changedPaths:async()=>({git:'unavailable',changes}),dirty:()=>false,testPattern:()=>new RegExp(DEFAULT_TEST_PATTERN),sha256:browserSha256});
    const context={session:port,handles:new FactHandles(new RefRegistry()),project:capture.backingBinding,root:'explicit-browser-input'};
    const result=route==='review/changes'?await operations.reviewChanges(context,page):route==='review/impact'?await operations.reviewImpact(context):await operations.reviewTests(context);

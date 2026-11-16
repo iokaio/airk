@@ -459,6 +459,50 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
         (path / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
         return path
 
+    def test_split_candidate_routing_keeps_private_roles_on_service_and_reads_on_cli(self):
+        service, cli, old = Path('candidate-airk'), Path('candidate-airkctl'), Path('old-airk')
+        self.assertEqual(UPGRADE.routed_candidate_command(service, ('runtime', 'stage'), service, cli),
+                         (service, ('__airk_role', 'setup-interim', 'runtime', 'stage')))
+        self.assertEqual(UPGRADE.routed_candidate_command(service, ('tools', 'call', 'airk_status'), service, cli),
+                         (cli, ('tools', 'call', 'airk_status')))
+        self.assertEqual(UPGRADE.routed_candidate_command(old, ('runtime', 'stage'), service, cli),
+                         (old, ('runtime', 'stage')))
+        self.assertEqual(UPGRADE.routed_candidate_command(service, ('runtime', 'stage'), service, None),
+                         (service, ('runtime', 'stage')))
+
+    def test_input_preflight_authenticates_both_split_images_without_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old = self.input_runtime(root / 'old', '1.8.11', 1)
+            new = self.input_runtime(root / 'new', '1.8.207', 2)
+            metadata = json.loads((new / 'airk-runtime.json').read_bytes())
+            metadata.update(schema=3, i1_protocol=1, i2_contract='airkctl/1', admin_inventory_sha256='a' * 64)
+            cli = UPGRADE.runtime_binary(new).with_name('airkctl.exe' if sys.platform == 'win32' else 'airkctl')
+            cli.write_bytes(b'inert matched CLI')
+            metadata['airkctl_sha256'] = UPGRADE.digest(cli)
+            (new / 'airk-runtime.json').write_text(json.dumps(metadata))
+            manifest = json.loads((new / 'airk-install.json').read_bytes())
+            manifest['files'] = {item.relative_to(new).as_posix(): UPGRADE.digest(item)
+                                 for item in new.rglob('*') if item.is_file() and item.name != 'airk-install.json'}
+            (new / 'airk-install.json').write_text(json.dumps(manifest))
+            clients = SimpleNamespace(classify_runtime=mock.Mock(return_value={'topology': 'split_pair'}))
+            loader = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module: None))
+            with mock.patch.object(UPGRADE.importlib.util, 'spec_from_file_location', return_value=loader), \
+                    mock.patch.object(UPGRADE.importlib.util, 'module_from_spec', return_value=clients), \
+                    mock.patch.object(UPGRADE.subprocess, 'run') as execute:
+                # The production pair metadata validator is delegated to its owner;
+                # this independent test verifies both seals and no subprocess path.
+                package = SimpleNamespace(inventory=lambda path: {item.relative_to(path).as_posix(): UPGRADE.digest(item)
+                    for item in path.rglob('*') if item.is_file()}, bounded_json=lambda path, *args: json.loads(path.read_bytes()))
+                with mock.patch.object(UPGRADE, 'runtime_package_tools', return_value=package):
+                    result = UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+                    self.assertEqual(result['inputs']['candidate']['runtime_schema'], 3)
+                    manifest['files'][cli.relative_to(new).as_posix()] = 'b' * 64
+                    (new / 'airk-install.json').write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(RuntimeError, 'sealed file inventory'):
+                        UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+                execute.assert_not_called()
+
     def test_input_preflight_checks_all_seals_and_runs_no_subprocess(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -666,42 +710,30 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             UPGRADE.semantic_identity({**status,"semantic_readiness":{**status["semantic_readiness"],"pipeline_digest":"d"*64}},model,queries)
 
-    def test_reviewed_https_reconnect_uses_public_native_enrollment_once(self):
+    def test_reviewed_https_reconnect_discovers_endpoint_without_credential_enrollment(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             control = root / "control"
-            private = control / "http-1"
-            private.mkdir(parents=True, mode=0o700)
-            spec = importlib.util.spec_from_file_location("upgrade_enrollment_contract", Path(__file__).parents[1] / "http_fixture.py")
-            helper = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(helper)
-            selected = {"namespace":"a" * 32,"expected_catalog_revision":4,"index_id":"idx_original"}
-            submissions = []
+            control.mkdir()
+            selected = {"namespace": "a" * 32, "expected_catalog_revision": 4, "index_id": "idx_original"}
+            calls = []
             def invoke(_binary, *args, input=None, timeout=180):
-                if args[:2] == ("runtime", "http-connection"):
-                    self.assertGreater(timeout, 0); self.assertLessEqual(timeout, 60)
-                    source = Path(args[args.index("--selection-file") + 1])
-                    self.assertEqual(json.loads(source.read_text()), {"kind":"scoped","selection":selected})
-                    self.assertEqual(args[args.index("--client") + 1], "unknown")
-                    identifier = args[args.index("--connection-id") + 1]
-                    submissions.append(identifier)
-                    token, ca = private / ("credential-" + identifier + ".token"), private / "ca.pem"
-                    token.write_text("owned fixture reference"); ca.write_text("owned fixture CA reference")
-                    return {"schema":1,"connection_id":identifier,"selection":{"kind":"scoped","selection":selected},
-                            "credential_file":str(token),"ca_certificate_file":str(ca)}
+                calls.append(args)
                 self.assertEqual(args[:2], ("service", "rpc"))
-                self.assertEqual(json.loads(input), "health", "Console must not perform private HTTP enrollment")
-                return {"observation":{"instance":"same owned service"}}
-            transport = SimpleNamespace(enroll_native=helper.enroll_native,
-                validate_native_identity=mock.Mock(side_effect=RuntimeError("stop after native enrollment boundary")))
-            loader = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module:None))
-            with mock.patch.object(UPGRADE.importlib.util,"spec_from_file_location",return_value=loader), \
-                    mock.patch.object(UPGRADE.importlib.util,"module_from_spec",return_value=transport):
-                with self.assertRaisesRegex(RuntimeError,"native enrollment boundary"):
+                self.assertEqual(json.loads(input), "health")
+                return {"observation": {"instance": "same owned service"}}
+            endpoint = {"namespace": "a" * 32, "url": "https://127.0.0.1:57422/mcp"}
+            transport = SimpleNamespace(read_endpoint=mock.Mock(return_value=endpoint),
+                validate_native_identity=mock.Mock(side_effect=RuntimeError("stop after native endpoint boundary")))
+            loader = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module: None))
+            with mock.patch.object(UPGRADE.importlib.util, "spec_from_file_location", return_value=loader), \
+                    mock.patch.object(UPGRADE.importlib.util, "module_from_spec", return_value=transport):
+                with self.assertRaisesRegex(RuntimeError, "native endpoint boundary"):
                     UPGRADE.verify_https_reconnect(invoke, root / "airk", root / "install", control, root,
-                        {"binding":"original"}, selected, "original-config-hash", b"saved source")
-            self.assertEqual(len(submissions), 1)
-            self.assertEqual(list(private.glob("fixture-selection-*.json")), [])
+                        {"binding": "original"}, selected, "original-config-hash", b"saved source")
+            self.assertEqual(len(calls), 1)
+            transport.read_endpoint.assert_called_once_with(control)
+            self.assertEqual(list(control.iterdir()), [], "Discovery creates no connection, grant, credential or selector files")
 
     def test_darwin_owned_exit_waits_for_exact_native_image_retirement_not_signal_causality(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+// Historical controls and their retained native fixtures keep their original
+// 2048-token/30-second input identity when the shipping default changes.
+fn historical_budget() -> crate::arbiter::Budget {
+    crate::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262_144,
+        deadline_ms: 30_000,
+    }
+}
+
 #[test]
 fn private_joint_reply_requires_explicit_nullable_advice() -> Result<()> {
     let reply = crate::service::ControlResponse::ArbiterContextActionAdvice { advice: None };
@@ -39,7 +53,7 @@ fn request() -> Result<NativeContextActionRequest> {
         fingerprint: response.assessment.scope.authorization,
     };
     Ok(NativeContextActionRequest {
-        parent_budget: crate::arbiter::Budget::default(),
+        parent_budget: historical_budget(),
         read_attempt: ReadAttemptBudget {
             schema: 1,
             request_id: Incarnation::from_bytes([22; 16]),
@@ -213,7 +227,7 @@ fn native_hook_partition_ordinal_tokens_and_source_universe_are_closed() -> Resu
         attempt: original.read_attempt.request_id,
         selection: digest(30),
         index_id: original.scope.index_id,
-        parent_budget: crate::arbiter::Budget::default(),
+        parent_budget: historical_budget(),
         resources: crate::combined_context::Resources {
             calls: 1,
             input_tokens: 2048,

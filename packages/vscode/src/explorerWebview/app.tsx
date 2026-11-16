@@ -227,36 +227,17 @@ function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSumma
 }
 
 function Rail(props: { route: Route; state: ExplorerViewState; go(route: Route): void }) {
-    const preview = (id: string) => {
-        const workspace = WORKSPACES.find(entry => entry.id === id)!;
-        const keys = workspace.tabs.length ? workspace.tabs.map(tab => `${id}/${tab.id}`) : [id];
-        return keys.every(key => props.state.features[key] !== 'implemented');
-    };
-    const item = (id: string) => {
-        const workspace = WORKSPACES.find(entry => entry.id === id)!;
-        const current = props.route.workspace === workspace.id;
-        return (
-            <li key={id}><button type="button" title={workspace.title} aria-label={workspace.title} aria-current={current ? 'page' : undefined} class={current ? 'current' : ''}
-                onClick={() => props.go({ workspace: workspace.id, ...(workspace.tabs[0] ? { tab: workspace.tabs[0].id } : {}) })}>
-                <WorkspaceIcon name={id} /><span class="nav-label">{workspace.title}</span>{preview(id) && <span class="tag">preview</span>}
-            </button></li>
-        );
-    };
-    return (
-        <nav class="rail" aria-label="AIRK main navigation">
-            <div class="rail-caption" aria-hidden="true">AIRK</div>
-            <ul>{MAIN_DESTINATIONS.map(entry => {
-                const route = parseRoute(entry.editor)!;
-                const current = editorDestination(routeKey(props.route)) === entry.id;
-                return <li key={entry.id}><button type="button" title={entry.title} aria-label={entry.title} aria-current={current ? 'page' : undefined}
-                    class={current ? 'current' : ''} onClick={() => props.go(route)}><WorkspaceIcon name={route.workspace} /><span class="nav-label">{entry.title}</span>
+    return <nav class="rail" aria-label="AIRK main navigation">
+        <div class="rail-caption" aria-hidden="true">AIRK</div>
+        <ul>{MAIN_DESTINATIONS.map(entry => {
+            const route = parseRoute(entry.editor)!;
+            const current = editorDestination(routeKey(props.route)) === entry.id;
+            return <li key={entry.id} class={entry.id === 'code' ? 'rail-divider' : entry.id === 'help' ? 'rail-help' : undefined}>
+                <button type="button" title={entry.title} aria-label={entry.title} aria-current={current ? 'page' : undefined}
+                    class={current ? 'current' : ''} onClick={() => props.go(route)}><WorkspaceIcon name={entry.id} /><span class="nav-label">{entry.title}</span>
                     {props.state.features[entry.editor] !== 'implemented' && <span class="tag">preview</span>}</button></li>;
-            })}</ul>
-            <details open={['code', 'docs', 'evidence', 'review', 'strategies'].includes(props.route.workspace)}>
-                <summary>Explore evidence</summary><ul>{['code', 'docs', 'evidence', 'review', 'strategies'].map(id => item(id))}</ul>
-            </details>
-        </nav>
-    );
+        })}</ul>
+    </nav>;
 }
 
 function Palette(props: { state: ExplorerViewState; go(route: Route): void; close(): void }) {

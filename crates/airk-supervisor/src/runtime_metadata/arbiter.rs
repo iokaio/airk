@@ -79,6 +79,31 @@ async fn clipped<T>(
     }
 }
 
+/// Narrow the caller's original same-host attempt; metadata callbacks cannot
+/// mint a fresh request identity, absolute expiry or settings-retry window.
+fn next_read_budget(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    remaining_ms: u64,
+    deadline: Instant,
+    sampled_at: Instant,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<(airk_core::read_attempt::ReadAttemptBudget, u64)> {
+    ensure!(
+        (1..=120_000).contains(&remaining_ms),
+        "invalid Arbiter remaining budget"
+    );
+    let mut attempt = attempt.context("native Arbiter original attempt budget required")?;
+    let remaining = attempt
+        .remaining_at(clock, now_ns)?
+        .min(deadline.saturating_duration_since(sampled_at))
+        .min(std::time::Duration::from_millis(remaining_ms));
+    let remaining_ms = remaining.as_millis() as u64;
+    ensure!(remaining_ms > 0, "Arbiter original deadline exhausted");
+    attempt.remaining_ns = remaining.as_nanos() as u64;
+    Ok((attempt, remaining_ms))
+}
+
 struct Controller(PathBuf);
 impl NativeController for Controller {
     fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
@@ -326,31 +351,23 @@ impl NativeController for Controller {
         mut request: NativeNextReadRequest,
         deadline: Instant,
     ) -> Result<Option<Advice>> {
-        let remaining_ms = deadline
-            .saturating_duration_since(Instant::now())
-            .as_millis()
-            .min(120_000) as u64;
-        ensure!(remaining_ms > 0, "Arbiter original deadline exhausted");
-        request.remaining_ms = remaining_ms;
-        let monotonic = airk_process::monotonic::now_ns()?;
-        let remaining_ns = deadline
-            .saturating_duration_since(Instant::now())
-            .as_nanos()
-            .min(120_000_000_000) as u64;
-        request.read_attempt = Some(airk_core::read_attempt::ReadAttemptBudget {
-            schema: 1,
-            request_id: airk_kernel::service_broker::new_instance_id()?,
-            clock: if cfg!(windows) {
+        // Sample the local deadline before the host clock. Both independently
+        // shorten the supplied original attempt, never establish a successor.
+        let sampled_at = Instant::now();
+        let (attempt, remaining_ms) = next_read_budget(
+            request.read_attempt,
+            request.remaining_ms,
+            deadline,
+            sampled_at,
+            if cfg!(windows) {
                 airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
             } else {
                 airk_core::read_attempt::ReadClock::UnixMonotonic
             },
-            expires_monotonic_ns: monotonic
-                .checked_add(remaining_ns)
-                .context("Arbiter deadline overflow")?,
-            remaining_ns,
-            native_retry_expires_monotonic_ns: None,
-        });
+            airk_process::monotonic::now_ns()?,
+        )?;
+        request.read_attempt = Some(attempt);
+        request.remaining_ms = remaining_ms;
         let worker = request.worker;
         let response = drive_control(|| async {
             tokio::time::timeout_at(

@@ -41,9 +41,9 @@ fn service_refusal_is_backtrace_independent_in_the_real_process()
             let output = Command::new(env!("CARGO_BIN_EXE_airkctl"))
                 .arg("--service-runtime-dir")
                 .arg(&missing)
-                // The catalog needs no project/data discovery or auto-start;
-                // it reaches only the explicitly selected missing endpoint.
-                .args(["--output", format, "tools", "list"])
+                // Health is a nonstarting observation of this exact endpoint.
+                // Online tool reads also admit the installed pair before service access.
+                .args(["--output", format, "service", "health"])
                 .env_remove("AIRK_ERROR_FORMAT")
                 .env("RUST_BACKTRACE", backtrace)
                 .env("RUST_LIB_BACKTRACE", backtrace)

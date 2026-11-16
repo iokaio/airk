@@ -5,6 +5,9 @@ The run command never registers/indexes projects or installs/stops a shared
 service. The owned command prepares and drains only disposable original fixtures
 with an exact staged pair. Use two configurations
 for approved baseline/candidate launchers, bound to the same frozen source bytes.
+Current HTTPS configuration schema 3 pins an explicit per-call Index/Index-set
+or workspace scope and the native endpoint; no credential or connection roster
+is used. Historical stdio configurations retain their own versioned semantics.
 Reports contain counts, hashes, timings and response classifications, not source
 text, absolute paths, command arguments or arbitrary server error strings.
 Fresh status-first, fresh unprimed and primed reused connections are separate
@@ -274,77 +277,57 @@ def observation(envelope):
 
 
 def modern_configuration(config, *, combined):
-    allowed = {"schema", "transport", "command", "args", "launcher_sha256", "route", "expected_version", "control", "selection", "connections_file", "cwd", "source_root", "verification_override"}
-    if (set(config) - allowed or type(config.get("schema")) is not int or config["schema"] != 2
+    allowed = {"schema", "transport", "command", "args", "launcher_sha256", "route", "expected_version", "control", "scope", "cwd", "source_root", "verification_override"}
+    if (set(config) - allowed or type(config.get("schema")) is not int or config["schema"] != 3
             or config.get("transport") != "https" or config.get("args") != []
             or config.get("route") != "isolated-approved-runtime"):
         raise ValueError("explicit_https_configuration_required")
     control = Path(config["control"])
     if not control.is_absolute() or control.is_symlink() or not control.is_dir():
         raise ValueError("explicit_owned_control_required")
-    selected = config.get("selection", {})
-    if (set(selected) != {"kind", "selection"} or selected["kind"] != ("combined" if combined else "scoped")
-            or not isinstance(selected["selection"], dict) or len(canonical(selected)) > 8192):
-        raise ValueError("explicit_https_selection_required")
-    if not isinstance(config.get("connections_file"), str):
-        raise ValueError("native_pre_enrollment_required")
-    # The native fixture owner enrolls each exact selector before measurement.
-    # JSON selectors never manufacture authority or cause console enrollment.
+    scope = config.get("scope")
+    try:
+        checked = http_fixture.scope_value(**scope) if isinstance(scope, dict) else {}
+    except (TypeError, ValueError) as error:
+        raise ValueError("explicit_https_scope_required") from error
+    if not checked or len(canonical(checked)) > 8192:
+        raise ValueError("explicit_https_scope_required")
+    if combined and (set(checked) != {"index_ids"} or not checked["index_ids"]):
+        raise ValueError("explicit_https_indexes_required")
     return config
 
 
-def selection_identity(value):
-    if isinstance(value, list):
-        return [selection_identity(item) for item in value]
-    if isinstance(value, dict):
-        return {key:selection_identity(item) for key,item in value.items() if key != "expected_catalog_revision"}
-    return value
+def discover_https(configuration, timeout):
+    """Observe the owned tokenless endpoint and authenticate its native identity.
 
-
-def enroll_https(configuration, timeout):
+    Discovery never enrolls connections, reads credentials or mutates scope.
+    Every evidence read carries the separately frozen per-call scope.
+    """
     deadline = time.monotonic() + timeout
-    def rpc(method):
-        result = subprocess.run([configuration["command"], "service", "rpc", "--runtime-dir", configuration["control"], "--stdin"],
-            input=canonical(method), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            cwd=configuration.get("cwd"), timeout=max(.001, deadline-time.monotonic()),
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        if result.returncode or len(result.stdout) > 65536:
-            raise RuntimeError("native_https_metadata_refused")
-        return json.loads(result.stdout)
-    health = rpc("health")
+    result = subprocess.run([configuration["command"], "service", "rpc", "--runtime-dir", configuration["control"], "--stdin"],
+        input=canonical("health"), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        cwd=configuration.get("cwd"), timeout=max(.001, deadline-time.monotonic()),
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    if result.returncode or len(result.stdout) > 65536:
+        raise RuntimeError("native_https_metadata_refused")
+    health = json.loads(result.stdout)
     if health.get("status") != "health":
         raise RuntimeError("native_https_health_unavailable")
-    roster = json.loads(http_fixture.private_bytes(configuration["connections_file"], configuration["control"], 262144))
-    if (not isinstance(roster, dict) or set(roster) != {"schema", "client", "connections"}
-            or roster["schema"] != 1 or roster["client"] != "unknown"
-            or not isinstance(roster["connections"], list) or not 1 <= len(roster["connections"]) <= 32):
-        raise ValueError("native_pre_enrollment_roster_invalid")
-    matches = [connection for connection in roster["connections"]
-               if selection_identity(connection.get("selection")) == selection_identity(configuration["selection"])]
-    if len(matches) != 1:
-        raise ValueError("native_pre_enrollment_exact_selection_required")
-    connection = matches[0]
-    http_fixture.validate_enrollment(connection, configuration["control"], configuration["selection"], connection["connection_id"])
-    http_fixture.validate_native_identity(connection, health["observation"])
+    endpoint = http_fixture.read_endpoint(configuration["control"])
+    http_fixture.validate_native_identity(endpoint, health["observation"])
     if time.monotonic() >= deadline:
         raise TimeoutError("native HTTPS metadata deadline exhausted")
-    return connection
+    return endpoint
 
 
 def configuration_for_case(configuration, case):
     if configuration.get("transport") != "https":
         return configuration
-    # Every narrowed selector must match one prior native enrollment exactly.
-    # Query arguments never reuse a broader credential.
-    selected = json.loads(json.dumps(configuration["selection"]))
-    frozen = selected["selection"]
-    if (not case["project_ids"] or not case["index_ids"]
-            or not set(case["project_ids"]).issubset(frozen["project_ids"])
-            or frozen.get("index_ids") is not None and not set(case["index_ids"]).issubset(frozen["index_ids"])):
-        raise ValueError("case_widens_frozen_connection_selection")
-    frozen["project_ids"] = list(case["project_ids"])
-    frozen["index_ids"] = list(case["index_ids"])
-    return {**configuration, "selection":selected}
+    frozen = configuration["scope"].get("index_ids", [])
+    selected = case["index_ids"]
+    if not selected or not set(selected).issubset(frozen):
+        raise ValueError("case_widens_frozen_call_scope")
+    return {**configuration, "scope": {"index_ids": list(selected)}}
 
 
 def require_historical_stdio(config):
@@ -376,8 +359,8 @@ class Session:
         self.started = started
         configuration = self.configuration
         if self.https:
-            self.connection = enroll_https(configuration, self.timeout)
-            self.network = http_fixture.McpClient(self.connection, configuration["control"], self.timeout)
+            self.connection = discover_https(configuration, self.timeout)
+            self.network = http_fixture.McpClient(self.connection, configuration["control"], self.timeout, scope=configuration["scope"])
             self.networks.append(self.network)
             self.local.network = self.network
         else:
@@ -434,6 +417,7 @@ class Session:
 
     def send(self, message):
         if self.https:
+            message = self.network.with_scope(message)
             self.network.send(message)
             size = len(canonical(message))
             with self.lock:
@@ -491,7 +475,7 @@ class Session:
         if network is None:
             # Each measuring thread owns one TLS connection, while all of them
             # use the exact same initialized MCP session and frozen authority.
-            network = http_fixture.McpClient(self.connection, self.configuration["control"], max(.001, deadline-time.monotonic()))
+            network = http_fixture.McpClient(self.connection, self.configuration["control"], max(.001, deadline-time.monotonic()), scope=self.configuration["scope"])
             network.session, network.protocol = self.network.session, self.network.protocol
             self.local.network = network
             with self.lock:
@@ -499,7 +483,7 @@ class Session:
         network.connection.timeout = max(.001, deadline-time.monotonic())
         if network.connection.sock is not None:
             network.connection.sock.settimeout(network.connection.timeout)
-        message = {"jsonrpc":"2.0","id":identifier,"method":method,"params":params}
+        message = network.with_scope({"jsonrpc":"2.0","id":identifier,"method":method,"params":params})
         sent = len(canonical(message))
         with self.lock:
             self.tx_bytes += sent
@@ -840,9 +824,8 @@ def load_combined_configuration(path):
         raise ValueError("launcher_identity_mismatch")
     if config.get("transport") == "https":
         modern_configuration(config, combined=True)
-        selected = config["selection"]["selection"]
-        if not selected.get("project_ids") or len(canonical(selected)) > 4096:
-            raise ValueError("invalid_combined_session")
+        if len(canonical(config["scope"])) > 4096:
+            raise ValueError("invalid_combined_scope")
         return config, digest_bytes(raw)
     require_historical_stdio(config)
     args = config.get("args", [])
@@ -1140,7 +1123,9 @@ def combined(args):
             comparison_session = RetainedSession(legacy_configuration, args.timeout, prime_status=False) if matched_case else None
             with group_session as session, (comparison_session if matched_case else nullcontext()) as legacy, \
                     ((output / "legacy-one-index/raw.jsonl").open("x", encoding="utf-8") if matched_case else nullcontext()) as retained:
-                arguments = {**case["arguments"], "project_ids": case["project_ids"], "index_ids": case["index_ids"], "response_mode": "full"}
+                arguments = {**case["arguments"], "index_ids": case["index_ids"], "response_mode": "full"}
+                if configuration.get("transport") != "https":
+                    arguments["project_ids"] = case["project_ids"]
                 for sample in range(args.samples):
                     started = time.perf_counter()
                     trial = {"sample": sample, "validated": False}
@@ -1475,20 +1460,16 @@ def run(args):
 
 def owned_configuration(service, name, runtime):
     """One actual owned producer; modern clients receive inert reviewed selectors."""
-    config = {"command": str(service.binary),
-              "launcher_sha256": digest_bytes(service.binary.read_bytes()),
+    command = getattr(service, "cli", None) or service.binary
+    config = {"command": str(command),
+              "launcher_sha256": digest_bytes(command.read_bytes()),
               "expected_version": json.loads((runtime / "airk-runtime.json").read_text())["version"],
               "route": "isolated-approved-runtime", "cwd": str(runtime)}
     if service.single_image:
-        selection = {"kind": "scoped", "selection": json.loads(json.dumps(service.scopes[name]))}
-        connection = service.enroll_http(selection, uuid.uuid4().hex, "unknown")
-        roster_path = service.control / "http-1" / ("benchmark-connections-" + uuid.uuid4().hex + ".json")
-        descriptor = os.open(roster_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(canonical({"schema": 1, "client": "unknown", "connections": [connection]}))
-        config.update({"schema": 2, "transport": "https", "args": [],
+        scope = http_fixture.scope_value(index_ids=[service.scopes[name]["index_id"]])
+        config.update({"schema": 3, "transport": "https", "args": [],
                        "control": str(service.control), "source_root": service.projects[name]["root"],
-                       "selection": selection, "connections_file": str(roster_path)})
+                       "scope": scope})
         modern_configuration(config, combined=False)
     else:
         config["args"] = [*service.arguments(name), "mcp"]
@@ -1544,7 +1525,7 @@ def main():
     combined_parser.add_argument("--scenario", type=Path, required=True)
     combined_parser.add_argument("--output", type=Path, required=True)
     combined_parser.add_argument("--samples", type=int, default=30)
-    combined_parser.add_argument("--timeout", type=float, default=30)
+    combined_parser.add_argument("--timeout", type=float, default=125)
     combined_parser.add_argument("--fanouts", type=int, nargs="+", choices=(1, 2, 4, 32), default=[1, 2, 4, 32])
     gates_parser = commands.add_parser("phase-gates", help="Evaluate unchanged84 frozen/archive/control/preceding legacy latency gates")
     gates_parser.add_argument("--baseline", type=Path, default=Path("docs/research/baseline-v190.json"))
@@ -1564,7 +1545,7 @@ def main():
         replay.add_argument("--label", choices=("baseline", "candidate"), required=True)
         replay.add_argument("--samples", type=int, default=30)
         replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8, 16, 32, 64), default=[1, 4, 6, 8])
-        replay.add_argument("--timeout", type=float, default=30)
+        replay.add_argument("--timeout", type=float, default=125)
         replay.add_argument("--verification", choices=("off", "report", "require"),
                             help="Explicit evidence-read override, recorded separately from frozen fixture identity; omission measures runtime defaults")
         replay.add_argument("--record", type=Path, help="Optional retained investigation to reconcile without editing it")
@@ -1577,8 +1558,8 @@ def main():
     elif args.operation == "phase-gates":
         raise SystemExit(0 if phase_gates(args) else 1)
     else:
-        if not 1 <= args.samples <= 1000 or not 0 < args.timeout <= 120:
-            parser.error("samples must be 1..1000 and timeout >0..120 seconds")
+        if not 1 <= args.samples <= 1000 or not 0 < args.timeout <= 125:
+            parser.error("samples must be 1..1000 and timeout >0..125 seconds")
         execute = combined if args.operation == "combined" else owned if args.operation == "owned" else run
         raise SystemExit(0 if execute(args) else 1)
 

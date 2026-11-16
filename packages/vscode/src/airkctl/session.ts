@@ -19,6 +19,7 @@ import type {
 } from '../generated/i2';
 import { airkctlEnvironment, EXIT_CLASSES, parseErrorLine } from './runner';
 import { createAdminChunks } from './adminChunks';
+import { READ_TRANSPORT_DEADLINE_MS } from '../generated/arbiterBudget';
 
 export const SESSION_PROTOCOL = 2;
 export const CLIENT_NAME = 'airk-vscode';
@@ -28,7 +29,7 @@ export const MAX_INVOKE_ARGS = 64;
 export const MAX_INVOKE_ARG_BYTES = 32 * 1024;
 export const MAX_RESPONSE_FRAME_BYTES = 16 * 1024 * 1024;
 export const MAX_IN_FLIGHT = 8;
-export const MAX_INVOKE_DEADLINE_MS = 120_000;
+export const MAX_INVOKE_DEADLINE_MS = READ_TRANSPORT_DEADLINE_MS;
 const HEALTHY_MS = 60_000;
 const ID = /^[0-9a-f]{32}$/;
 const SHA256 = /^[0-9a-f]{64}$/;

@@ -1,0 +1,132 @@
+{
+  "schema": "airk.i2-transport-budget/1",
+  "protocol": 2,
+  "operation_deadline_ms": 120000,
+  "max_invoke_deadline_ms": 125000,
+  "cases": [
+    {
+      "name": "invoke deadline 120000",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "invoke": {
+            "argv": [
+              "version"
+            ],
+            "deadline_ms": 120000
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "invoke deadline 125000",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "invoke": {
+            "argv": [
+              "version"
+            ],
+            "deadline_ms": 125000
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "invoke deadline 125001",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "invoke": {
+            "argv": [
+              "version"
+            ],
+            "deadline_ms": 125001
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "invoke deadline 0",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "invoke": {
+            "argv": [
+              "version"
+            ],
+            "deadline_ms": 0
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "admin_call deadline 120000",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "admin_call": {
+            "operation": "usage.document",
+            "body": {
+              "future_body": "retained"
+            },
+            "deadline_ms": 120000
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "admin_call deadline 125000",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "admin_call": {
+            "operation": "usage.document",
+            "body": {
+              "future_body": "retained"
+            },
+            "deadline_ms": 125000
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "admin_call deadline 125001",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "admin_call": {
+            "operation": "usage.document",
+            "body": {
+              "future_body": "retained"
+            },
+            "deadline_ms": 125001
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "admin_call deadline 0",
+      "json": {
+        "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "request": {
+          "admin_call": {
+            "operation": "usage.document",
+            "body": {
+              "future_body": "retained"
+            },
+            "deadline_ms": 0
+          }
+        }
+      },
+      "valid": false
+    }
+  ]
+}

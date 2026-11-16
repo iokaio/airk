@@ -1,0 +1,214 @@
+{
+  "schema": "airk.development-software-v2-freeze/1",
+  "recorded_at_utc": "2026-11-16T05:34:28.175291+00:00",
+  "authority": "User authorized docs/arbiter/final-plan.md implementation on 15 November 2026; D02/D03/D05/D06/D07 govern this additive protocol.",
+  "status": "criteria_preregistered_inputs_not_admitted",
+  "executable": false,
+  "scope": "Research acceptance criteria and draft experiment register only. This file is not a native request, profile, calibration, rights approval, qualification proof or training release.",
+  "original_protocols": [
+    {
+      "path": "a0-freeze.json",
+      "sha256": "c9dfb23aed91b2b5403b4f7cee332b5baea61076dd3bdf2d9d1420b4fb0d46d6",
+      "disposition": "preserved_historical_population_and_policy"
+    },
+    {
+      "path": "encoder-baseline-freeze.json",
+      "sha256": "ebc13aadf83c2ea373fb31ab1d06704b9442124e569f59b1a3ab820a4a8d0c2e",
+      "disposition": "preserved_historical_population_and_policy"
+    },
+    {
+      "path": "goal-baseline-selection-freeze.json",
+      "sha256": "7d9402f09ed163ef82f6c9c69da7111265e26e322bbee73b9ba667d5a1e0c8df",
+      "disposition": "preserved_historical_population_and_policy"
+    },
+    {
+      "path": "resource-evaluation-freeze.json",
+      "sha256": "b6bf7c2ec577c338f3310d0cbb5047e9da116ecf7f1961e885dcaa8f833557dc",
+      "disposition": "preserved_historical_population_and_policy"
+    }
+  ],
+  "shipping_policy_amendment": {
+    "shared_input_tokens": 8192,
+    "shared_deadline_ms": 120000,
+    "measured_p95_seconds_max": 120,
+    "focus_pair_tokens": 512,
+    "focus_padding": "left",
+    "qualification_mapping": "New 8192/120 results require exact current native artifact and policy identities; historical T2048/N8/30s results never transfer.",
+    "work_accounting": "Charge all stage prompts, padding, internal reads and retries to the original shared budget and clock; report cold/warm component and end-to-end latency plus failed attempt costs.",
+    "sampling": {
+      "warmup_runs": 1,
+      "measured_warm_runs": 20,
+      "p95": "nearest rank, 19th ascending sample of20",
+      "p99_and_max": "20th sample, descriptive only"
+    },
+    "resource_fit": "Measure actual CPU/ISA/provider/threads, input dimensions, load/resident coexistence/RSS/disk peaks, OOM/cancel/recovery; no host or profile transfer."
+  },
+  "data_acceptance": {
+    "target_query_groups": 2000,
+    "minimum_unrelated_repository_families": 20,
+    "mutually_assigned_fraction": {
+      "code_tests": 0.4,
+      "docs_contracts_configuration": 0.35,
+      "cross_file_diagnostics": 0.15,
+      "general_document_replay": 0.1
+    },
+    "languages": [
+      "Rust",
+      "TypeScript/JavaScript",
+      "Python",
+      "Go",
+      "C/C++",
+      "shell/PowerShell",
+      "Markdown/configuration",
+      "supported technical documents"
+    ],
+    "partitions": [
+      "TRAIN",
+      "DEV",
+      "CAL",
+      "policy_confirmation",
+      "FINAL"
+    ],
+    "split_unit": "repository/fork + issue/symbol family + chronology; deduplicate clones, copied documents, fixes and paraphrases before synthesis, mining or scoring",
+    "final_reservation": "Reserve unseen projects and task/language slices before synthesis. Entire FINAL source closure is excluded from supervised/unsupervised training and mining. Historical exposed/cancelled FINAL populations stay consumed.",
+    "rights": "Pin each actual source revision, source rights/notice artifacts and exact permitted use; benchmark wrapper license alone is insufficient. Hotpot remains evaluation-only.",
+    "visibility": "Bind exact original spans to Rust-emitted visible examples; reject invisible positives, preserve extraction/alignment refusals and unknowns in the original denominator.",
+    "annotation": "Retain author/authority, uncertainty, original alternatives and all complementary required needs separately. Agent judgment and native span projection do not become human gold.",
+    "negative_masks": "Mask known alternative positives and clones; unjudged candidates stay unknown. Keep weak parent bags a distinct equalized-bag-size arm.",
+    "required_before_gradient": [
+      "source_rights_split_hashes",
+      "native_visible_example_hashes",
+      "stratified_TRAIN_human_review",
+      "exact_starting_checkpoint",
+      "seed_and_optimizer",
+      "controls",
+      "metric_and_stop_rule",
+      "maximum_steps_and_compute",
+      "measured_probe_and_remaining_campaign_budget"
+    ]
+  },
+  "acceptance": {
+    "minilm": {
+      "recall_at_10_min": 0.85,
+      "complete_coherent_support_min": 0.7,
+      "paired_complete_recall_gain_against_each_original_unsigned_control_min": 0.03,
+      "mean_recall_regression_max": 0.02,
+      "required_exports": [
+        "U8",
+        "S8"
+      ]
+    },
+    "optional_each_selected_profile": {
+      "required_evidence_or_completion_min": 0.75,
+      "completion_regression_vs_selected_strongest_baseline_max": 0.02,
+      "citation_or_critical_evidence_regression_allowed": false,
+      "mean_external_turn_reduction_on_nonempty_paired_common_success_min": 0.1
+    },
+    "source_and_citation_identity_precision_min": 1.0,
+    "approximate_export": {
+      "raw_logit_absolute_drift_max": 0.25,
+      "normalized_mass_diagnostic_drift_max": 0.05,
+      "same_argmax_all_frozen_fixtures": true,
+      "near_boundary_cases_required": true
+    },
+    "statistics": "Preregister repository-cluster sample/variance/power rationale before scoring; source-cluster paired bootstrap10000 replicates seed1908 confidence.95 remains descriptive, not a substitute for adequate power.",
+    "baseline_selection": "Higher baseline completion; tie fewer mean turns on its own successful tasks; exact tie deterministic_packet. Optional-model results never select the baseline."
+  },
+  "terminals": {
+    "classes": [
+      "Sufficient",
+      "Clarify",
+      "NoJustifiedRead"
+    ],
+    "availability": "Each class unsupported until independently class-qualified; global whole-roster winner/margin precedes support acceptance; unsupported winner abstains without runner-up fallback.",
+    "sufficient": {
+      "observed_false_accepted_max": 0,
+      "one_sided_confidence": 0.95,
+      "false_accepted_upper_bound_strictly_below": 0.01,
+      "independent_zero_error_accepted_guide": 299,
+      "sample_unit": "repository/source cluster; independent-binomial guide is insufficient by itself"
+    },
+    "labels": "Exact class-specific human-adjudicated whole-card evidence and pre-score coverage/risk criteria required. Generic Read reference-gain proxies, QASPER answerability and timeout are not terminal gold.",
+    "clarify": "Genuine task ambiguity; no fabricated ambiguity from missing evidence.",
+    "no_justified_read": "Complete verified menu and no justified available choice; no claim of global unanswerability."
+  },
+  "draft_experiments": [
+    {
+      "id": "M1",
+      "primary_change": "multi-positive contrastive MiniLM, easy vs screened lexical+dense negatives, general replay",
+      "controls": "exact original unsigned controls; each complementary evidence need has its own positive loss",
+      "optimizer": {
+        "algorithm": "AdamW",
+        "learning_rate": 1e-05,
+        "epochs": 1,
+        "temperature": 0.05,
+        "effective_contrastive_batch": 32
+      },
+      "abi": "256 WordPieces/384 dimensions/masked-mean/L2/batch1; export U8 and S8 early"
+    },
+    {
+      "id": "F1",
+      "primary_change": "software-evidence instruction only, unchanged Qwen3-Reranker-0.6B weights and candidate pool",
+      "controls": "F0 current instruction on identical native admitted pairs; select on DEV before F2 comparison",
+      "gradient_steps": 0,
+      "abi": "exact escaped left-padded512 native pairs; no2152/yes9693 response logits"
+    },
+    {
+      "id": "F2",
+      "primary_change": "continued relevance LoRA on F1-selected instruction",
+      "controls": "original/adapted weights under same instruction and fixed pool, then selected encoder pool",
+      "optimizer": {
+        "rank": 16,
+        "learning_rate": 5e-05,
+        "effective_batch": 32,
+        "epochs": 1
+      },
+      "abi": "full-vocabulary response-position yes/no loss, masked prompt, merge before ONNX comparison; overflow remains refused"
+    },
+    {
+      "id": "C1",
+      "primary_change": "whole-card useful-Read Compact LoRA, then independently controlled Large",
+      "controls": "unchanged C0 same upstream native view/roster; Focus-off cases included",
+      "optimizer": {
+        "rank": 16,
+        "learning_rate": 5e-05,
+        "dropout": 0.05,
+        "effective_batch": 32,
+        "epochs": 1,
+        "pilot_epoch_ceiling": 3
+      },
+      "abi": "nonthinking six-input graph/final-prefix A-H vocabulary rows/scores[1,N]; terminal-needed states are refusal probes without fabricated Read targets"
+    }
+  ],
+  "execution_controls": {
+    "pilot_seeds": [
+      1908
+    ],
+    "finalist_seeds": [
+      1908,
+      1909,
+      1910
+    ],
+    "one_gpu_heavy_experiment_at_a_time": true,
+    "gradient_release": "Blocked until all actual data/input/probe caps above are bound; drafts have no executable max-step/compute authorization.",
+    "failed_adaptation": "retain exact original weights and continue independent components; original optional weights still require qualification",
+    "forbidden": [
+      "post_FINAL_tuning",
+      "final_score_based_selection",
+      "unapproved_cloud_teacher_or_compute",
+      "silent_cropping",
+      "unknown_as_negative",
+      "qualification_by_export_or_training_loss"
+    ]
+  },
+  "pending_bindings": [
+    "corrected_matched_runtime_and_native_policy",
+    "current_baseline_and_native_input_menu_census",
+    "accepted_software_corpus_and_exact_rights_split_visible_examples",
+    "repository_cluster_power_sample_rationale",
+    "per_experiment_checkpoint_and_input_hashes",
+    "measured_executable_probe_caps",
+    "class_specific_human_terminal_gold"
+  ],
+  "promotion": "Exactly three independently qualified selected optional profiles plus native publication catalog/capture, rights/source maps and final-series local-test refusal. Publication requires separate authorization."
+}

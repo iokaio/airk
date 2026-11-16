@@ -1,9 +1,10 @@
 # AIRK final implementation plan
 
 Planning date: 15 November 2026 (America/Denver).
-Status: consolidated execution runbook; all seven user decisions recorded.
-This request authorizes writing the plan, not starting training, installation,
-qualification campaigns or public publication.
+Status: execution underway on feat/arbiter-final; all seven user decisions recorded.
+The original planning request authorized this runbook only. The user authorized
+implementation on 15 November 2026; public publication remains separately
+authorized. Current execution evidence and blockers are in section 10.
 
 This plan combines [knownissues.md](knownissues.md) and
 [weights-v2-plan.md](weights-v2-plan.md). It orders product repairs, reliable
@@ -1008,3 +1009,59 @@ children, temporary/cache/build outputs, delegated work and remote batches.
 An unverified or foreign identity blocks the operation before file creation;
 no sandbox-account, ACL/ownership or global Git-trust workaround is permitted.
 This handoff updates branch/instruction state without starting implementation.
+
+## 10. Current execution outcomes
+
+Execution started 15 November 2026 at 22:29:42 America/Denver
+(2026-11-16T05:29:42.2081757Z). The 24-hour target and 48-hour hard cap remain
+16 and 17 November at 22:29:42 Denver. The
+[existing ledger](../simplify/one-process-ledger.md) retains exact commands,
+source/artifact identities, failed attempts, test counts and private receipt
+paths. This table reports current state; it grants no missing qualification.
+
+| Step | Status | Observed outcome and remaining work |
+| --- | --- | --- |
+| 1 | passed | Clean starting source/branch/contributor recorded; human Windows identity verified; existing human-owned warm target audited; issue/input/platform inventory retained. Foreign and unreadable inputs preserved. |
+| 2 | passed | D04 manual/refusal, D05 terminal /2 and D06 budget/resource contracts and Rust-owned fixtures are implemented. Core367/367 and subsequent current/historical policy controls pass; generated consumers match. This freezes semantics, not model fit or promotion. Original owner/ACL and historical fixtures remain preserved. |
+| 3 | in_progress | Canonical manual/refusal, eleven tokenless harness migrations and per-session status repair implemented. Current complete native CLI/plan/MCP controls pass within4,748 nonignored test identities; all five real-process agent-entry fixtures pass. The corrected combined retrieval harness and receipt attribution controls pass70/70. Matched-pair real transport qualification remains pending. |
+| 4 | in_progress | Original-attempt preservation and metadata/cancellation regressions pass. Default8192/120 and Rust-generated125s delivery timeout are applied. Native census records all126 requests with0refusals:121shrink/5grow, compact643–1088 tokens, original595–2027, allfit2048. Exact failed R154 observer remains inaccessible; original question, manifest and753source files are verified unchanged. A separately identified fresh-runtime diagnostic is prepared; no exact failed observer replay is claimed. |
+| 5 | in_progress | Task-oriented Service/Agents, canonical manual Copy and twelve-icon rail implemented. Fresh compiled Admin/editor builds and behavior evidence are sealed in the frontend handoff; initial fixture failures were corrected with11/11 and7/7 focused passes. C7 matches451 frontend inputs;223 editor outputs are pinned. Installed behavior remains pending. |
+| 6 | in_progress | Historical native Provision saved all23 logical assets; independent24,130,010,313-byte census passes. That original run remains failed due final-Large hash/control starvation. Joined acquisition and native shutdown repairs pass source regressions. Current public Context refuses stale retained metadata before download; regenerated private metadata cannot substitute for published sources. Actual current Focus lifecycle/private model load/call gates remain pending. |
+| 7 | in_progress | Additive pre-score software-v2 protocol and hardware/input inventory exist. Current full native tests include synthetic exact/ANN and lexical/vector/hybrid controls. A fresh task-level same-query/vector diagnostic is being prepared inside the existing native owner; matched-runtime preflight, mode baselines and current measurements remain pending. |
+| 8 | blocked | Retained software supervision lacks accepted repository diversity, native-visible alignment and suitable human review. Existing mechanical labels and agent judgments are not human gold. Audit/refusal tooling11/11 passes; acceptance is not claimed. |
+| 9 | blocked | M1 gradients depend on Step8 acceptance. Original MiniLM weights remain in use; no adaptation or measured gain is claimed. |
+| 10 | blocked | Software F1/F2 selection/training depends on Step8 acceptance; original Focus remains unqualified at the new policy. |
+| 11 | blocked | Terminal /2 contracts, global-winner/no-fallback behavior and per-class refusal fixtures pass native checks. Training and terminal promotion remain blocked by missing suitable human labels and exact CAL/confirmation; terminal classes stay unavailable. |
+| 12 | in_progress | Additive8192/120 native resource policy, exact constructor, numeric/source-roster emitters, measurement owners and strict promoter are implemented and tested. Independent Torch reference source/card review and26cheap controls are complete; assembler boundary six controls pass. Current metadata/measurement packets await genuine frozen build artifacts. No selected-model forward, actual resource acceptance or historical evidence transfer is admitted. |
+| 13 | blocked | Exact-artifact CAL/confirmation and composed qualification require the unresolved baseline/profile/data gates. |
+| 14 | blocked | No current held-out promotion comparison is admitted; consumed historical FINAL populations stay evaluation-only. |
+| 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
+| 16 | in_progress | Whole-workspace/all-target/all-feature Clippy and format pass on the corrected source. All4,748 nonignored identities have source-bound passing coverage; all routine-excluded campaigns are included and failed original runs remain nonpassing. Existing vector qualifiers now use genuine service leases:8/8 model/vector cases and2/2actual process ownership/recovery cases pass; single quarantined quota observation passes without removing its flakiness record. No-local Retrieval Clippy passes. Unfiltered doctests have0cases across19suites; guard remains nonpassing and no case coverage is claimed. Neo currentORT1.30/8GiB capacity and Linux human identity remain platform prerequisites/limits. |
+| 17 | in_progress | Native/extension manifests and lockfiles are synchronized once at unused1.8.207. Fresh human-owned frontend bundles and real candidate worktree are prepared. Exact official Inno6.7.1 compiler provenance is verified across118files and17component signatures. Windows runtime/packages and isolated installed UI checks remain pending; preserve the actual occupied user installation/configuration. |
+| 18 | in_progress | Current-version documentation is reconciled for the1.8.207 candidate, with dated source/receipt evidence retained. Repository and whitespace checks pass for3480public files. The implementation milestone, source-bound artifact census and final outcome reconciliation continue; no push/publication is authorized. |
+
+The user approved reviewed in-scope tracked-file content edits while preserving
+existing ownership and ACLs. This resolves the source-edit constraint and does
+not authorize foreign ignored output/cache writes. The UI ownership incident
+and exact preserved objects are recorded in the ledger. Fresh human-owned
+outputs are used; no account, ACL or ownership workaround qualifies a check.
+
+### Original known-issue disposition during execution
+
+This table supersedes current-status interpretations of the dated 1.8.201 issue
+record; its original measurements, failures and receipt identities remain history.
+The candidate version is now1.8.207, discovered from live official inventories
+and synchronized once across the four native/extension manifest/lock owners.
+
+| Original issue | Current disposition and evidence limit |
+| --- | --- |
+| Unqualified optional profiles | Retained unqualified; no training/promotion without accepted labels and exact native CAL/confirmation/resource/composed evidence. |
+| GitHub-only model source | Retained by D02/source-map decision. Actual native acquisition saved all23 logical assets and independent24,130,010,313-byte census passes; original run remains failed due control starvation. Post-fix actual acquisition/load evidence remains pending. |
+| Pre-1.9 local-test admission | Retained as a disclosed local candidate mechanism; final-series/native publication gates stay strict. Current terminal source changes require new Context metadata and invalidate old policy identities. |
+| Missing qualified publication capture | Blocked by absent qualified three-profile catalog. No synthetic capture or fabricated public URL is substituted. |
+| Larger default/client timeout chain | Native default8192/120000 applied and Core literal/refusal cases pass. Rust emits client constants120000 plus5000 delivery overhead. I2/current real-transport/end-to-end gates remain pending. Historical2048/30 controls retain exact identities. |
+| R154 Answer timeout | Exact failed record inaccessible; original-attempt clipping repairs have focused regressions, but the original timeout is not claimed replayed or fixed by a larger allowance. Actual settlement and current transport probes remain pending. |
+| Context prompt fit | Complete native126-request census passes with121 shrinks/5growths/0refusals, all within original2048. The original shrink-only test remains failed. This does not qualify new8192 graphs or reconstruct missing R154 bytes. |
+| Historical accepted failures/90% threshold | Superseded by this plan; no acceptance waiver. Native private-boundary tests pass under verified human identity; config49/49 pass with only disposable fixture GIT_PAGER removed. Other reported failure classes are repaired or awaiting current grouped native checks. |
+| Completion criterion wording | Frozen gate is at least.75 completion, at most.02 completion regression, and at least.10 paired common-success external-turn reduction. Historical '.02 gain' prose is not the acceptance rule. |
+| Platforms and installed artifacts | Windows candidate first; Neo identity/preliminary snapshot verified, original365dirty entries preserved. No current installed or cross-platform qualification claimed yet. |

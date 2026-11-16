@@ -893,11 +893,103 @@ value, its reason and the evidence needed to restore it is in
   combined-context `resources.input_tokens` accept 1..=8192 (was 2048).
 - Deadline ceilings: `Budget.deadline_ms`, native `remaining_ms`, combined
   `deadline_ms` and `read_limits::MAX_DEADLINE_MS` accept up to 120000 ms (was
-  30000). `Budget::default()` is deliberately unchanged (2048 tokens, 30000 ms),
-  so existing retained fixtures remain valid; callers must request larger
-  budgets explicitly.
+  30000). This candidate originally retained the 2048-token/30000-ms default.
+  Final-plan D06 supersedes that default with 8192 shared input tokens and
+  120000 ms. Historical controls now specify 2048/30000 explicitly; their
+  retained fixtures and evidence identities are unchanged. The additive native
+  budget cases and [runtime budget contract](../../../../docs/arbiter/runtime-budget-contract.md)
+  separate shipping defaults, ceilings, actual allocations and qualification.
 - The exported Focus graph has a static `[1, max_tokens]` input width (see
   `selected_graph_shape`). A Focus profile wider than the exported 512 cannot
   load without a new graph export. Context graphs have dynamic token axes.
 - Qualification floors (T2048, 30 s p95, resource and numeric rows) were not
   changed and still describe the earlier evidence.
+
+
+## D05 terminal-class calibration extension (15 November 2026)
+
+The final-plan D05 decision authorizes an additive calibration `/2`, not
+terminal deployment. Historical calibration `/1` bytes and interpretation remain
+unchanged. `/2` requires exactly one explicit supported/unsupported disposition
+for Read, Sufficient, Clarify and NoJustifiedRead. An unsupported class has no
+acceptance rule. Each supported terminal class binds its own exact human-backed
+qualification SHA; enum presence, generic Read certificates and model scores
+cannot supply that evidence. Read support retains its separately qualified scope.
+
+One frozen complete roster is scored once. The unique global winner and its raw
+margin are computed before class admission. Unsupported terminal winners, ties,
+invalid scores and insufficient margins abstain; no runner-up substitution.
+`/2` class metadata is authenticated policy, not proof that labels or qualification
+exist. It changes the native task-policy identity through the existing source
+digest; old trained/profile evidence cannot silently transfer.
+
+Rust owns typed terminal CAL/confirmation labels, raw captures, criteria and
+qualification. CAL chooses a threshold; confirmation replays it unchanged. Human
+whole-card labels bind exact source-visible roster/input identity and all card
+fields. Each terminal class needs its own human-backed positives and zero observed
+false admissions. Frozen risk/coverage criteria precede scores. For Sufficient,
+one-sided 95% false-acceptance upper risk must be strictly below .01. The native
+zero-error calculation uses a separately reviewed effective independent sample
+count, never an unreviewed raw-task count. Exact repository clusters and accepted
+sample closure bind a separately pinned independence analysis. No minimum of 299
+repositories is introduced. Missing suitable labels or independence analysis
+leaves the class unsupported.
+
+Final promotion independently reads/replays the original human annotations,
+native scores and independence analysis from approved exact SHA-pinned files.
+Calibration metadata alone cannot grant terminal release authority. Sufficient
+means complete task-required retained support; Clarify means actual ambiguity;
+NoJustifiedRead means no justified choice in the complete verified menu, never
+global unanswerability, timeout or an omitted choice. This extension adds no
+wire action, persisted state format, new scoring pass or runtime learning.
+
+`TerminalCriteria` also freezes exact CAL/confirmation population identities and
+the semantic whole-card rule template before scoring. Only the numerical raw
+margin is selected on CAL. Native population identities include the exact
+visible-input and human annotation sources; compiler refusals remain in the
+denominator. A model cannot qualify by omitting low-scoring/failed questions.
+The test-support terminal fitter accepts pinned original sources, emits native
+experimental profiles and leaves failed/missing classes explicitly unsupported.
+All its output remains unqualified and needs the separate final-promoter checks.
+
+Terminal promotion reconstructs the full original question and verified ReadChoice
+bodies through the native roster/prompt owner and re-tokenizes with the exact
+authenticated compiler/tokenizer assets. Scored rows must match that actual
+compiled-input digest and token count. An opaque roster hash cannot certify
+substituted question/menu bytes. The owner also recomputes the deterministic
+CAL-only cutoff during promotion; a confirmation-selected cutoff refuses even
+when it happens to retain zero observed errors and sufficient coverage.
+
+### D05 semantic digest-input decision
+
+The Context semantic closure explicitly includes LF-canonical bytes of
+`context_action.rs`, `context_action/calibration.rs` and
+`context_action/calibration/terminal.rs`, plus the existing Focus semantic
+digest. `terminal.rs` owns the runtime unique global winner and raw-margin
+primitive as well as terminal acceptance/fitting; its production bytes are
+therefore digest inputs. Assertion-only test files are outside that closure.
+Retrieval's existing Context task-policy owner also hashes its complete
+`context_action.rs`, so the native prompt reconstruction hook is covered.
+No newly extracted source controlling admitted card semantics is omitted.
+
+This is an explicitly new current-version policy identity. Native mutation
+cases demonstrate that changing any of those three source inputs changes the
+semantic identity, while CRLF normalization is preserved and lone CR refuses.
+All old Context profiles/calibration/captures retain their exact original
+identities as historical evidence; they cannot be relabeled or admitted under
+the new policy. Regenerate metadata with the Rust owner from unchanged verified
+weights, stage new descriptors privately, and collect new native evidence.
+Existing immutable published metadata/source URLs remain unchanged.
+
+### Explicit native schema emission
+
+`arbiter::schema::tests::schema_matches_reviewed_capture` remains a comparison
+by default. With the exact explicit environment value
+`AIRK_WRITE_CONTRACT_SCHEMA=1`, the same Rust owner writes its derived schema
+to the fixed tracked `packages/contracts-gen/arbiter.schema.json` destination
+before comparing it. This is the reviewed generation path, not a handwritten
+JSON/TypeScript mirror. The write truncates the existing file in place; the
+verified same-user runner must preserve its owner and access policy and retain
+the source/output identities. Other environment values do not authorize a write.
+The terminal budget/source/acceptance emitters remain separately explicit and
+never confer model or publication qualification.

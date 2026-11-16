@@ -55,6 +55,7 @@ pub fn open_factory(connection_id: Incarnation, hooks: OpenHooks) -> Authenticat
             connection_id,
             hooks: hooks.clone(),
             client: Mutex::new(ClientFamily::Unknown),
+            responses: airk_mcp::response::OpenStatusSession::default(),
         }) as Arc<dyn RemoteTools>)
     })
 }
@@ -69,6 +70,7 @@ struct OpenBackend {
     connection_id: Incarnation,
     hooks: OpenHooks,
     client: Mutex<ClientFamily>,
+    responses: airk_mcp::response::OpenStatusSession,
 }
 
 /// One selector argument: absent, or an array of strings. Any other shape
@@ -161,6 +163,8 @@ impl RemoteTools for OpenBackend {
                 .client
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
+            let response_tool = tool.clone();
+            let response_arguments = arguments.clone();
             let response = (self.hooks.reader)(OpenRead {
                 connection_id: self.connection_id,
                 index_names,
@@ -171,7 +175,10 @@ impl RemoteTools for OpenBackend {
                 client,
             })
             .await;
-            Ok(envelope(response))
+            let mut result = envelope(response);
+            self.responses
+                .display(&response_tool, &response_arguments, &mut result);
+            Ok(result)
         })
     }
 }
@@ -298,6 +305,55 @@ mod tests {
             answer["structuredContent"]["error"]["code"],
             "agent_scope_choice_disabled"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn open_status_memory_belongs_to_each_http_backend_session() -> anyhow::Result<()> {
+        let body = json!({"collection":"one",
+            "publication":{"token":"airk-r1:01010101010101010101010101010101:1:0202020202020202020202020202020202020202020202020202020202020202"},
+            "freshness":{"state":"idle","observed_unix_ms":1},
+            "semantic_readiness":{"state":"ready"},
+            "scope_observation":{"schema":1,"qualifier":"selected_subset",
+                "fingerprint":"0303030303030303030303030303030303030303030303030303030303030303",
+                "selection":{"owner":"agent","scope_identity":"0404040404040404040404040404040404040404040404040404040404040404","catalog_revision":1},
+                "members":[{"index_id":"idx_01010101010101010101010101010101","memberships":[],
+                    "source_root_ids":[],"source_revision":1,"policy_epoch":0,"policy_digest":null}]},
+            "read_scope":{"index_ids":["idx_01010101010101010101010101010101"],"source":"explicit"},
+            "hits":[{"path":"native.md","text":"unchanged evidence"}]});
+        let result = airk_mcp::unified::success(body.clone());
+        let factory = open_factory(
+            airk_core::service_http::LOCAL_AGENT_CONNECTION,
+            hooks(
+                Arc::new(Mutex::new(None)),
+                Seen::default(),
+                ControlResponse::ToolResult {
+                    result: result.clone(),
+                },
+            ),
+        );
+        let first = factory()?;
+        let second = factory()?;
+        let args = json!({"index_ids":["one"]}).as_object().unwrap().clone();
+        assert_eq!(first.call("search".into(), args.clone()).await?, result);
+        let repeated = first.call("search".into(), args.clone()).await?;
+        let mut expected = body.clone();
+        expected.as_object_mut().unwrap().remove("freshness");
+        expected
+            .as_object_mut()
+            .unwrap()
+            .remove("semantic_readiness");
+        assert_eq!(repeated, airk_mcp::unified::success(expected));
+        // The same built-in service connection does not share observations
+        // between independently initialized MCP protocol sessions.
+        assert_eq!(second.call("search".into(), args.clone()).await?, result);
+        let mut explicit = args.clone();
+        explicit.insert("include_status".into(), true.into());
+        assert_eq!(first.call("search".into(), explicit).await?, result);
+        let mut full = args.clone();
+        full.insert("response_mode".into(), "full".into());
+        assert_eq!(first.call("search".into(), full).await?, result);
+        assert_eq!(first.call("status".into(), args).await?, result);
         Ok(())
     }
 }

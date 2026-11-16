@@ -32,3 +32,70 @@ Every output has no qualification, qualified targets or download authority.
 This constructor cannot create a release capability or substitute metadata for
 NN, calibration, platform, package or task-quality qualification. Publisher
 notices are actual caller-supplied assets; missing provenance is never invented.
+
+
+## Software-v2 resource metadata (/2)
+
+D06/D07 add `prepare_with_limits` consuming the exact native Core ResourcePolicy.
+The original `prepare` keeps Context2048, Focus512 and its /1 manifest algorithm;
+prior descriptors/fixtures are neither rewritten nor relabeled. The additive
+path deserializes the existing Rust-emitted compiler, changes only Context's
+max_tokens to8192, validates/serializes it and admits those bytes through the
+unchanged native tokenizer/recipe owner. Focus stays byte-exact static512.
+`compiler.rs` and `compiler/qwen.rs` remain unchanged, preserving source policy.
+
+The new private /2 profile manifest frames the zero-self-field descriptor and
+exact canonical policy bytes. Compiler/calibration descriptor hashes therefore
+bind the real wider input. A separate resource-policy.json is private metadata,
+not a model asset, allocation or measurement. The returned optional policy is
+Rust-only preparation state. All qualification/target/download fields remain
+empty and actual native resources/numeric/task/platform checks remain required.
+
+## Private current-policy metadata regeneration
+
+The ignored native `regeneration::emit_current_policy_profiles_from_verified_original_assets`
+consumer takes a SHA-pinned original Rust catalog, original acquisition receipt,
+independent saved-asset census, exact source-file pins and fresh private output.
+The original Provision receipt may record a failure; its flags are never copied
+as a pass. Rust reauthenticates the actual unchanged graphs, external weights,
+tokenizers, notices and original fixtures through `prepare_with_limits`.
+Python freezes opaque file bytes/paths only; it never reconstructs Profiles,
+compiler/calibration/resource policies or source URLs.
+
+Focus must retain its exact original512 compiler, relative-relevance metadata
+and task policy. Context gets the explicitly new8192 compiler and current
+whole-card policy. Its new calibration `/2` declares all terminal classes
+unsupported. The GenericRead extreme-margin bootstrap remains raw-score-only,
+not a fitted positive or a qualified capability. The additional private manifest
+frames domain `airk.private.context-metadata-regeneration-profile/2`, canonical
+resource-policy bytes, original catalog SHA, original manifest and the exact
+new Profile with only its manifest field zeroed. Historical controls and
+receipts are never relabeled.
+
+Native outputs include exact Profiles, complete private file maps and Core-owned
+`ResourceRunInput` requests. Their source manifest pins the exact frozen request;
+optional numeric fixture is absent for resource-only runs. Retained original2048
+fixtures remain historical controls and do not establish8192 numerical parity.
+The report records actual native emitter image SHA, source/input/output identities
+and elapsed metadata time. No NN, qualification, target, download or catalog
+authority is created. Failure preserves partial private output and diagnostics.
+
+New compiler/calibration bytes have no published immutable source. The existing
+local-test catalog emitter's URL-formatting catalog phase must not be used with
+invented tags/parts. Normal product Import still requires the exact current
+compiled profile and its complete validated source closure. Use the existing
+same-lease/gate private EvaluationOwner descriptor seeding for local staging;
+Context public availability remains pending separate approved publication.
+The final catalog still requires all three genuinely qualified profiles.
+
+The frozen metadata request also pins its actual successful native build receipt
+and source repository root. Every declared source-file hash must match that
+receipt's native file seals. The final consumer reconciles its native group with
+the actual image's independently reviewed build-source group set. A single
+identical image may retain multiple valid whole-workspace source groups; they
+are not collapsed into a fabricated latest source. Actual owned-process input
+seals cover the request, Profile, source manifest/build receipt, declared sources,
+logical assets, actual image and any numeric fixture/reference producer. Missing
+seals refuse. Context numeric17/128/8192 inputs must have every token live;
+Focus retains genuine left padding. Vocabulary readout rows must match the
+authenticated native compiler. New native refusal fixtures cover these boundaries.

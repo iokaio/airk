@@ -840,7 +840,8 @@ fn set_create_with(
     indexes: Vec<String>,
     apply: ApplyArgs,
 ) -> Result<u8, u8> {
-    let control = control(cx, selection, apply.runtime_dir)?;
+    // Pure caller validation must precede automatic service admission: invalid
+    // local input cannot probe/start an installation or change its failure.
     let mut ids: Vec<IndexId> = Vec::new();
     for text in indexes {
         let id = parse(cx, "--index", Some(text))?.ok_or(2u8)?;
@@ -849,6 +850,7 @@ fn set_create_with(
         }
         ids.push(id);
     }
+    let control = control(cx, selection, apply.runtime_dir)?;
     let revision = current_revision(cx, &control)?;
     let mut scopes = Vec::new();
     for index in &ids {

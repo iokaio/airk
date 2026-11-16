@@ -29,7 +29,7 @@ const SHARED_MANAGEMENT_INPUTS = [
     'src/workbenchContracts.ts', 'src/workbenchAnswerNavigation.ts', 'src/sourceVerification.ts',
     // Credential-free evidence algorithms and inert Plan imports reused by browser adapters.
     'src/explorerEvidenceCore.ts', 'src/explorerSearch.ts', 'src/explorerFacts.ts', 'src/workbenchRender.ts',
-    'src/nativeMessageLimits.ts', 'src/explorerReviewCore.ts', 'src/explorerStrategyRunnerCore.ts', 'src/explorerPlanFiles.ts',
+    'src/generated/arbiterBudget.ts', 'src/nativeMessageLimits.ts', 'src/explorerReviewCore.ts', 'src/explorerStrategyRunnerCore.ts', 'src/explorerPlanFiles.ts',
 ];
 function pilotRuntimeSourceSeal(repository = path.resolve(root, '../..')) {
     const hash = crypto.createHash('sha256').update('AIRK-UI-PILOT-RUNTIME-1\0');
@@ -248,7 +248,7 @@ async function build() {
     checkInputs('Webview', webview.metafile, [/^src\/explorerWebview\//, ...CONTRACTS, ...SHARED_MANAGEMENT_INPUTS, /^node_modules\/preact\//, /^airk-explorer-help:/, /^airk-shared-admin-css:/]);
     const workbench = await esbuild.build({ ...common, entryPoints: ['src/workbenchWebview/main.tsx'], outfile: 'out/workbenchWebview.js',
         format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', banner: { js: preactBanner() } });
-    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, '../ui/src/answerPresentation.ts', '../ui/src/nativeMetadataCodec.ts', 'src/workbenchAnswerNavigation.ts', 'src/workbenchContracts.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
+    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, '../ui/src/answerPresentation.ts', '../ui/src/nativeMetadataCodec.ts', 'src/workbenchAnswerNavigation.ts', 'src/workbenchContracts.ts', 'src/generated/arbiterBudget.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
     const assistance = await esbuild.build({
         ...common,
         entryPoints: ['src/explorerAssistance/main.ts'],

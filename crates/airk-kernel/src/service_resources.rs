@@ -21,6 +21,8 @@ const MODEL_BYTES: u64 = 512 << 20;
 // Main service baseline plus the bounded, independently killable source watcher.
 const WORK_BYTES: u64 = 768 << 20;
 const IO_BYTES_PER_SECOND: u64 = 256 << 20;
+/// Actual broker capacity; native proof retention derives this same bound.
+pub const MAX_OPTIONAL_RESERVATIONS: usize = 16;
 const EXTRA_EXTRACTOR_BYTES: u64 = (2 * airk_ingest::ExtractionExecution::MAX_RESULT_BYTES
     + airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES
     + (64 << 20)) as u64;
@@ -318,7 +320,7 @@ impl Resources {
             .lock()
             .map_err(|_| anyhow::anyhow!("optional resource accounting unavailable"))?;
         ensure!(
-            charges.len() < 16 && !charges.contains_key(&id),
+            charges.len() < MAX_OPTIONAL_RESERVATIONS && !charges.contains_key(&id),
             "optional resource reservation unavailable"
         );
         charges.insert(id, bytes);
@@ -1060,6 +1062,31 @@ mod tests {
         let a = identity(2);
         policy.pending(a.project, a.project, JobKind::Index, now)?;
         assert_eq!(policy.next(now)?.unwrap().extraction_threads, 4);
+        Ok(())
+    }
+    #[test]
+    fn optional_reservation_capacity_is_literal_sixteen_and_refuses_seventeen_without_eviction()
+    -> Result<()> {
+        let resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        let before = resources.reserved();
+        let mut actual = Vec::new();
+        for id in 1..=16 {
+            actual.push(resources.reserve_optional(
+                Incarnation::from_bytes([id; 16]),
+                1 << 20,
+                Some(64 << 30),
+            )?);
+        }
+        assert_eq!(MAX_OPTIONAL_RESERVATIONS, 16);
+        assert_eq!(resources.reserved(), before + (16 << 20));
+        assert!(
+            resources
+                .reserve_optional(Incarnation::from_bytes([17; 16]), 1 << 20, Some(64 << 30))
+                .is_err()
+        );
+        assert_eq!(resources.reserved(), before + (16 << 20));
+        drop(actual);
+        assert_eq!(resources.reserved(), before);
         Ok(())
     }
 }

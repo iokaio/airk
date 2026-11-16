@@ -255,6 +255,30 @@ for line in sys.stdin:
             with self.assertRaises(BENCH.CampaignError):
                 BENCH.safe_observation(envelope(changed), expected, 'list_files')
 
+    def test_open_status_binds_named_index_without_legacy_project_projection(self):
+        expected = {'collection': 'fixture', 'binding': 'original', 'index_id': 'idx_one'}
+        body = {'collection': 'fixture', 'index_state': 'available',
+                'publication': {'token': 'airk-r1:' + 'a' * 32 + ':1:' + 'b' * 64},
+                'read_scope': {'source': 'named', 'index_ids': ['idx_one']}}
+        session = BENCH.Session.__new__(BENCH.Session)
+        session.fixture = SimpleNamespace(single_image=True, projects={'fixture': {'collection': 'fixture', 'binding': 'original'}},
+                                          scopes={'fixture': {'index_id': 'idx_one'}})
+        session.project = 'fixture'
+        raw = envelope(body)
+        session.request = Mock(return_value=raw)
+        result, observed = session.tool('status')
+        self.assertIs(result, raw)
+        self.assertEqual(observed['index_state'], 'available')
+        self.assertNotIn('project', body)
+        for scope in (None, {'source': 'named', 'index_ids': ['idx_other']},
+                      {'source': 'named', 'index_ids': ['idx_one', 'idx_other']},
+                      {'source': 'workspace_default', 'index_ids': ['idx_one']}):
+            with self.subTest(scope=scope), self.assertRaisesRegex(BENCH.CampaignError, 'crossed_response_scope'):
+                BENCH.safe_observation(envelope({**body, 'read_scope': scope}), expected, 'status')
+        crossed = {**body, 'publication': {'token': 'airk-r1:' + 'a' * 32 + ':1:' + 'b' * 64, 'collection': 'foreign'}}
+        with self.assertRaisesRegex(BENCH.CampaignError, 'crossed_publication_scope'):
+            BENCH.safe_observation(envelope(crossed), expected, 'status')
+
     def test_status_accepts_scalar_publication_but_rejects_wrong_project(self):
         expected = {'collection': 'fixture', 'binding': 'binding'}
         value = {'index_state': 'available', 'collection': 'fixture', 'project': 'binding',
@@ -724,6 +748,42 @@ for line in sys.stdin:
                 with self.assertRaisesRegex(BENCH.CampaignError,'runtime_retired_process_payload'):
                     BENCH.verify_runtime(root,seal())
 
+    def test_current_split_pair_uses_strict_receipt_owner_and_probes_both_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            fixture = Path(__file__).parents[2] / 'fixtures/split/receipts/build_receipt_2.json'
+            build = json.loads(fixture.read_bytes())['base']
+            pair = build['runtime']
+            pair.update(version='1.8.207', os='windows', arch='x86_64')
+            build['profile'] = 'release'
+            build['static_ort']['target'] = 'x86_64-pc-windows-msvc'
+            for name, key in (('airk.exe','airk_sha256'), ('airkctl.exe','airkctl_sha256')):
+                image = root / name
+                image.write_bytes(('independent inert fixture ' + name).encode())
+                pair[key] = BENCH.digest(image)
+            (root / 'LICENSE').write_bytes(b'fictional fixture notice')
+            def seal():
+                (root / 'airk-runtime.json').write_text(json.dumps(pair))
+                (root / 'airk-build.json').write_text(json.dumps(build))
+                files = {path.name: BENCH.digest(path) for path in root.iterdir() if path.name != 'airk-install.json'}
+                (root / 'airk-install.json').write_text(json.dumps({'schema': 1, 'version': pair['version'], 'files': files}))
+                return BENCH.digest(root / 'airk-install.json')
+            def version(command, **_):
+                return subprocess.CompletedProcess(command, 0,
+                    (Path(command[0]).stem + ' 1.8.207').encode(), b'')
+            with patch.object(BENCH.subprocess, 'run', side_effect=version) as run:
+                result = BENCH.verify_runtime(root, seal())
+                self.assertEqual([call.args[0][1:] for call in run.call_args_list],
+                                 [['__airk_role','setup-interim','--version'], ['--version']])
+                self.assertEqual(result['execution_basis'], 'externally_approved_split_pair_builder')
+                self.assertEqual(result['cli_sha256'], BENCH.digest(root / 'airkctl.exe'))
+                self.assertIsNone(result['helper_sha256'])
+                run.reset_mock()
+                build['admin_assets']['inventory_sha256'] = '0' * 64
+                with self.assertRaisesRegex(BENCH.CampaignError, 'runtime_schema'):
+                    BENCH.verify_runtime(root, seal())
+                run.assert_not_called()
+
     def test_extra_payload_and_wrong_approval_fail_before_execution(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve(); approved = self.runtime(root)
@@ -746,21 +806,23 @@ for line in sys.stdin:
         actual.setUpClass()
         try:
             with actual().server() as (connection, observed):
+                # Tokenless native discovery uses the current fixed CA location.
+                private = actual.root / 'http-1'
+                private.mkdir()
+                (private / 'ca.pem').write_bytes(Path(connection['ca_certificate_file']).read_bytes())
                 health = {'instance':'service','user':'owned-user','runtime_sha256':'a'*64,
                           'executable_sha256':'b'*64,'catalog_clock':{'namespace':connection['endpoint']['namespace']}}
                 connection['endpoint'].update(service_instance=health['instance'],user=health['user'],executable_sha256=health['executable_sha256'])
-                selected = {**connection['selection']['selection'],'expected_catalog_revision':1,'future_scope':{'retained':True}}
-                connection['selection']['selection'] = {**selected,'expected_catalog_revision':2}
+                selected = {'index_id': 'idx_' + 'a' * 32}
                 calls = []
                 def rpc(method, *, deadline):
                     self.assertEqual(method, 'health', 'Console must not perform private HTTP enrollment')
                     calls.append(method)
                     return {'observation':health}
-                def enroll_http(selection, identity, client, *, deadline):
-                    calls.append((selection, identity, client, deadline))
-                    return connection
                 fixture = SimpleNamespace(single_image=True,command_timeout=5,scopes={'project':selected},rpc=rpc,
-                    enroll_http=enroll_http,managed_health=health,control=actual.root)
+                    http_endpoint=lambda: connection['endpoint'],
+                    enroll_http=Mock(side_effect=AssertionError('No credential enrollment')),
+                    managed_health=health,control=actual.root)
                 with patch.object(BENCH.uuid,'uuid4',return_value=SimpleNamespace(hex=actual.identity)), patch.object(BENCH.subprocess,'Popen') as spawn:
                     with BENCH.Session(fixture,'project') as session:
                         response=session.request('tools/list',{})
@@ -769,14 +831,12 @@ for line in sys.stdin:
                         self.assertIsNone(session.child)
                     spawn.assert_not_called()
                 self.assertEqual([method for method,_ in observed],['initialize','notifications/initialized','tools/list','DELETE'])
-                self.assertEqual(calls[0][:3], ({'kind':'scoped','selection':selected}, actual.identity, 'unknown'))
-                self.assertEqual(calls[0][3], session.deadline)
-                self.assertEqual(calls[1],'health')
-                # An authenticated response for a different scope must be
-                # rejected before any TLS credential delivery or stdio spawn.
-                connection['selection']['selection']['future_scope']={'retained':False}
-                with patch.object(BENCH.uuid,'uuid4',return_value=SimpleNamespace(hex=actual.identity)), patch.object(BENCH.subprocess,'Popen') as spawn:
-                    with self.assertRaisesRegex(BENCH.CampaignError,'http_selection_changed'):
+                self.assertEqual(calls, ['health'])
+                fixture.enroll_http.assert_not_called()
+                # Service identity changes are refused before any network submission.
+                health['instance'] = 'changed'
+                with patch.object(BENCH.subprocess,'Popen') as spawn:
+                    with self.assertRaises(ValueError):
                         with BENCH.Session(fixture,'project'): pass
                     spawn.assert_not_called()
                 self.assertEqual(len(observed),4)
@@ -794,7 +854,8 @@ for line in sys.stdin:
             connection['connection_id']=identity
             return connection
         fixture.rpc=rpc
-        fixture.enroll_http=enroll_http
+        fixture.http_endpoint=lambda: connection
+        fixture.enroll_http=Mock(side_effect=AssertionError('No credential enrollment'))
         with self.assertRaisesRegex(BENCH.CampaignError,'http_service_identity_changed'):
             with BENCH.Session(fixture,'project'): pass
         session=BENCH.Session.__new__(BENCH.Session)
@@ -833,14 +894,16 @@ for line in sys.stdin:
             fixture=SimpleNamespace(single_image=False,managed_installation=True,owner=Path(temporary),install=Path(temporary)/'install',
                 managed_health=before,managed_stop=None,child=None,command_timeout=5,
                 close=Mock(),rpc=Mock(return_value={'observation':after}),
-                run=Mock(return_value=subprocess.CompletedProcess([],0,'{"status":"started"}','')))
+                run=Mock(side_effect=AssertionError('Private runtime operation cannot use airkctl')),
+                service_run=Mock(return_value=subprocess.CompletedProcess([],0,'{"status":"started"}','')))
             def sample(*args,output,**kwargs):
                 output.update(first_status={'elapsed_ms':1,'index_state':'available'},reads=[],aborted=False);return output
             try:
                 with patch.object(BENCH,'sample',side_effect=sample),patch.object(BENCH,'independent_availability'):
                     result=BENCH.reopen_campaign(fixture,'project',[],1)
                 fixture.close.assert_called_once()
-                fixture.run.assert_called_once_with('runtime','start','--install-dir',fixture.install)
+                fixture.run.assert_not_called()
+                fixture.service_run.assert_called_once_with('runtime','start','--install-dir',fixture.install)
                 self.assertEqual(fixture.managed_health,after);self.assertIsNone(fixture.managed_stop)
                 self.assertEqual(result['service_restarts'],1)
                 self.assertEqual(json.loads((fixture.owner/'managed-reopen.json').read_text())['before'],before)

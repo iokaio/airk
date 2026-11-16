@@ -46,10 +46,23 @@ fn packet(i: u8) -> Result<Value> {
     Ok(value)
 }
 fn context_fixture() -> Result<(CompositionRequest, Vec<MemberInput>, CombinedContextSummary)> {
+    // Retained semantic cases keep their original allocation and serialized bytes.
+    context_fixture_with_budget(airk_core::arbiter::Budget {
+        calls: 8,
+        rounds: 3,
+        fanout: 8,
+        input_tokens: 2048,
+        candidates: 32,
+        max_bytes: 262144,
+        deadline_ms: 30_000,
+    })
+}
+fn context_fixture_with_budget(
+    budget: airk_core::arbiter::Budget,
+) -> Result<(CompositionRequest, Vec<MemberInput>, CombinedContextSummary)> {
     let mut composition = request()?;
     composition.budgets.limit = 100;
     composition.budgets.max_bytes = 65536;
-    let budget = airk_core::arbiter::Budget::default();
     let ids = vec![index(1), index(2)];
     let allocations = initial_allocations(
         Incarnation::from_bytes([9; 16]),
@@ -585,5 +598,32 @@ fn actual_focus_outer_binding_is_not_reclaimed_at_exact_child_boundary() -> Resu
         context_reclaimable_body_bytes(body + expected + 1, 0, body, expected)?,
         1
     );
+    Ok(())
+}
+
+#[test]
+fn current_combined_context_retains_full_8192_token_120_second_parent() -> Result<()> {
+    let (request, inputs, summary) =
+        context_fixture_with_budget(airk_core::arbiter::Budget::default())?;
+    assert_eq!(summary.budget.input_tokens, 8192);
+    assert_eq!(summary.budget.deadline_ms, 120_000);
+    assert_eq!(
+        summary
+            .members
+            .iter()
+            .map(|member| member.allowance.as_ref().unwrap().resources.input_tokens)
+            .sum::<usize>(),
+        8192
+    );
+    for member in &summary.members {
+        let allowance = member.allowance.as_ref().unwrap();
+        assert_eq!(allowance.resources.input_tokens, 4096);
+        assert_eq!(allowance.parent_budget.deadline_ms, 120_000);
+    }
+    let result = compose_context(&request, inputs, summary)?;
+    let context = result.context.as_ref().unwrap();
+    assert_eq!(context.budget.input_tokens, 8192);
+    assert_eq!(context.budget.deadline_ms, 120_000);
+    assert_eq!(context.known_used.input_tokens, 200);
     Ok(())
 }

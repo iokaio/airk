@@ -4925,3 +4925,438 @@ README/index/Marketplace and release text were reviewed; their older 1.9.0
 candidate wording predates this documentation-only branch setup and remains
 scheduled for the final plan's documentation reconciliation. No version bump
 or product-behavior claim is part of this opening commit.
+
+### 2026-11-15 — Arbiter final implementation execution started
+
+User instruction now authorizes implementation of all 18 final-plan steps,
+including independent product work while model/platform acceptance is blocked.
+T0: 2026-11-16T05:29:42.2081757Z (15 Nov 22:29:42 America/Denver).
+24-hour target: 2026-11-17T05:29:42.2081757Z (16 Nov 22:29:42 Denver).
+48-hour hard cap: 2026-11-18T05:29:42.2081757Z (17 Nov 22:29:42 Denver).
+Starting source b4cfb7d646c982623782c3f4d63f77e154b449e7, clean feat/arbiter-final,
+configured contributor Tyler Jensen <tyler@tsjensen.com>. Local DCO commits only;
+no push, PR, merge, public upload or deployment authorization.
+
+Execution identity: TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002,
+matched active quser/Explorer session 1. Win32_ComputerSystem.UserName was empty;
+interactive-session ownership established the human identity. All filesystem
+work uses this verified require_escalated path and inherited same-user children.
+AIRK status confirms workspace binding, version 1.8.206, publication token
+316:b81b2fa6ec3061db905ca5d33125ae54505627769d7b41240b83197211e8c909;
+indexed evidence is navigation only, live bytes govern edits.
+
+Starting manifest: `artifacts/v190/final-plan/exec-20261116T052942Z/start.json`.
+Designated isolated target root is foreign-owned (TYAI\CodexSandboxOffline),
+so writes there are blocked pending a compliant existing same-user target;
+no ownership/ACL change or foreign artifact adoption is permitted.
+Root holds sole Cargo ownership. Parallel file owners: transport/config (I2,
+manual entries, U110, harnesses), UI, data/evaluation, model lifecycle,
+terminal contract and operational failures. Primary reviews combined changes
+before expensive runs; independent review is assigned to a non-implementer.
+
+| Step | Status | Input/owner | Receipt/result/next action |
+| --- | --- | --- | --- |
+| 1 | in_progress | starting manifest; root + operational owner | Same-user build/input and issue inventory |
+| 2 | in_progress | D04–D07; shared Rust owners | Freeze contracts before dependent consumers |
+| 3 | in_progress | transport/config + operational owner | Typed manual fallback, U110 and harness repairs |
+| 4 | in_progress | root | Shared default/deadline and settlement trace |
+| 5 | in_progress | UI owner | Status/task navigation and canonical manual entries |
+| 6 | in_progress | model lifecycle owner | Acquisition/load/environment preflight |
+| 7–8 | in_progress | data/evaluation owner | Rights, labels, splits, census; no gradient before acceptance |
+| 9–18 | not_started | later dependency order | No evidence claimed |
+
+Build-path resolution: existing checkout target/ recursively audited (31,480 objects excluding tmp/nextest), every inspected owner is human SID ...-1002. Reuse this warm target with incremental on; preserve foreign p10 target. Source ownership blockers also found in terminal contracts and retention.rs; agents preserve originals and prepare reviewable proposals, with authorized independent work continuing.
+
+### 2026-11-15 — Final execution first product section and reviewed proposals
+
+Source remains on feat/arbiter-final from b4cfb7d; no commits/push/publication
+have been made by this execution yet. Root independently reviewed implementer
+changes before grouped native checks. All commands use TYAI\tdotn; fresh test
+roots under %LOCALAPPDATA%/airk-final-exec-20261116T052942Z inherit the existing
+user policy. No existing ownership/ACL/global trust change was performed.
+
+Implemented source: Core canonical agent manual entries and typed refusal
+projection; I2/I3 endpoint presentation outside the unchanged persisted endpoint
+digest; native manual command/capability; six owned harness migrations plus three
+additional upgrade/setup/investigation migrations; original-attempt next-read
+narrowing; per-HTTP-session canonical top-level status memory; setup pointer,
+zero-remainder admission ordering and watcher-root diagnostics. UI source now
+loads status/resources, exposes native manual text/Copy and task-oriented stages,
+and uses twelve distinct accessible rail icons with Help visible. Artifacts
+remain unsealed/uninstalled; source checks do not qualify delivery.
+
+Receipts under artifacts/v190/final-plan/exec-20261116T052942Z:
+- native-section1-clippy: compiler exit0, 100.258s, ten selected owner crates,
+  all targets/features, target/, incremental1. Receipt detected only an IPC
+  CONTRACT.md edit during execution; all executable source hashes unchanged.
+- native-section1-tests: 93 selected,73 passed,20 failed,172.163s (25.792s tests).
+  Store private-boundary2, supervisor8, source-watcher/measurement, native manual,
+  schema, setup-owner and MCP cancellation/withdrawal checks pass. Eighteen
+  config refusals were confounded by harness-injected Git overrides; one MCP
+  comparison used default per-read verification instead of Answer's explicit
+  inner-off inputs; setup recreated a private cache under inherited Temp policy.
+- native-section2-clippy: affected MCP/HTTPS/airkctl/Service all targets/features
+  exit0,45.736s, exact native inputs unchanged, target/, incremental1.
+- native-section2-tests:77 selected,59 passed,18 failed,72.630s (1.137s tests).
+  All24 response tests,3 HTTP open-session tests and corrected private setup
+  fixture pass. Remaining config failures come from inherited GIT_PAGER after
+  removing the runner's synthetic trust environment. A separate exact compiled
+  eligibility regression passed1/1 with only that variable omitted in a disposable
+  test environment; product Git-environment refusal is unchanged.
+- native-config-clean-env: reused identified binary SHA
+  1bfded59cf1c673902bc529ebfc2f2c31949d5a8cc170a64932d6615289f89ac;
+  all49 config tests passed,6.318s, no build, native inputs unchanged. This
+  proves the controlled fixture profile, not automatic edits under GIT_PAGER.
+
+Independent frontend evidence: ui-admin-r2 noEmit typecheck and259 tests,
+257pass/2 explicit native-capture skips; ui-admin-dom-r3 observed layout fix3/3
+with actual owned Edge800/1280 screenshots. Three editor noEmit typechecks pass.
+ui-vscode-source-r1 in-memory TypeScript source run1132 selected,1121pass,
+7fail/4skip: six failures require actual built artifacts, one native type-import
+boundary needed an exact reviewed type-only row (focused16 selected14pass/2
+built-output skips after correction). These checks do not seal shipped bytes.
+Harness results: transport-config-result.json records121 selected120pass1skip;
+harness-proposal/validation.json records140 selected137pass3 historical skips.
+Proposal-only foreign harness tests31/31 pass in memory. Receipts keep original
+failed attempts and their diagnoses. Documentation current-version reconciliation
+checks542 local links and version1.8.206 agreement; no bump yet.
+
+Ownership restriction remains active. Reviewed default-budget/historical-control,
+open-Workbench authority and additive terminal /2 patches are prepared without
+applying foreign-owned inputs. Terminal independent review found and closed
+CAL-cutoff replay and exact native question/menu binding gaps in r2; no runtime
+or human-label qualification is claimed. Pending user question requests only
+reviewed tracked-file content edits, retaining owner/ACL unchanged. Nine UI
+tracked inputs and33 generated/build outputs were mistakenly edited before
+ownership audit; exact paths/hashes are preserved in
+artifacts/v190/final-plan/ui-ownership-incident-r1/incident.json, further foreign
+writes stopped. No restoration/adoption workaround was attempted. The generated
+I3 editor alias is separately proposed because its existing owner is foreign.
+
+Data disposition: software-v2 pre-score protocol/audit tooling has11 passing
+metadata refusal tests. Existing Requests labels are mechanical single-repository
+associations, not new human gold; old QASPER/Hotpot and consumed FINAL identities
+stay historical/evaluation-only. Broad software/native-visible/suitable-human-
+review acceptance is missing. No gradients were taken; dependent adaptation and
+terminal promotion remain blocked, independent native/resource work continues.
+
+Actual model acquisition: lifecycle-acquisition-r1 used the verified historical
+1.8.206 pair and real native Provision, fresh owned isolated storage and explicit
+three-model consent. Focus/Compact completed independent byte census; Large's
+final synchronous16GB verification starved control replies. Original run failed
+at616.892s and remains failed. Subsequent read-only native health/status observed
+all three cached, disabled and unenrolled. Frozen original Fixture.close then
+returned actual complete native stop and the exact owned process exit was
+observed; recovery-settlement-r1.json retains separate recovery evidence. All
+24GB remain preserved, no Provision replay or force-kill. Joined blocking-owner
+repair/reproduction is being prepared before another expensive attempt.
+
+Mac Neo read-only identity inventory matches logged-in console tylerjensen UID501;
+Darwin arm64,8GiB,6 physical/logical CPUs,273GiB disk free, soft descriptors256,
+hard unlimited. No remote outputs/Cargo qualification yet. Large-profile resource
+fit cannot be inferred from that capacity. Initial remote status command had a
+CRLF formatting error; no remote source mutation or cleanup occurred.
+
+User permission update: reviewed tracked repository content edits are approved,
+with existing owner and ACL preserved exactly. This clears prepared source,
+contract, harness and generated tracked-file proposals. It does not authorize
+foreign-owned ignored outputs, private artifacts/caches or ownership changes.
+No further user decision is currently required; remaining blockers are recorded
+and independent implementation/qualification continues.
+
+### Integrated native contracts and source exception (16 November 2026 UTC)
+
+After the user's explicit tracked-content exception, terminal r3, new default/
+historical controls, Open Workbench authority, operational followups, MCP
+verification-input parity and four harness proposals were integrated in-place.
+Owner and SDDL matched exactly before/after for all34 files; I3 alias and dated
+release-status edits add2 files. Exact preimage/output hashes and descriptors:
+artifacts/v190/final-plan/exec-20261116T052942Z/applied-233730953284.json and
+applied-233914448067.json. Foreign ignored caches and build outputs remain outside
+that exception. AGENTS.md and CLAUDE.md record the same scoped exception.
+
+Core review: first Clippy failed3 style diagnostics, corrected without changing
+assertions or source-closure rules. core-final-contract-clippy-r2 passes with
+warnings denied,30.030s. core-final-contract-tests selects367 including the two
+explicit ignored synthetic terminal emitters:367pass,0skip,57.893s command/
+9.519s tests. Pinned consumed Core source remained unchanged; the companion
+*-source.json captures all exact dirty input hashes. Native budget/terminal
+fixtures and Arbiter schema were emitted, then canonical TypeScript and editor
+alias regenerated; i2/i3/arbiter generator checks all pass. Existing generated
+schema/type owners and ACLs were preserved. These prove contracts and refusal
+semantics, not human gold, measured model fit or scientific qualification.
+
+The complete native Context tokenizer census-r2 (separate from the unchanged
+failed shrink-only test) records126 actual retained requests, all compiling and
+fitting their original2048 allowance:121 shrink,5grow,0refused. Original token
+range595–2027, compact643–1088. It retains every request and reports growth;
+it does not replay the inaccessible R154 failed record or qualify8192 graphs.
+
+Current Context source closure intentionally invalidates old task/calibration
+metadata. New compiler/calibration files require native regeneration and private
+EvaluationOwner staging; ordinary compiled public admission still requires a
+real immutable download closure. No URL is invented and no old identity is
+accepted as current. Public availability of new Context metadata is open pending
+separate genuine publication; independent source/transport/resource tests continue.
+
+### Product regressions, version and artifact preparation
+
+Official version discovery (version-discovery-r1 under this execution root)
+checks complete GitHub release/tag and Marketplace metadata plus local tags and
+approved package receipts. The next unused local candidate is 1.8.207. The
+release-version owner generated exactly four manifest/lock changes; in-place
+application preserved owner/SDDL and version check passes. This is the single
+candidate bump; 1.9.0 remains reserved. Current documentation/link checks retain
+the historical versions and disclose pending qualification.
+
+I2/Core/IPC tests selected562:558pass/4fail, with three selection/ignored skips;
+source unchanged. All four reported failure classes were diagnosed: stale
+admin-management capability expectation; real installation discovery entering
+unit fixtures; local index validation occurring after automatic service
+admission; session config removal lacking the existing safe Editable fixture.
+Corrections preserve actual identity/admission refusal coverage. Scoped Clippy
+passes; seven focused correction/admission/C9 cases pass (i2-corrections-and-c9,
+21.208s command/0.503s tests). Core's seven new resource-policy cases and current
+I2 boundary cases passed in the broad selection. No failed run is relabeled.
+
+Product MCP Help/status selected34/34pass; Clippy passes; versioned native Help
+and I2 pilot outputs are emitted. Kernel/MCP product selection37/37pass covers
+Open Workbench authority, watcher recovery, optional reservation capacity and
+canonical Answer regressions (kernel-mcp-product-tests,26.266s/4.627s tests).
+These product-feature selections intentionally do not compile private
+qualification work still in progress. Exact scopes, dirty hashes, commands,
+target/incremental, binary/JUnit/timing evidence remain in execution receipts.
+Subsequent Help prose and generated catalog changes require final drift checks.
+
+Harness reconciliation records404 unique tests:400pass/4explicit skips, with
+original failures and only affected reruns preserved. New metadata/receipt
+helper tests23/23pass; the first mistaken pattern selected zero and remains a
+failed selection record, then corrected explicit module names selected23.
+Receipt-runner Unicode recognizers were restored to actual Node glyphs without
+weakening assertions. The ledger's historical prefix is already byte-identical
+to HEAD and remains untouched.
+
+Fresh frontend snapshot built host/Webview/Assistance, Help/Explorer bundles and
+Admin assets at1.8.207 with pinned fresh npm installs and human-owned outputs.
+Final full UI/C9 checks remain pending native I3 generation. Real detached Git
+candidate worktree is artifacts/v190/final-plan/candidate-worktree-r1; it starts
+at b4cfb7d6 and awaits frozen reviewed source overlay. No candidate/native pair or
+package is yet claimed. Root's foreign-owned old hashed CSS is preserved; fresh
+canonical asset replacement is performed only on the new human-owned worktree.
+
+Actual saved-model copy:23files,24,130,010,313bytes,58.880s. The protected fresh
+D: staging closure is final-plan-acquired-assets-20261116T071657Z under the
+existing actual-composed-service-r2 parent. Every destination SHA matches the
+original census; original C: sources were rehashed and unchanged. Exact seals:
+postfix-lifecycle-preparation-r1/sealed-asset-copy.json and copy receipt. No
+network, model score, hardlink, ACL change or qualification is implied.
+
+
+### Workspace integration and preserved negative evidence (16 November 2026 UTC)
+
+Full workspace/all-target/all-feature Clippy with warnings denied passed in
+workspace-clippy-current-r2 (22.931s); native/fixture inputs were unchanged.
+The subsequent all-feature Nextest batch selected4722 and was interrupted after
+1706 result lines:1693pass,13fail. This is not a workspace pass. Exact failures,
+unaltered log and honest interruption observation are retained under
+artifacts/v190/final-plan/exec-20261116T052942Z/workspace-tests-*.
+The original runner received console Ctrl-C too and produced no final receipt;
+no exact elapsed or native cleanup receipt was reconstructed. Post-interruption
+process inspection found no target test/service or Cargo descendants. Existing
+installed human service PID70448 and editor session PID32848 remained untouched.
+
+Failure diagnosis: valid plan replies were subjected to an ordinary-read bound
+in the parity harness; operation-aware native request decoding now preserves the
+existing plan and transport limits. Other integration failures contain retired
+credential-config/model-catalog captures and EOF-before-session-result fixtures.
+Historical fixture bytes stay unchanged; full current native/real-transport
+comparisons are being added. Recovery's synthetic rollback sidecars cross the
+current WAL startup contract; current fail-closed and historical rollback
+recovery must be exercised separately. First-start phases now retain precise
+contexts. No timeouts, retries or refusal assertions were weakened.
+
+Independent review also found a live retired --selection-file-only branch being
+silently ignored; it now refuses before installation or service admission.
+Current composed qualification still had a historical30s hard limit despite
+native8192/120s inputs; an additive resource-policy-aware validator is required,
+with historical populations preserved. Dependent source/qualification work
+continues; neither discovery is relabeled as a passed product gate.
+
+
+Grouped native library run native-libraries-lifecycle-policy-r1 selected759:
+751pass/8fail/74skip,281.522s command/202.275s tests. The exact selected source
+scopes stayed unchanged. A concurrent narrow airkctl dependency edit occurred
+while compiling, so this run does not establish a frozen full dependency graph.
+The failed cases are historical default-bound assumptions (Kernel expiry,
+combined-context golden and five joint-ledger cases), plus the now-stale Context
+compiled-policy catalog control. Preserve explicit2048/30 historical inputs and
+add8192/120 controls; never regenerate old golden bytes to hide their drift.
+New asset-owner/shutdown/private-resource/promotion refusal cases in this grouped
+selection passed. Repository check passed for3476 public files; no runtime or
+cross-platform outcome is implied. Native source correction/review continues.
+
+
+### Current integration freeze and Windows wrapper evidence
+
+workspace-clippy-integration-r4 passed full workspace/all-target/all-feature
+Clippy plus format check with warnings denied,14.661s. Native source group
+9141f756d0e98d801778bc99735c795507f40732a0a5ea6ac2a104d994372725
+and fixtures06a021c59b6e72113ee17ac85e53b735ca2ab19013daaf8bc80b098a5eb130d6
+were unchanged. The prior r3 compile failed only two test closure error-type
+mismatches; those were corrected. Eight superseded test helpers were removed
+with explicit caller/compatibility evidence under tools-parity-cleanup-20261116T090112Z;
+all17 historical parity fixture files and22 test identities remain unchanged.
+
+integration-corrections-r1 stopped at compilation,93.095s: airk/history reported
+ort_sys unavailable in rlib form, so no test count/pass is claimed. The actual
+879599168-byte static archive and ort archive are structurally intact. A small
+explicit-rlib Rust linker probe with the required Windows Shell32 dependency
+passed2.114s (ort-link-probe-r2), and an actual production airk all-feature
+build passed77.571s with verbose Cargo evidence (ort-cargo-link-diagnostic-r1).
+These narrow diagnostics do not explain the test graph failure yet. No target
+clean, archive deletion, source workaround or dependency-policy change occurred.
+A focused history link diagnostic follows before another regression batch.
+
+The actual inert Inno wrapper campaign passed10/10: nine lifecycle/refusal/
+recovery cases plus canonical Unicode serializer emission,43.840s inner/
+43.956s outer. Exact compiler hash/source/commands and genuine outcomes are in
+inno-wrapper-current-r1/receipt.json. No real native state, PATH, icons or
+uninstall registration was touched. Its outer wrapper happened to copy a
+concurrent Clippy Cargo timing file; that file is incidental and is not proof
+that the Inno command ran Cargo. The inner campaign receipt is authoritative.
+
+Existing same-human Azure signing authentication and pinned signing client are
+available; no signing or account change has happened. The existing Inno compiler
+has valid vendor signature/hash but reports0.0.0.0, leaving exact hosted6.7.1
+version qualification open. An additive local installer mode reuses a canonically
+verified tested native pair instead of rebuilding;86 focused script cases pass.
+Hosted release admission remains unchanged. Candidate packaging and actual
+installed qualification still remain separate unclaimed milestones.
+
+
+Focused history-link diagnostic compiled successfully in63.096s; its wrapper
+correctly failed zero-selection because --allow-no-tests was omitted on this
+intentional --no-run command. No test pass or successful wrapper receipt is
+claimed. Production/history diagnostics establish usable archives and actual
+linking, without proving the earlier cache/graph-selection root cause. No target
+was cleaned or altered to force success.
+
+integration-corrections-r2 now ran92actual selected tests:84pass/8fail,
+132.895s command/100.416s tests, consumed native/fixture groups unchanged.
+All current/historical budget, joint-ledger, composed policy, promotion, catalog
+withdrawal, cheap WAL-admission and legacy cold-journal cases passed. Full model
+qualification is not implied. Remaining failures: nested Workbench logical-copy
+timing/digest projection; complete CLI helper help-wording/timing expectations
+and unsettled verify observation; native Windows manual expected path separator;
+FolderBrowse(None) touching OS network drive shortcuts; and modern recovery's
+incorrect assumption that a corrupt project always prevents whole-service start.
+The final recovery tail falsifies that assumption for cold-empty/mcp=true; the
+service-vs-project boundary must be traced before another expensive attempt.
+The original startup exit remains unexplained; no blanket acceptance of both
+outcomes, retries, deadline relaxation or state masking is authorized by this
+finding. New full raw diagnostics are integration-corrections-r2-failures.json.
+
+
+### Current storage and transport failure classes closed in targeted evidence
+
+Full workspace Clippy r5/r6 passes on frozen native inputs; latest r6 source
+cc27c8e4f7a58d6bf6580e1336c4d030296d95bd52953ea8d7cb51b0adc5d258.
+integration-boundaries-cheap-r1 selected16/16pass (75.952s command/1.568s tests),
+including12 folder privacy/presentation cases, actual managed Kernel diagnostics
+against0/512-byte rollback overlays, strict Workbench observation mutations and
+status clock semantics. integration-shapes-and-cooldown-r1 selected4/4pass
+(14.803s/.205s), covering six primitive/combined envelope forms, mixed plans,
+stable-field/proof refusal and unchanged startup cooldown admission.
+
+Actual corrected native journeys: first-start1.638s, three-client safe
+connect/manual/list/repair/remove20.573s, complete40-input CLI reads32.977s
+passed in integration-transports-corrected-r1. Its plan comparison still failed
+on a single-primitive transport request ID; complete six-form logical comparison
+was corrected and cheap mutation tests passed before rerunning that actual case.
+The recovery failure was fixture cleanup's third Start under the genuine native
+four-second cooldown; retained logs show clean prior starts/stops. Removing that
+unnecessary restart preserves the production circuit policy. Neither this nor
+the later successful run explains the earliest broad-run startup exit.
+
+integration-transports-corrected-r2 selected5:4pass/1fixturefail,132.982s command/
+130.188s tests. Actual capabilities/native+CLI+MCP full plan passes12.069s,
+complete shell24.516s, control-tool25.371s, and full legacy/current recovery
+130.171s. Recovery proves project-local WAL refusal, same-service metadata,
+unchanged damaged/source bytes and canonical Stop+lease-fenced fixture cleanup;
+no third Start, cooldown reset or timing relaxation. The only remaining known
+fixture failure occurs after folder status/files/read parity succeeds: read-only
+ResolveProject returns Failure/project_not_registered, while the test expected
+write-owner RegistrationRefused. Exact native and complete I2 literal projection
+will be corrected; the full workspace gate remains unclaimed.
+
+
+### Restored workspace gate, retained config refusal and independent references
+
+workspace-final-tests-r1 selected4745 including default-excluded campaigns:
+3349executed/3348pass/1fail/124skip;1396notrun after fail-fast. Command1284.912s,
+tests1273.369s, inputs unchanged. The restored large-catalog measurement passed
+267.172s. Failure agent_entries::exact_entry_cli_keeps_partial_action_receipts_
+and_refused_source correctly refused a bare temporary config parent that grants
+foreign mutation; no privacy/retention policy was weakened. A cheap unchanged
+CLI probe reproduced the full refusal and unchanged source/no archive. All four
+existing tests now construct fresh native-private, isolated Git/npm-eligible
+fixtures; original assertions remain. An additional full-result refusal test
+covers shared and unreviewed whole-file retention, including earlier native
+private-object/parent refusals. Its first over-specific fence expectation failed
+and is retained, then corrected using the actual owning privacy fence.
+
+agent-entries-and-reference-source-tests-r2 selects18/18pass,14.142s command/
+1.959s tests, including all five entry cases and current numeric/promotion/source
+refusals. workspace-clippy-final-r8 passes full workspace/all-target/all-feature
+Clippy plus format,14.534s. Current frozen native group is935042447f8bef824925a8a7ab40dd4c80f60042250c9be125110470c5c5daf2.
+Fresh restored workspace-final-tests-r2 is in progress; no full pass is claimed.
+
+Independent numerical work continues despite missing semantic human gold.
+Read-only audit verifies37publisher assets and all six original weight files,
+13.3GB, under the human account against immutable source hashes. Retained Focus
+12-case512 tensors exactly match the native emitter. Current Rust now emits
+original checkpoint/tokenizer CoreAsset rosters from opaque pinned paths;
+config/index/full publisher provenance remain separately pinned metadata.
+Python does not mirror Core assets. Torch workers will consume native tensors
+verbatim and run new independent same-artifact/original-FP32 computations;
+retained arrays/verdicts are not relabeled as current custody. No training,
+actual new Torch forward, current numeric acceptance or model promotion yet.
+
+Modern Mac I4 driver primary/independent reviews found and corrected executable-
+basename/UID classification, post-operation original-deadline checks and the
+ESRCH exit-observation race. current-macos-driver-r4 selects54/54mock/pure passes;
+no real Mac installation/notarization/upgrade/read/login qualification is implied.
+Actual Mac inputs, silent native admission and genuine process/receipt evidence
+remain required. The canonical Admin C7 prebuild verifier passes the unchanged
+451-input bundle; admin-c7-prebuild-verification-r1 retains exact hashes.
+
+
+### Final-plan workspace completion and tool provenance, 16 November 2026 11:12 UTC
+
+- Execution remains TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. Read-only process census after workspace r2 found no remaining Cargo, rustc, Nextest or target-test descendants. The installed user service and editor client were preserved.
+- `workspace-final-tests-r2` restored the full 4,748-test selection: 3,398 executed, 3,397 passed, one failed, 1,350 not run and 125 ignored; command elapsed 1,275.660 seconds. Native and fixture input seals remained unchanged. The failed `airkctl::error_outcomes` real-process fixture used an online Tools read; the actual installed pair correctly refused the uninstalled test client before missing-service admission. The correction uses the existing nonstarting Health observation, retaining all six backtrace/format combinations and every original assertion. All remaining same-crate process callers were audited. Scoped all-target/all-feature airkctl Clippy passed in 1.675 seconds.
+- A separate primary-reviewed completion inventory compares the full source maps: only that test command/comment changed; every production source and fixture byte is unchanged. The live full catalog has 4,748 nonignored identities. `resume_workspace.py` and `workspace-completion-plan-r1.json` select every incomplete binary, including the corrected target: 1,379 tests, covering the 1,351 unexecuted/failed identities plus 28 repeats. Independent review found no missing identity or masked failure. Final union verification is required; the original failed receipt remains nonpassing. This is source-bound evidence reuse, not a claim that one unchanged run passed all tests.
+- `workspace-doctests-r1` ran the unfiltered whole workspace with all features and completed Cargo successfully in 23.120 seconds. All 19 doctest suites contained zero cases; the receipt runner's zero-selection guard correctly returned 4 and its receipt remains nonpassing. Live Rust source has no rustdoc fenced examples or `#[doc = ...]` attributes. No runtime behavior or doctest case coverage is claimed, and the guard was not relaxed or replayed until green.
+- The potential local Inno compiler provenance issue is resolved. The immutable official 6.7.1 installer has SHA-256 `4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0`, Valid Pyrsys Authenticode and a verified official ECDSA signature. It was extracted as data, never installed. All 118 official app payload files match the existing installed toolset and all 17 component signatures verify. Primary independently rehashed all 118 file pairs. Official ISCC itself has ProductVersion `0.0.0.0`, matching the installed bytes; no version override or hosted-policy change was used. Evidence: `artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/{report.md,comparison.json,verification-evidence.json,primary-review.json}`. This qualifies the exact observed compiler closure, not an unexecuted native installer or package.
+- Private independent Torch-reference source review found and corrected parent settlement, original-deadline admission and failure-expiry evidence gaps. The frozen r2 packet records 26 cheap controls passing; independent review remains required before model execution. Focus's independent W8/block32 adapter separately passed seven controls and review against the official pinned ORT operator specification. No selected-model forward, real candidate weight decode, training, promotion or native resource acceptance has occurred.
+- Fresh R154 inspection confirms the original canonical question, corpus, manifest and all 753 source files are available with unchanged hashes. Only the exact failed native observer is inaccessible because its protected DACL grants a different SID; no ACL/account workaround was attempted. An accessible same-question sibling has a different attempt/authorization/budget and cannot replace it. A separate fresh-runtime attribution diagnostic is being prepared; the historical unknown call remains unknown and is never retried under its original authority.
+
+
+### Final-plan source milestone gates, 16 November 2026 11:29 UTC
+
+- The completion batch passed all1,379 selected tests in1,025.622seconds (test elapsed1,023.354s), including the140.807s manual-backlog campaign. `workspace-completion-result-r1.json` verifies the exact union:3,397 source-bound prior passes +1,379 completion passes -28 repeats =4,748 distinct nonignored identities, with no missing/failing identity. All restored routine-excluded campaigns are covered. The original failed r1/r2 receipts remain nonpassing; no single-run all-pass claim is made.
+- Final `cargo fmt --all -- --check` and whole-workspace/all-target/all-feature Clippy with warnings denied pass (`workspace-clippy-final-r9`,2.089s; native group8bb4846a99b56c9e99eb154759dff01307d46ca8a107ed8eadd43d994094a38d). Repository check passes3,480public files, including exact AGENTS/CLAUDE equality; whitespace passes. Filtered native/vector/ownership and package/runtime qualification remain separate.
+- The readiness runner timing-attribution defect is fixed after the active full-run owner exited. It now requires a maintained Cargo-producing command and the actual fresh saved-report path from that command's log, within its selected target, rather than a concurrent latest alias. Unknown/inline/nonbuilding commands cannot adopt another process's report. In-place application preserved both owners, SDDLs and native file IDs. New runnerSHA b1792e240ffa40c70abfa64d0478d8587f9d5137ed2dc8dd0e2d269e98212e80. All70 combined receipt/retrieval harness controls pass in3.482s. Earlier incidental copied timing is still disclosed and is not relabeled.
+- Primary review of the independent reference r2/r3 sources closes all settlement/deadline/native-pin findings. Exact17-file source closure and bounded inference-only cards are recorded in `artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/primary-review-r3.json`. Actual immutable Rust outputs and resource/identity checks remain prerequisites; selected model executions at review remain zero.
+- Public Focus lifecycle preparation remains isolated actual public control under the retained U93 fixture, not a modern I4 installed journey. Primary review caught U110 combined-result assumptions before execution; all search/diagnostic siblings are being corrected against the canonical owner with full result preservation. Current public Context and actual16GB finalization proof remain explicitly blocked/pending, independently of private current-metadata qualification.
+
+
+### Final-plan native model fixture qualification, 16 November 2026 11:53 UTC
+
+- The first additional8-case batch retained its failure: two actual native process ownership/recovery tests passed (5.445s and3.288s), then the stale Kernel component adapter correctly refused native model work outside a service-owned compute thread. No admission check was weakened.
+- The shared Kernel adapter now holds an actual private ServiceLease across its joined compute thread and complete Kernel/model teardown. The three lower Retrieval native cases use an actual test-only lease/compute guard declared before their models. A Store development dependency supplies that real lease; normal crate edges and third-party dependencies are unchanged. Every original assertion, counter and selected test identity is retained. Existing tracked owners/ACLs/file IDs are preserved, including the foreign-owned native_inference.rs content exception.
+- Explicit primary review and independent UI review found no blocking lifetime/authority/dependency finding. The exact nine-path source delta is in `vector-fixture-source-bridge-r1.json`; older full-test receipts retain their original identities. New artifacts must consume the updated source/lock identities.
+- Whole-workspace/all-target/all-feature Clippy with warnings denied passes on native group5080a7aa21c1ca52f64fa6cdbd4a17db90f7286db445b9ce35f5964e383a2392 (`vector-fixture-owner-clippy-r1`,23.224s). No-default-feature/all-target Retrieval Clippy passes (`retrieval-no-local-fixture-clippy-r1`,49.940s). Format and whitespace checks pass.
+- `native-vector-owner-qualification-r2` passes8/8 (137.353s command;71.154s tests): three actual Kernel vector/cache/retrieval campaigns, three actual Retrieval native model campaigns, the component entry and existing thread-local authority control. Kernel component runs used the explicitly provided original U8 profile; the all-profile normalization case exercised both original catalog profiles from the verified provisioned root. This is Windows component evidence, not cross-platform/installed/task-quality qualification.
+- The existing quarantined projection quota test passes its single selected observation (`quarantined-projection-observation-r1`,16.435s command;6.338s tests). Its prior intermittent-failure record, owner and expiry remain unchanged; one pass does not resolve flakiness.
+- Independent reference source is reviewed/frozen and selected Qwen forwards remain zero. The fresh same-query/vector baseline proposal is retained privately and unapplied while the Windows candidate inputs freeze. Final publication-input qualification still lacks the genuine three-profile qualified publication catalog; the pre1.9 provisional candidate path does not waive that gate.

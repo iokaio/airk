@@ -13,6 +13,20 @@ pub mod calibration;
 /// Normal dependency edge for the native compiler's NEW task policy. Core
 /// hashes its own structural/acceptance sources; no cross-crate source mounts.
 pub fn semantic_policy_digest() -> Result<Sha256Digest> {
+    semantic_policy_digest_for_sources(
+        include_bytes!("context_action.rs"),
+        include_bytes!("context_action/calibration.rs"),
+        include_bytes!("context_action/calibration/terminal.rs"),
+        super::focus::semantic_policy_digest()?,
+    )
+}
+
+fn semantic_policy_digest_for_sources(
+    context: &[u8],
+    calibration: &[u8],
+    terminal: &[u8],
+    focus: Sha256Digest,
+) -> Result<Sha256Digest> {
     fn source(bytes: &[u8]) -> Result<Sha256Digest> {
         let canonical = std::str::from_utf8(bytes)?.replace("\r\n", "\n");
         ensure!(!canonical.contains('\r'), "lone CR in joint Core semantics");
@@ -24,9 +38,10 @@ pub fn semantic_policy_digest() -> Result<Sha256Digest> {
     Ok(crate::identity::framed_digest(
         b"airk.arbiter.context-action-core-semantics/1",
         &[
-            source(include_bytes!("context_action.rs"))?.as_bytes(),
-            source(include_bytes!("context_action/calibration.rs"))?.as_bytes(),
-            super::focus::semantic_policy_digest()?.as_bytes(),
+            source(context)?.as_bytes(),
+            source(calibration)?.as_bytes(),
+            source(terminal)?.as_bytes(),
+            focus.as_bytes(),
         ],
     ))
 }

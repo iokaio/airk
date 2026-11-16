@@ -1756,6 +1756,8 @@ pub enum ControlResponse {
     /// M15a: the checked endpoint descriptor.
     AgentEndpoint {
         endpoint: Box<crate::service_http::EndpointDescriptor>,
+        /// Inert generated setup entries; outside the persisted endpoint digest.
+        manual: Vec<crate::agent_manual::AgentManualEntry>,
     },
     /// M15: the connection's references (no token).
     AgentConnectionInfo {

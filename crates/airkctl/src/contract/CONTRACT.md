@@ -269,7 +269,14 @@ completion; no arbitrary process is attached or stopped by this command.
 
 ## Invoke canonical read lifetime (A6 correction)
 
-Invoke's existing maximum120000ms deadline starts at complete frame receipt.
+The D06 session transport envelope is at most 125000 ms: the unchanged
+120000 ms native operation ceiling plus 5000 ms for transport/delivery. Invoke
+and AdminCall admission use that same envelope. Their one deadline starts at
+complete frame receipt, including actor/worker queueing; delivery overhead is
+added once by the caller, never on retry, scope reselection or native dispatch.
+The historical `airkctl_session_frames.json` keeps its literal 120000 ms control;
+`fixtures/split/i2/transport_budget.json` records the new native-observed
+125000 accepted / 125001 refused boundaries for both methods.
 Its original request ID, native monotonic expiry and cancellation state survive
 actor/worker queues and the one already permitted predispatch scope reselection.
 The internal Io/command seam carries that parent only into actual canonical
@@ -283,7 +290,9 @@ prove an older development service supports the field. A sent/lost response
 retains existing nonretryable/unknown classification. Core's125s read maximum
 and ordinary budgets above30s remain supported; Answer intersects its original
 parent remaining with its serialized120000ms ceiling (relaxed from 30000ms in 1.8.201), and NativeNextRead keeps
-its existing30s cap. None retains125s canonical/135s transport response behavior.
+the approved 120s operation cap. None retains125s canonical/135s transport
+response behavior; the 125s I2 envelope does not extend native work. It is a
+bound on waiting/delivery, not a fresh per-stage allowance.
 
 Generic Invoke can perform nonread operations too. Do not interpret this read
 carrier or session timeout/cancel as proof an admitted mutation did not run,
@@ -315,3 +324,34 @@ Core validation; it never pre-canonicalizes alias/traversal evidence. The owning
 service opens and verifies that local bundle read-only against the actual
 compiled qualified profile. A caller path supplies no profile/code/consent or
 network authority. This operation has no public Admin management counterpart.
+
+## Final-plan D04 additive agent setup output
+
+`agents endpoint` retains the checked endpoint fields and adds `manual`, three
+Rust-owned project-relative `AgentManualEntry` values. This presentation field
+is outside the persisted endpoint descriptor, its schema and its digest.
+`agents manual --client <claude|codex|vscode> [--project <folder>] [--user]
+[--server-key <airk…>]` returns one entry naming the exact resolved target;
+it is read-only and valid through the ordinary session command path.
+`AgentManualEntry` and `AgentConfigRefusal` are generated I2 schema roots,
+shared directly from Core with I3. Connect success adds `manual`; failures keep
+the existing error class/code and expose typed recovery details as described in
+the agent-config contract. Full original native errors remain available.
+
+The verified CLI advertises `agents-manual/1` only when the read-only manual
+command and typed connect recovery projection are served. Older clients can
+ignore the additive field; consumers can report unavailable support without
+attempting an unrecognized command.
+
+`library set-create --index` parses every supplied index identity and refuses
+duplicates before automatic service admission. Invalid local selectors never
+probe or start a service; valid selectors keep the original admission and
+reviewed catalog mutation path. CLI parser/output fixtures use thread-local
+missing-installation discovery; separate installation/admission regressions
+retain exact pair/signature and refused-start checks.
+
+U110 `agents connect --selection-file` without a connection identity is also a
+retired-source refusal. It is checked before installation discovery, target
+resolution or service admission, and never falls through to URL-only editing.
+Existing connection/selection combinations keep their explicit retired-source
+refusal; modern `connect` omits both flags.

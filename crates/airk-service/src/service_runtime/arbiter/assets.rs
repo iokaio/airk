@@ -53,7 +53,40 @@ impl StageOwner {
         }))
     }
 }
+/// One joined owner runs explicit asset I/O and whole-file verification away
+/// from the service control executor. It retains the actual Store/ServiceLease
+/// and original cancellation/deadline state through real completion; no cancel
+/// select drops the join or reports that unfinished native work has settled.
+pub(super) async fn owned_asset_operation<T>(
+    work: impl std::future::Future<Output = Result<T>> + Send + 'static,
+) -> Result<T>
+where
+    T: Send + 'static,
+{
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || runtime.block_on(work))
+        .await
+        .context("Arbiter owned asset operation closed")?
+}
+
 pub(super) async fn provision(
+    profile: &Profile,
+    store: &Arc<AssetStore>,
+    revision: u64,
+    cancel: &CancellationToken,
+    source_log: Option<&airk_host::service_logs::Log>,
+) -> Result<()> {
+    let profile = profile.clone();
+    let store = store.clone();
+    let cancel = cancel.clone();
+    let source_log = source_log.cloned();
+    owned_asset_operation(async move {
+        provision_owned(&profile, &store, revision, &cancel, source_log.as_ref()).await
+    })
+    .await
+}
+
+async fn provision_owned(
     profile: &Profile,
     store: &Arc<AssetStore>,
     revision: u64,
@@ -199,6 +232,8 @@ where
     anyhow::bail!("Arbiter complete source roster exhausted")
 }
 
+#[cfg(test)]
+mod operation_tests;
 #[cfg(test)]
 mod source_attempt_tests;
 

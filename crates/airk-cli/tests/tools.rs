@@ -497,66 +497,361 @@ fn comparable(mut envelope: Value) -> Value {
     envelope
 }
 
-/// What one call produced: an envelope, or the failure message the CLI's
-/// error line and M3's `ToolCallFailed` carry.
-#[derive(Debug, PartialEq)]
-enum Outcome {
-    Envelope(Value),
-    Failed(String),
-}
-
-fn cli_outcome(output: Output) -> Outcome {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.stdout.is_empty() {
-        let line = stderr.lines().last().unwrap_or_default();
-        return Outcome::Failed(line.strip_prefix("Error: ").unwrap_or(line).to_owned());
-    }
-    Outcome::Envelope(comparable(serde_json::from_slice(&output.stdout).unwrap()))
-}
-
-/// The control answer in canonical space, as the recorded `airk` output.
-fn control_outcome(
-    parity: &Parity,
-    control: &Path,
-    tool: &str,
-    arguments: &Value,
-    selection: airk_core::service::ToolSelection,
-) -> Outcome {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let response = runtime
-        .block_on(airk_cli::service_runtime::request(
-            control,
-            airk_core::service::ControlMethod::ToolsCall {
-                read_attempt: None,
-                tool: tool.into(),
-                arguments: arguments.as_object().unwrap().clone(),
-                selection,
-                response_mode: airk_core::service::ToolResponseMode::Full,
-                usage_client: airk_core::usage::ClientFamily::Cli,
-            },
-        ))
-        .unwrap();
-    match response {
-        airk_core::service::ControlResponse::ToolResult { result } => Outcome::Envelope(
-            comparable(serde_json::from_str(&parity.canonical(&result.to_string())).unwrap()),
-        ),
-        airk_core::service::ControlResponse::ToolCallFailed { message } => {
-            Outcome::Failed(parity.canonical(&message))
-        }
-        other => panic!(
-            "unexpected M3 response: {}",
-            serde_json::to_string(&other).unwrap()
-        ),
-    }
-}
-
 /// M3 runs the CLI's own call path in the service: for each selection the
 /// control answer equals what `airk tools call` printed (split step 3a.2b).
+// Current parity never opens or rewrites the historical U95 captures. Only the
+// documented per-call identities/observation clocks in `comparable` vary; all
+// evidence, revision, source, compiler and model digests compare byte for byte.
+fn current_native(
+    control: &Path,
+    method: airk_core::service::ControlMethod,
+) -> anyhow::Result<airk_core::service::ControlResponse> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(airk_cli::service_runtime::request(control, method))
+}
+
+fn current_unix_ms() -> anyhow::Result<u64> {
+    Ok(u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis(),
+    )?)
+}
+
+// The final Diagnostics observation in the ordinary settlement helper can
+// create a due automatic audit. Observe that distinct native scheduler too.
+fn current_quiescent(
+    service: &common::Service,
+    root: &Path,
+    state: &Path,
+    until: std::time::Instant,
+) -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse, JobKind, JobOutcome, JobState};
+    service.settle_reviewed_index(root, state, until)?;
+    let mut observed_audits = std::collections::BTreeSet::new();
+    loop {
+        anyhow::ensure!(
+            std::time::Instant::now() < until,
+            "original parity quiescence deadline exhausted"
+        );
+        let progress = service.metadata(
+            ControlMethod::Progress {
+                project: service.project.binding,
+            },
+            until,
+        );
+        let ControlResponse::Progress {
+            observation,
+            pending_job,
+            queued_jobs,
+            queue_truncated,
+            ..
+        } = progress
+        else {
+            anyhow::bail!("native quiescence progress unavailable");
+        };
+        for job in observation
+            .as_ref()
+            .map(|value| &value.job)
+            .into_iter()
+            .chain(pending_job.iter())
+            .chain(queued_jobs.iter())
+        {
+            anyhow::ensure!(
+                job.project == service.project.binding,
+                "quiescence crossed native project"
+            );
+            if job.kind == JobKind::Verify {
+                observed_audits.insert(job.id);
+            }
+        }
+        let idle = pending_job.is_none()
+            && queued_jobs.is_empty()
+            && queue_truncated == Some(false)
+            && observation.as_ref().is_none_or(|value| {
+                !matches!(value.job.state, JobState::Pending | JobState::Running)
+            });
+        let registry = airk_store::service::registry::ServiceRegistry::open_saved_before(
+            &service.control,
+            Some(until),
+        )?;
+        let due = registry.due_automatic_audits(current_unix_ms()?, 32)?;
+        anyhow::ensure!(due.len() < 32, "quiescence audit census truncated");
+        let audit_due = due
+            .iter()
+            .any(|(project, _)| *project == service.project.binding);
+        drop(registry);
+        if idle
+            && !audit_due
+            && !service.background_pending_until(service.project.binding, until)?
+        {
+            // Read the durable accepted-work census after the due-audit check;
+            // it includes an audit accepted before its first cached sample.
+            for id in &observed_audits {
+                let ControlResponse::Job { job } =
+                    service.metadata(ControlMethod::Job { id: *id }, until)
+                else {
+                    anyhow::bail!("observed audit job disappeared");
+                };
+                anyhow::ensure!(
+                    job.project == service.project.binding
+                        && job.kind == JobKind::Verify
+                        && job.state == JobState::Succeeded
+                        && matches!(job.outcome, Some(JobOutcome::Succeeded { .. })),
+                    "actual automatic audit did not complete successfully: {job:?}"
+                );
+            }
+            return Ok(());
+        }
+        // Every iteration observes actual native state under the same deadline.
+        std::thread::yield_now();
+    }
+}
+
+// Only these two direct Status/work clock paths may differ. This is not a
+// recursive field-name mask: nested evidence fields with these names survive.
+fn current_observation(mut value: Value, started: u64, finished: u64) -> anyhow::Result<Value> {
+    fn status(body: &mut Value, started: u64, finished: u64) -> anyhow::Result<()> {
+        if body.pointer("/work/basis").and_then(Value::as_str)
+            != Some("instance_bound_service_metadata")
+        {
+            return Ok(());
+        }
+        anyhow::ensure!(started <= finished, "crossed native call interval");
+        let project: airk_core::service::ProjectBinding =
+            serde_json::from_value(body["project"].clone())?;
+        let work = &mut body["work"];
+        anyhow::ensure!(work["schema"] == 1, "unknown native status work schema");
+        let now = work["observed_unix_ms"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("native status source clock absent"))?;
+        anyhow::ensure!(
+            (started..=finished).contains(&now),
+            "native status source clock outside actual call interval"
+        );
+        if !work["progress"].is_null() {
+            let sampled = &work["progress"];
+            let worker: airk_core::service::WorkerIdentity =
+                serde_json::from_value(sampled["worker"].clone())?;
+            let job: airk_core::service::JobRecord =
+                serde_json::from_value(sampled["job"].clone())?;
+            let counter_job: airk_core::identity::Sha256Digest =
+                serde_json::from_value(sampled["progress"]["job"].clone())?;
+            anyhow::ensure!(
+                worker.project == project && job.project == project && counter_job == job.id,
+                "native progress worker/job/counters crossed status project"
+            );
+            let observed = sampled["observed_unix_ms"]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("native progress clock absent"))?;
+            let age = work["progress_observation_age_ms"]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("native progress age absent"))?;
+            anyhow::ensure!(
+                observed <= now && age == now.saturating_sub(observed),
+                "native progress age does not derive from original observation"
+            );
+            work["progress_observation_age_ms"] = json!("<validated-native-progress-age>");
+        } else {
+            anyhow::ensure!(
+                work["progress_observation_age_ms"].is_null(),
+                "absent progress fabricated an age"
+            );
+        }
+        if let Some(sampled) = work["progress_sampled_unix_ms"].as_u64() {
+            anyhow::ensure!(
+                (started..=now).contains(&sampled),
+                "native registry sample clock outside actual call interval"
+            );
+            work["progress_sampled_unix_ms"] = json!("<validated-native-progress-sample>");
+        } else {
+            anyhow::ensure!(
+                work["progress_sampled_unix_ms"].is_null(),
+                "invalid native registry sample clock"
+            );
+        }
+        Ok(())
+    }
+    status(&mut value, started, finished)?;
+    if let Some(contents) = value.get_mut("content").and_then(Value::as_array_mut) {
+        for content in contents {
+            if let Some(text) = content.get("text").and_then(Value::as_str)
+                && let Ok(mut body) = serde_json::from_str::<Value>(text)
+            {
+                status(&mut body, started, finished)?;
+                content["text"] = body;
+            }
+        }
+    }
+    if let Some(body) = value.get_mut("structuredContent") {
+        status(body, started, finished)?;
+    }
+    Ok(comparable(value))
+}
+
+#[test]
+fn current_status_clock_comparison_preserves_state_counters_and_stable_digests()
+-> anyhow::Result<()> {
+    let original = json!({"project":"1111111111111111111111111111111111111111111111111111111111111111",
+        "source_sha256":"3333333333333333333333333333333333333333333333333333333333333333",
+        "work":{"schema":1,"basis":"instance_bound_service_metadata","observed_unix_ms":1050,
+        "progress_sampled_unix_ms":1040,"progress_observation_age_ms":150,
+        "progress":{"worker":{"service":"44444444444444444444444444444444","worker":"55555555555555555555555555555555","project":"1111111111111111111111111111111111111111111111111111111111111111","fencing_generation":1},
+        "job":{"id":"2222222222222222222222222222222222222222222222222222222222222222","project":"1111111111111111111111111111111111111111111111111111111111111111","kind":"verify","state":"succeeded","fencing_generation":1,"attempts":1,"outcome":{"state":"succeeded","revision":null}},
+        "observed_unix_ms":900,"progress":{"job":"2222222222222222222222222222222222222222222222222222222222222222","committed_changes":4}}}});
+    let baseline = current_observation(original.clone(), 1000, 1100)?;
+    let mut later = original.clone();
+    later["work"]["observed_unix_ms"] = json!(1060);
+    later["work"]["progress_sampled_unix_ms"] = json!(1050);
+    later["work"]["progress_observation_age_ms"] = json!(160);
+    assert_eq!(current_observation(later, 1000, 1100)?, baseline);
+    for (pointer, changed) in [
+        ("/work/progress/job/state", json!("failed")),
+        ("/work/progress/progress/committed_changes", json!(5)),
+        (
+            "/source_sha256",
+            json!("6666666666666666666666666666666666666666666666666666666666666666"),
+        ),
+    ] {
+        let mut mutated = original.clone();
+        *mutated.pointer_mut(pointer).unwrap() = changed;
+        assert_ne!(current_observation(mutated, 1000, 1100)?, baseline);
+    }
+    for (pointer, changed) in [
+        ("/work/progress_observation_age_ms", json!(999)),
+        ("/work/progress_sampled_unix_ms", json!(1051)),
+        ("/work/observed_unix_ms", json!(999)),
+    ] {
+        let mut mutated = original.clone();
+        *mutated.pointer_mut(pointer).unwrap() = changed;
+        assert!(current_observation(mutated, 1000, 1100).is_err());
+    }
+    let mut nested = original;
+    nested["evidence"] = json!({"progress_observation_age_ms":77,"progress_sampled_unix_ms":88});
+    let retained = current_observation(nested, 1000, 1100)?;
+    assert_eq!(
+        retained["evidence"],
+        json!({"progress_observation_age_ms":77,"progress_sampled_unix_ms":88})
+    );
+    Ok(())
+}
+fn current_tool(
+    control: &Path,
+    selection: airk_core::service::ToolSelection,
+    tool: &str,
+    arguments: Value,
+) -> anyhow::Result<(airk_core::service::ControlResponse, u64)> {
+    let started = current_unix_ms()?;
+    let response = current_native(
+        control,
+        airk_core::service::ControlMethod::ToolsCall {
+            read_attempt: None,
+            tool: tool.into(),
+            arguments: arguments.as_object().unwrap().clone(),
+            selection,
+            response_mode: airk_core::service::ToolResponseMode::Full,
+            usage_client: airk_core::usage::ClientFamily::Cli,
+        },
+    )?;
+    Ok((response, started))
+}
+
+fn current_ctl(control: &Path, selection: &[&str], arguments: &[&str]) -> anyhow::Result<Output> {
+    Ok(common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(control)
+        .args(["--output", "json"])
+        .args(selection)
+        .args(arguments)
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .output()?)
+}
+
+fn current_assert_tool(
+    expected: (airk_core::service::ControlResponse, u64),
+    actual: Output,
+    local_help: bool,
+    label: &str,
+) -> anyhow::Result<bool> {
+    use airk_core::service::ControlResponse;
+    use airkctl::contract::{ErrorLine, ExitClass};
+    let finished = current_unix_ms()?;
+    let (expected, started) = expected;
+    let error = match expected {
+        ControlResponse::ToolResult { result } => {
+            assert_eq!(
+                current_observation(serde_json::from_slice(&actual.stdout)?, started, finished)?,
+                current_observation(result.clone(), started, finished)?,
+                "{label}: full native envelope"
+            );
+            if result["isError"] == true {
+                Some(ErrorLine::new(
+                    ExitClass::Refused,
+                    "tool_failed",
+                    false,
+                    if local_help {
+                        "AIRK help request failed"
+                    } else {
+                        "MCP tool failed; see the result above"
+                    },
+                ))
+            } else {
+                None
+            }
+        }
+        ControlResponse::ToolCallFailed { message } => {
+            assert!(
+                actual.stdout.is_empty(),
+                "{label}: failure fabricated stdout"
+            );
+            let mut line = ErrorLine::new(ExitClass::Refused, "operation_failed", false, &message);
+            line.native = Some(serde_json::to_value(ControlResponse::ToolCallFailed {
+                message,
+            })?);
+            Some(line)
+        }
+        other => {
+            assert!(
+                actual.stdout.is_empty(),
+                "{label}: refusal fabricated stdout"
+            );
+            Some(airkctl::service::refusal(&other))
+        }
+    };
+    if let Some(error) = error {
+        assert_eq!(
+            actual.status.code(),
+            Some(i32::from(error.class.code())),
+            "{label}"
+        );
+        let text = std::str::from_utf8(&actual.stderr)?;
+        assert_eq!(
+            text.lines().count(),
+            1,
+            "{label}: complete failure stream: {text}"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(text)?,
+            serde_json::to_value(error)?,
+            "{label}: full I2 failure"
+        );
+        Ok(false)
+    } else {
+        assert!(
+            actual.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&actual.stderr)
+        );
+        assert!(actual.stderr.is_empty(), "{label}: unexpected stderr");
+        Ok(true)
+    }
+}
+
 #[test]
 fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
+    use airk_core::service::ToolSelection;
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "tools-call");
@@ -564,173 +859,117 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         root.path().join("recovery.md"),
         "# Recovery\n\nA forgotten password is recovered from the account page.\n",
     )?;
-    service.settle_reviewed_index(
+    current_quiescent(
+        &service,
         root.path(),
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
-    common::call(root.path(), state.path(), "tools-call", &["index"])?;
     let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
     else {
-        panic!("the reviewed fixture selects one scoped index");
+        panic!("reviewed scoped fixture");
     };
-    let mut parity = Parity::new("control_tool_calls_answer_what_the_cli_printed");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    // The receipt budget depends on the fixture paths' length.
-    parity.mask_json_fields(&["receipt_bytes_budget"]);
+    let catalog = serde_json::to_string(&selection)?;
+    let binding = service.project.binding.to_string();
+    let set = selection.project_ids[0].to_string();
     let calls = [
-        ("airk_read_file", json!({"path": "recovery.md"})),
-        ("airk_file_info", json!({"path": "recovery.md"})),
-        ("airk_list_files", json!({})),
+        (
+            "airk_read_file",
+            json!({"path":"recovery.md","start_line":1,"end_line":3,"verification":"off"}),
+        ),
+        (
+            "airk_file_info",
+            json!({"path":"recovery.md","verification":"off"}),
+        ),
+        ("airk_list_files", json!({"verification":"off"})),
         (
             "airk_search",
-            json!({"query": "forgotten password", "limit": 3}),
+            json!({"query":"forgotten password","limit":3,"verification":"off"}),
         ),
-        ("airk_outline", json!({"path": "missing.md"})),
-        ("help", json!({"topic": "workbench"})),
+        (
+            "airk_outline",
+            json!({"path":"missing.md","verification":"off"}),
+        ),
+        ("help", json!({"query":"workbench"})),
     ];
-    let mut envelopes = 0;
-    for (tool, arguments) in &calls {
-        let arguments_text = arguments.to_string();
-        let scoped = cli_outcome(
-            parity
-                .old(&format!("catalog {tool}"), || {
-                    common::legacy_airk_scoped_command(root.path(), state.path(), "tools-call")
-                        .args(["tools", "call", tool, "--args", &arguments_text])
-                        .output()
-                        .unwrap()
-                })
-                .output(),
-        );
-        let control = control_outcome(
-            &parity,
-            &service.control,
-            tool,
-            arguments,
-            airk_core::service::ToolSelection::Catalog {
+    let mut positive = 0;
+    for (name, native, flags) in [
+        (
+            "catalog",
+            ToolSelection::Catalog {
                 request: selection.clone(),
             },
-        );
-        assert_eq!(control, scoped, "catalog selection {tool}");
-        envelopes += usize::from(matches!(control, Outcome::Envelope(_)));
-        let project = cli_outcome(
-            parity
-                .old(&format!("project {tool}"), || {
-                    common::legacy_airk_command(root.path(), state.path(), "tools-call")
-                        .args(["tools", "call", tool, "--args", &arguments_text])
-                        .output()
-                        .unwrap()
-                })
-                .output(),
-        );
-        let control = control_outcome(
-            &parity,
-            &service.control,
-            tool,
-            arguments,
-            airk_core::service::ToolSelection::Project {
+            vec!["--catalog-session", catalog.as_str()],
+        ),
+        (
+            "project",
+            ToolSelection::Project {
                 binding: service.project.binding,
             },
-        );
-        assert_eq!(control, project, "project selection {tool}");
+            vec!["--service-project", binding.as_str()],
+        ),
+        (
+            "open index set",
+            ToolSelection::Open {
+                index_ids: vec![],
+                index_set_ids: vec![set.clone()],
+                connection_id: None,
+                workspace: None,
+            },
+            vec![],
+        ),
+    ] {
+        for (tool, arguments) in &calls {
+            let expected = current_tool(&service.control, native.clone(), tool, arguments.clone())?;
+            let text = arguments.to_string();
+            let mut line = vec!["tools", "call", *tool, "--args", text.as_str()];
+            if name == "open index set" {
+                line.extend(["--set", set.as_str()]);
+            }
+            let accepted = current_assert_tool(
+                expected,
+                current_ctl(&service.control, &flags, &line)?,
+                name != "catalog" && matches!(*tool, "help" | "airk_help"),
+                &format!("{name} {tool}"),
+            )?;
+            if name != "project" && *tool != "help" {
+                positive += usize::from(accepted);
+            }
+        }
     }
-    assert!(envelopes >= 4, "the catalog selection must read evidence");
-    // Without any selection the CLI answers its help tool in process.
+    assert!(
+        positive >= 8,
+        "catalog and readable index-set authority must return real indexed evidence"
+    );
     for arguments in [
-        json!({"topic": "workbench"}),
-        json!({"topic": "workbench", "detail": "full"}),
+        json!({"query":"workbench"}),
+        json!({"query":"workbench","detail":"full"}),
     ] {
         let text = arguments.to_string();
-        let cli = cli_outcome(
-            parity
-                .old(&format!("unselected help {text}"), || {
-                    Command::new(env!("CARGO_BIN_EXE_airk"))
-                        .args(["tools", "call", "help", "--args", &text])
-                        .env("AIRK_MCP_RESPONSE_MODE", "full")
-                        .output()
-                        .unwrap()
-                })
-                .output(),
-        );
-        let control = control_outcome(
-            &parity,
-            &service.control,
-            "help",
-            &arguments,
-            airk_core::service::ToolSelection::Unselected,
-        );
-        assert_eq!(control, cli, "unselected help {text}");
+        current_assert_tool(
+            current_tool(
+                &service.control,
+                ToolSelection::Unselected,
+                "help",
+                arguments,
+            )?,
+            current_ctl(
+                &service.control,
+                &[],
+                &["tools", "call", "help", "--args", &text],
+            )?,
+            true,
+            "unselected help",
+        )?;
     }
-    parity.finish();
     Ok(())
-}
-
-/// What a command line produced: exit code, comparable stdout and the final
-/// error message without its program prefix.
-fn line_outcome(
-    code: Option<i32>,
-    stdout: &[u8],
-    stderr: &[u8],
-    prefix: &str,
-) -> (Option<i32>, Option<Value>, String) {
-    let stdout = (!stdout.is_empty()).then(|| comparable(serde_json::from_slice(stdout).unwrap()));
-    let stderr = String::from_utf8_lossy(stderr);
-    let message = stderr
-        .lines()
-        .last()
-        .unwrap_or_default()
-        .strip_prefix(prefix)
-        .unwrap_or_default()
-        .to_owned();
-    (code, stdout, message)
-}
-
-/// The recorded `airk` run's outcome (split U95).
-fn airk_outcome(recorded: common::parity::Recorded) -> (Option<i32>, Option<Value>, String) {
-    line_outcome(
-        recorded.code,
-        recorded.stdout.as_bytes(),
-        recorded.stderr.as_bytes(),
-        "Error: ",
-    )
-}
-
-/// The `airkctl` command line run in process (`airkctl::cli::run`, the code its
-/// `main` runs) with `AIRK_MCP_RESPONSE_MODE=full`, as the fixture commands set.
-/// Its output is compared in canonical space, as the recorded `airk` output.
-fn airkctl_outcome(parity: &Parity, arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut io = airkctl::cli::Io {
-        read_attempt: None,
-        stdin: &mut std::io::empty(),
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-        full_responses: true,
-        window: None,
-    };
-    let line = std::iter::once("airkctl")
-        .chain(arguments.iter().copied())
-        .map(std::ffi::OsString::from)
-        .collect();
-    let code = airkctl::cli::run(line, &mut io);
-    let stdout = parity.canonical(&String::from_utf8_lossy(&stdout));
-    let stderr = parity.canonical(&String::from_utf8_lossy(&stderr));
-    line_outcome(
-        Some(i32::from(code)),
-        stdout.as_bytes(),
-        stderr.as_bytes(),
-        "airkctl: ",
-    )
 }
 
 /// `airkctl` evidence reads and tool calls print what `airk` printed, for both
 /// selections, on the reviewed indexed fixture (split step 3a.2c).
 #[test]
 fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
+    use airk_core::service::ToolSelection;
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-reads");
@@ -742,129 +981,211 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
         root.path().join("account.rs"),
         "use std::fmt;\n\npub fn recover_password(user: &str) -> String {\n    format!(\"reset {user}\")\n}\n",
     )?;
-    service.settle_reviewed_index(
+    current_quiescent(
+        &service,
         root.path(),
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
-    common::call(root.path(), state.path(), "ctl-reads", &["index"])?;
     let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
     else {
-        panic!("the reviewed fixture selects one scoped index");
+        panic!("reviewed scoped fixture");
     };
     let arguments_file = state.path().join("ctl-args.json");
-    fs::write(&arguments_file, r#"{"query":"recover","limit":2}"#)?;
-    let arguments_file = arguments_file.to_str().unwrap().to_owned();
-    let reads: Vec<Vec<&str>> = vec![
-        vec!["status"],
-        vec!["parse", "where is the password recovered"],
-        vec!["search", "forgotten password", "--limit", "3"],
-        vec![
-            "search",
-            "recover",
-            "--mode",
-            "lexical",
-            "--language",
-            "rust",
-        ],
-        vec!["files"],
-        vec![
-            "read",
-            "recovery.md",
-            "--start-line",
-            "1",
-            "--end-line",
-            "2",
-        ],
-        vec!["info", "account.rs"],
-        vec!["outline", "account.rs"],
-        vec!["symbol", "recover_password"],
-        vec!["imports"],
-        vec!["facts"],
-        vec!["code-facts", "--name", "recover_password"],
-        vec!["relationships", "recover_password"],
-        vec!["refs", "recover_password"],
-        vec![
-            "context",
-            "account.rs",
-            "3",
-            "--before",
-            "1",
-            "--after",
-            "1",
-        ],
-        vec!["changes"],
-        vec!["read", "missing.md", "--start-line", "1", "--end-line", "2"],
-        vec!["tools", "call", "airk_status"],
-        vec![
-            "tools",
-            "call",
+    fs::write(
+        &arguments_file,
+        r#"{"query":"recover","limit":2,"verification":"off"}"#,
+    )?;
+    let arguments_file = arguments_file.to_str().unwrap();
+    // Independent CLI-to-native input catalog. Do not derive it from the CLI mapper.
+    let reads: Vec<(Vec<&str>, &str, Value)> = vec![
+        (vec!["status"], "airk_status", json!({})),
+        (
+            vec!["parse", "where is the password recovered"],
+            "airk_parse",
+            json!({"schema":"airk.parse.request/1","text":"where is the password recovered","mode":"prepare","path_prefix":""}),
+        ),
+        (
+            vec!["search", "forgotten password", "--limit", "3"],
             "airk_search",
-            "--args-file",
-            &arguments_file,
-        ],
-        vec![
-            "tools",
-            "call",
+            json!({"query":"forgotten password","mode":null,"path_prefix":null,"limit":3,"max_bytes":8192}),
+        ),
+        (
+            vec![
+                "search",
+                "recover",
+                "--mode",
+                "lexical",
+                "--language",
+                "rust",
+            ],
+            "airk_search",
+            json!({"query":"recover","mode":"lexical","language":"rust","path_prefix":null,"limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec!["files"],
+            "airk_list_files",
+            json!({"cursor":null,"prefix":"","limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec![
+                "read",
+                "recovery.md",
+                "--start-line",
+                "1",
+                "--end-line",
+                "2",
+            ],
+            "airk_read_file",
+            json!({"path":"recovery.md","start_line":1,"end_line":2,"max_bytes":8192}),
+        ),
+        (
+            vec!["info", "account.rs"],
+            "airk_file_info",
+            json!({"path":"account.rs"}),
+        ),
+        (
+            vec!["outline", "account.rs"],
+            "airk_outline",
+            json!({"path":"account.rs","cursor":null,"compact":null,"limit":50,"max_bytes":8192}),
+        ),
+        (
+            vec!["symbol", "recover_password"],
+            "airk_symbols",
+            json!({"compact":null,"cursor":null,"name":"recover_password","language":null,"path_prefix":"","limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec!["imports"],
+            "airk_imports",
+            json!({"compact":null,"cursor":null,"path_prefix":""}),
+        ),
+        (
+            vec!["facts"],
+            "airk_document_facts",
+            json!({"compact":null,"cursor":null,"document_key":null,"path_prefix":"","name":null,"kind":null,"limit":50,"max_bytes":8192}),
+        ),
+        (
+            vec!["code-facts", "--name", "recover_password"],
+            "airk_code_facts",
+            json!({"compact":null,"cursor":null,"symbol_key":null,"path_prefix":"","name":"recover_password","kind":null,"language":null,"limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec!["relationships", "recover_password"],
+            "airk_relationships",
+            json!({"symbol":"recover_password","direction":"incoming","kind":null,"path_prefix":"","hops":1,"limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec!["refs", "recover_password"],
+            "airk_references",
+            json!({"name":"recover_password","path_prefix":"","limit":10,"max_bytes":8192}),
+        ),
+        (
+            vec![
+                "context",
+                "account.rs",
+                "3",
+                "--before",
+                "1",
+                "--after",
+                "1",
+            ],
+            "airk_context",
+            json!({"path":"account.rs","line":3,"before":1,"after":1,"max_bytes":8192}),
+        ),
+        (
+            vec!["changes"],
+            "airk_changes",
+            json!({"since":null,"selectors":[],"path_prefix":"","include_symbols":false,"include_documents":false,"include_suggestions":false,"limit":10,"max_bytes":8192,"cursor":null}),
+        ),
+        (
+            vec!["read", "missing.md", "--start-line", "1", "--end-line", "2"],
+            "airk_read_file",
+            json!({"path":"missing.md","start_line":1,"end_line":2,"max_bytes":8192}),
+        ),
+        (
+            vec!["tools", "call", "airk_status"],
+            "airk_status",
+            json!({}),
+        ),
+        (
+            vec![
+                "tools",
+                "call",
+                "airk_search",
+                "--args-file",
+                arguments_file,
+            ],
+            "airk_search",
+            json!({"query":"recover","limit":2,"verification":"off"}),
+        ),
+        (
+            vec![
+                "tools",
+                "call",
+                "help",
+                "--args",
+                r#"{"query":"workbench"}"#,
+            ],
             "help",
-            "--args",
-            r#"{"topic":"workbench"}"#,
-        ],
+            json!({"query":"workbench"}),
+        ),
     ];
     let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
-    let control = service.control.to_str().unwrap().to_owned();
-    let mut parity = Parity::new("airkctl_reads_print_what_airk_printed");
-    parity.substitute_path(Path::new(&arguments_file), "<ARGS_FILE>");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    // The receipt budget depends on the fixture paths' length.
-    parity.mask_json_fields(&["receipt_bytes_budget"]);
     let mut compared = 0;
-    for read in &reads {
-        let name = parity.name(&read.join(" "));
-        let old = airk_outcome(parity.old(&format!("catalog {name}"), || {
-            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-reads")
-                .args(read)
-                .output()
-                .unwrap()
-        }));
-        let mut line = vec![
-            "--service-runtime-dir",
-            &control,
-            "--catalog-session",
-            &catalog,
-        ];
-        line.extend(read.iter().copied());
-        assert_eq!(
-            airkctl_outcome(&parity, &line),
-            old,
-            "catalog selection {read:?}"
-        );
-        let old = airk_outcome(parity.old(&format!("project {name}"), || {
-            common::legacy_airk_command(root.path(), state.path(), "ctl-reads")
-                .args(read)
-                .output()
-                .unwrap()
-        }));
-        let mut line = vec![
-            "--service-runtime-dir",
-            &control,
-            "--service-project",
-            &binding,
-        ];
-        line.extend(read.iter().copied());
-        assert_eq!(
-            airkctl_outcome(&parity, &line),
-            old,
-            "project selection {read:?}"
-        );
-        compared += 1;
+    let mut accepted = 0;
+    for (native, flags) in [
+        (
+            ToolSelection::Catalog { request: selection },
+            vec!["--catalog-session", catalog.as_str()],
+        ),
+        (
+            ToolSelection::Project {
+                binding: service.project.binding,
+            },
+            vec!["--service-project", binding.as_str()],
+        ),
+    ] {
+        for (line, tool, arguments) in &reads {
+            let mut line = line.clone();
+            let mut arguments = arguments.clone();
+            if line[0] != "tools" && *tool != "airk_status" {
+                line.extend(["--verification", "off"]);
+                arguments["verification"] = json!("off");
+            }
+            if line[0] != "tools"
+                && matches!(
+                    *tool,
+                    "airk_read_file" | "airk_file_info" | "airk_outline" | "airk_context"
+                )
+            {
+                // The CLI's EvidenceOptions keeps these explicit default fields.
+                // Pin the full input, including its encoded budget cost.
+                arguments.as_object_mut().unwrap().extend(
+                    json!({
+                        "revision":null,"if_evidence":null,"follow_moves":false,
+                        "known_hash":null,"artifact_id":null
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                );
+            }
+            accepted += usize::from(current_assert_tool(
+                current_tool(&service.control, native.clone(), tool, arguments)?,
+                current_ctl(&service.control, &flags, &line)?,
+                matches!(native, ToolSelection::Project { .. })
+                    && matches!(*tool, "help" | "airk_help"),
+                &format!("{native:?} {line:?}"),
+            )?);
+            compared += 1;
+        }
     }
-    assert_eq!(compared, reads.len());
-    parity.finish();
+    assert_eq!(compared, 40, "complete independent read/input catalog");
+    assert!(
+        accepted >= 18,
+        "successful indexed results must accompany refusal cases"
+    );
     Ok(())
 }
 
@@ -873,6 +1194,7 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
 /// `airk` read the bound project (split step 3c.1).
 #[test]
 fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse, ResolveTarget, ToolSelection};
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-resolve");
@@ -880,66 +1202,124 @@ fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
         root.path().join("notes.md"),
         "# Notes\n\nResolved by folder.\n",
     )?;
-    service.settle_reviewed_index(
+    current_quiescent(
+        &service,
         root.path(),
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
-    common::call(root.path(), state.path(), "ctl-resolve", &["index"])?;
-    let control = service.control.to_str().unwrap().to_owned();
-    let project_root = service.project.root.clone();
-    let data_root = service.project.data_root.clone();
-    let mut parity = Parity::new("airkctl_resolves_the_project_its_folder_names");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    for read in [
-        vec!["status"],
-        vec!["files"],
-        vec!["read", "notes.md", "--start-line", "1", "--end-line", "3"],
+    let target = ResolveTarget::Registration {
+        root: service.project.root.clone(),
+        data_root: service.project.data_root.clone(),
+        collection: "ctl-resolve".into(),
+    };
+    let ControlResponse::Resolved { registration } =
+        current_native(&service.control, ControlMethod::ResolveProject { target })?
+    else {
+        panic!("canonical folder resolution failed");
+    };
+    assert_eq!(
+        serde_json::to_value(&registration)?,
+        serde_json::to_value(&service.project)?
+    );
+    let flags = [
+        "--root",
+        registration.root.as_str(),
+        "--data-dir",
+        registration.data_root.as_str(),
+        "--collection",
+        "ctl-resolve",
+    ];
+    for (line, tool, arguments) in [
+        (vec!["status"], "airk_status", json!({})),
+        (
+            vec!["files", "--verification", "off"],
+            "airk_list_files",
+            json!({"cursor":null,"prefix":"","limit":10,"max_bytes":8192,"verification":"off"}),
+        ),
+        (
+            vec![
+                "read",
+                "notes.md",
+                "--start-line",
+                "1",
+                "--end-line",
+                "3",
+                "--verification",
+                "off",
+            ],
+            "airk_read_file",
+            json!({"path":"notes.md","start_line":1,"end_line":3,"max_bytes":8192,"verification":"off"}),
+        ),
     ] {
-        let old = airk_outcome(parity.old(&format!("resolved {}", read.join(" ")), || {
-            common::legacy_airk_command(root.path(), state.path(), "ctl-resolve")
-                .args(&read)
-                .output()
+        let mut arguments = arguments;
+        if tool == "airk_read_file" {
+            arguments.as_object_mut().unwrap().extend(
+                json!({
+                    "revision":null,"if_evidence":null,"follow_moves":false,
+                    "known_hash":null,"artifact_id":null
+                })
+                .as_object()
                 .unwrap()
-        }));
-        let mut line = vec![
-            "--service-runtime-dir",
-            &control,
-            "--root",
-            &project_root,
-            "--data-dir",
-            &data_root,
-            "--collection",
-            "ctl-resolve",
-        ];
-        line.extend(read.iter().copied());
-        assert_eq!(airkctl_outcome(&parity, &line), old, "resolved {read:?}");
+                .clone(),
+            );
+        }
+        current_assert_tool(
+            current_tool(
+                &service.control,
+                ToolSelection::Project {
+                    binding: registration.binding,
+                },
+                tool,
+                arguments,
+            )?,
+            current_ctl(&service.control, &flags, &line)?,
+            false,
+            &format!("folder resolution {line:?}"),
+        )?;
     }
-    // An existing folder, disjoint from the data root, that is not registered
-    // (a missing or overlapping folder is refused before the registry lookup).
     let elsewhere = tempfile::tempdir()?;
     let missing = elsewhere.path().to_str().unwrap();
-    let (code, _, message) = airkctl_outcome(
-        &parity,
+    let expected = current_native(
+        &service.control,
+        ControlMethod::ResolveProject {
+            target: ResolveTarget::Registration {
+                root: missing.into(),
+                data_root: registration.data_root.clone(),
+                collection: "ctl-resolve".into(),
+            },
+        },
+    )?;
+    assert_eq!(
+        serde_json::to_value(expected)?,
+        json!({"status":"failure","code":"project_not_registered"}),
+        "native registration lookup must preserve its current M1 refusal"
+    );
+    let actual = current_ctl(
+        &service.control,
         &[
-            "--service-runtime-dir",
-            &control,
             "--root",
             missing,
             "--data-dir",
-            &data_root,
-            "status",
+            &registration.data_root,
+            "--collection",
+            "ctl-resolve",
         ],
+        &["status"],
+    )?;
+    assert_eq!(actual.status.code(), Some(1));
+    assert!(actual.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&actual.stderr)?,
+        json!({
+            "airkctl_error":1,
+            "class":"refused",
+            "code":"project_not_registered",
+            "retryable":false,
+            "message":"project is not registered with this service; review registration before indexing or connecting"
+        }),
+        "complete I2 registration refusal has no native field"
     );
-    assert_eq!(code, Some(1));
-    assert!(
-        message.starts_with("project is not registered"),
-        "{message}"
-    );
-    parity.finish();
     Ok(())
 }
 
@@ -1546,42 +1926,12 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A console transcript with the varying observation fields `stable` drops
-/// replaced in place (pretty JSON keeps one field per line).
-fn stable_transcript(text: &str) -> String {
-    const VARYING: [&str; 7] = [
-        "request_id",
-        "observed_unix_ms",
-        "observed_from_unix_ms",
-        "observed_to_unix_ms",
-        "cache_age_ms",
-        "cached",
-        "elapsed_ms",
-    ];
-    text.lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            match VARYING
-                .iter()
-                .find(|key| trimmed.starts_with(&format!("\"{key}\":")))
-            {
-                Some(key) => format!(
-                    "{}\"{key}\": _{}",
-                    &line[..line.len() - trimmed.len()],
-                    if line.ends_with(',') { "," } else { "" }
-                ),
-                None => line.to_owned(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// `tools shell` (split step 3c.4c): the same console input through `airk`
 /// and `airkctl`, by project binding and by catalog session, prints the same
 /// banner, help, prompts, results and `Error:` lines.
 #[test]
 fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse, ToolSelection, ToolsCatalogDetail};
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-shell");
@@ -1589,124 +1939,189 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         root.path().join("recovery.md"),
         "# Recovery\n\nRecover a forgotten password.\n",
     )?;
-    service.settle_reviewed_index(
+    current_quiescent(
+        &service,
         root.path(),
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
     let arguments_file = state.path().join("shell-args.json");
-    fs::write(&arguments_file, r#"{"query":"recover","limit":2}"#)?;
-    let script = format!(
-        "list\nhelp airk_search\nhelp nope\ncall airk_status\ncall airk_search {{\"query\":\"recover\",\"limit\":2}}\ncall airk_search --args-file \"{}\"\ncall airk_search [1]\ncall nope\nbogus\n\nhelp\nexit\ncall airk_status\n",
-        arguments_file.display()
-    );
-    let airkctl_shell = |arguments: &[&str]| -> (u8, String, String) {
-        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        let mut stdin = script.as_bytes();
-        // `common::command` and `scoped_command` run `airk` with
-        // `AIRK_MCP_RESPONSE_MODE=full`; `airkctl` reads the same setting.
-        let mut io = airkctl::cli::Io {
-            read_attempt: None,
-            stdin: &mut stdin,
-            stdout: &mut stdout,
-            stderr: &mut stderr,
-            full_responses: true,
-            window: None,
-        };
-        let line = std::iter::once("airkctl")
-            .chain(arguments.iter().copied())
-            .chain(["tools", "shell"])
-            .map(std::ffi::OsString::from)
-            .collect();
-        let code = airkctl::cli::run(line, &mut io);
+    fs::write(
+        &arguments_file,
+        r#"{"query":"recover","limit":2,"verification":"off"}"#,
+    )?;
+    let calls = [
+        ("airk_status", json!({})),
         (
-            code,
-            String::from_utf8(stdout).unwrap(),
-            String::from_utf8(stderr).unwrap(),
-        )
-    };
-    let airk_shell = |mut command: Command| -> Output {
-        let mut child = command
-            .args(["tools", "shell"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(script.as_bytes())
-            .unwrap();
-        child.wait_with_output().unwrap()
-    };
+            "airk_read_file",
+            json!({"path":"recovery.md","start_line":1,"end_line":3,"verification":"off"}),
+        ),
+        (
+            "airk_search",
+            json!({"query":"recover","limit":2,"verification":"off"}),
+        ),
+        (
+            "airk_search",
+            json!({"query":"recover","limit":2,"verification":"off"}),
+        ),
+        (
+            "airk_read_file",
+            json!({"path":"missing.md","start_line":1,"end_line":3,"verification":"off"}),
+        ),
+    ];
+    let script = format!(
+        "list\nhelp airk_search\ncall airk_status\ncall airk_read_file {}\ncall airk_search {}\ncall airk_search --args-file \"{}\"\ncall airk_read_file {}\ncall airk_search [1]\nbogus\nexit\ncall airk_status\n",
+        calls[1].1,
+        calls[2].1,
+        arguments_file.display(),
+        calls[4].1
+    );
     let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
     else {
-        panic!("the reviewed fixture selects one scoped index");
+        panic!("reviewed scoped fixture");
     };
     let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
-    let control = service.control.to_str().unwrap().to_owned();
-    let mut parity = Parity::new("airkctl_tools_shell_matches_airk");
-    parity.substitute_path(&arguments_file, "<ARGS_FILE>");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    for (name, old, new) in [
+    let ControlResponse::ToolsCatalog { document } = current_native(
+        &service.control,
+        ControlMethod::ToolsCatalog {
+            detail: ToolsCatalogDetail::List { schemas: true },
+            combined: None,
+            connection_id: None,
+        },
+    )?
+    else {
+        panic!("native tool catalog refused");
+    };
+    let native_catalog: Value = serde_json::from_str(&document)?;
+    let search = native_catalog["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "airk_search" || tool["name"] == "search")
+        .unwrap();
+    for (name, native, flags) in [
         (
             "project",
-            common::legacy_airk_command(root.path(), state.path(), "ctl-shell"),
-            vec![
-                "--service-runtime-dir",
-                &control,
-                "--service-project",
-                &binding,
-            ],
+            ToolSelection::Project {
+                binding: service.project.binding,
+            },
+            vec!["--service-project", binding.as_str()],
         ),
         (
             "catalog",
-            common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-shell"),
-            vec![
-                "--service-runtime-dir",
-                &control,
-                "--catalog-session",
-                &catalog,
-            ],
+            ToolSelection::Catalog { request: selection },
+            vec!["--catalog-session", catalog.as_str()],
         ),
     ] {
-        let recorded = parity.old(name, || airk_shell(old));
-        // The documented program rename (`airk tools …` → `airkctl tools …`),
-        // as the golden comparison applies it.
-        let (succeeded, old_stdout, old_stderr) = (
-            recorded.success,
-            recorded.stdout.replace("airk tools ", "airkctl tools "),
-            recorded
-                .stderr
-                .replace("'airk tools list'", "'airkctl tools list'"),
-        );
-        let (code, new_stdout, new_stderr) = airkctl_shell(&new);
-        let (new_stdout, new_stderr) =
-            (parity.canonical(&new_stdout), parity.canonical(&new_stderr));
-        assert!(succeeded, "{name}: {old_stderr}");
-        assert_eq!(code, 0, "{name}: {new_stderr}");
+        let started = current_unix_ms()?;
+        let mut expected = Vec::new();
+        let mut errors = String::new();
+        for (tool, args) in &calls {
+            match current_tool(&service.control, native.clone(), tool, args.clone())?.0 {
+                ControlResponse::ToolResult { result } => {
+                    let failed = result["isError"] == true;
+                    for content in result["content"].as_array().unwrap() {
+                        let shown = if content["type"] == "text" {
+                            serde_json::from_str::<Value>(content["text"].as_str().unwrap())
+                                .unwrap_or_else(|_| content["text"].clone())
+                        } else {
+                            content.clone()
+                        };
+                        expected.push((failed, shown));
+                    }
+                    if failed {
+                        errors.push_str("Error: MCP tool failed; see the result above\n");
+                    }
+                }
+                ControlResponse::ToolCallFailed { message } => {
+                    errors.push_str(&format!("Error: {message}\n"))
+                }
+                other => errors.push_str(&format!(
+                    "Error: {}\n",
+                    airkctl::service::refusal(&other).message
+                )),
+            }
+        }
+        errors.push_str("Error: MCP arguments must be a JSON object\nError: Unknown command. Type help for instructions.\n");
+        let actual = common::ctl::Ctl::new()
+            .arg("--service-runtime-dir")
+            .arg(&service.control)
+            .args(&flags)
+            .args(["tools", "shell"])
+            .env("AIRK_MCP_RESPONSE_MODE", "full")
+            .input(script.as_bytes().to_vec())
+            .output()?;
         assert!(
-            old_stdout.starts_with("AIRK Tools\n"),
-            "{name}: {old_stdout}"
+            actual.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&actual.stderr)
         );
         assert_eq!(
-            stable_transcript(&new_stdout),
-            stable_transcript(&old_stdout),
-            "{name}"
+            String::from_utf8(actual.stderr)?,
+            errors,
+            "{name}: complete shell failure stream"
         );
-        assert_eq!(new_stderr, old_stderr, "{name}");
+        let finished = current_unix_ms()?;
+        let expected = expected
+            .into_iter()
+            .map(|(failed, body)| Ok((failed, current_observation(body, started, finished)?)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let stdout = String::from_utf8(actual.stdout)?;
+        let banner = format!(
+            "AIRK Tools\nCollection: {:?}\nWorkspace: {:?}\nStorage: {:?}\n\n",
+            service.project.collection,
+            Path::new(&service.project.root),
+            Path::new(&service.project.data_root)
+        );
+        assert!(stdout.starts_with(&banner), "{name}: exact resolved banner");
+        for tool in native_catalog["tools"].as_array().unwrap() {
+            assert!(
+                stdout.contains(&format!(
+                    "{}\n  {}\n",
+                    tool["name"].as_str().unwrap(),
+                    tool["description"].as_str().unwrap_or_default()
+                )),
+                "{name}: omitted catalog row"
+            );
+        }
         assert!(
-            new_stderr.contains("Error: Unknown command. Type help for instructions."),
-            "{name}: {new_stderr}"
+            stdout.contains(&serde_json::to_string_pretty(&search["inputSchema"])?),
+            "{name}: complete native search input schema"
+        );
+        let mut observed = Vec::new();
+        for segment in stdout.split("airk> ").skip(1) {
+            let (failed, body) = if let Some(body) = segment.strip_prefix("Result:\n") {
+                (false, body)
+            } else if let Some(body) = segment.strip_prefix("MCP error:\n") {
+                (true, body)
+            } else {
+                continue;
+            };
+            let mut values = serde_json::Deserializer::from_str(body).into_iter::<Value>();
+            observed.push((
+                failed,
+                current_observation(
+                    values.next().expect("complete shell JSON body")?,
+                    started,
+                    finished,
+                )?,
+            ));
+            assert!(
+                values.next().is_none(),
+                "{name}: shell omitted or added native content"
+            );
+        }
+        assert_eq!(
+            observed, expected,
+            "{name}: every complete native result body, stable digest bytes retained"
+        );
+        assert_eq!(
+            stdout.matches("airk> ").count(),
+            10,
+            "exit must leave the trailing call unread"
         );
     }
-    parity.finish();
     Ok(())
 }
 
@@ -1932,171 +2347,159 @@ fn regex_free_configuration_nonce(stderr: &str) -> Vec<String> {
 /// documents compare after `stable`; text reports compare as printed.
 #[test]
 fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse, UsageDocumentRead};
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-usage");
-    // Readiness fields move while the first index settles; compare after it.
-    service.settle_reviewed_index(
+    current_quiescent(
+        &service,
         root.path(),
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
+    // Freeze a real empty usage population instead of hiding measured fields.
+    for line in [
+        vec!["usage", "configure", "--mode", "disabled"],
+        vec!["usage", "clear"],
+    ] {
+        let output = common::command(root.path(), state.path(), "ctl-usage")
+            .args(line)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
     else {
-        panic!("the reviewed fixture selects one scoped index");
+        panic!("reviewed scoped fixture");
     };
     let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
-    let control = service.control.to_str().unwrap().to_owned();
-    let ctl = |selection: &[&str], arguments: &[&str]| -> (u8, String, String) {
-        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        let mut io = airkctl::cli::Io {
-            read_attempt: None,
-            stdin: &mut std::io::empty(),
-            stdout: &mut stdout,
-            stderr: &mut stderr,
-            full_responses: true,
-            window: None,
-        };
-        let line = std::iter::once("airkctl")
-            .chain(selection.iter().copied())
-            .chain(arguments.iter().copied())
-            .map(std::ffi::OsString::from)
-            .collect();
-        let code = airkctl::cli::run(line, &mut io);
+    let reads = [
         (
-            code,
-            String::from_utf8(stdout).unwrap(),
-            String::from_utf8(stderr).unwrap(),
-        )
-    };
-    let comparable_text = |text: &str| match serde_json::from_str::<Value>(text) {
-        Ok(mut value) => {
-            stable(&mut value);
-            value.to_string()
-        }
-        Err(_) => text.to_owned(),
-    };
-    let reads: Vec<Vec<&str>> = vec![
-        vec!["settings", "roots"],
-        vec!["settings", "vector_status"],
-        vec!["usage", "policy"],
-        vec!["usage", "report"],
-        vec!["usage", "report", "--format", "markdown"],
-        vec!["usage", "report", "--days", "0"],
+            vec!["settings", "roots"],
+            json!({"settings":{"view":"roots"}}),
+        ),
+        (
+            vec!["settings", "vector_status"],
+            json!({"settings":{"view":"vector_status"}}),
+        ),
+        (vec!["usage", "policy"], json!("policy")),
+        (
+            vec!["usage", "report"],
+            json!({"report":{"days":7,"format":"json"}}),
+        ),
+        (
+            vec!["usage", "report", "--format", "markdown"],
+            json!({"report":{"days":7,"format":"markdown"}}),
+        ),
+        (
+            vec!["usage", "report", "--days", "0"],
+            json!({"report":{"days":0,"format":"json"}}),
+        ),
     ];
-    let mut parity = Parity::new("airkctl_usage_documents_match_airk");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    // Measured resource figures (timings, memory, OS counters) vary per run.
-    parity.mask_json_fields(&[
-        "*_us",
-        "peak_rss_bytes",
-        "value",
-        "*disk_growth_bytes",
-        "returned_utf8_bytes",
-        "measured_disk_bytes",
-    ]);
-    parity.mask_text("measured_usage_text", mask_measured_usage_text);
-    for read in &reads {
-        for (name, old, selection) in [
-            (
-                "project",
-                common::legacy_airk_command(root.path(), state.path(), "ctl-usage"),
-                vec![
-                    "--service-runtime-dir",
-                    control.as_str(),
-                    "--service-project",
-                    binding.as_str(),
-                ],
-            ),
-            (
-                "catalog",
-                common::legacy_airk_scoped_command(root.path(), state.path(), "ctl-usage"),
-                vec![
-                    "--service-runtime-dir",
-                    control.as_str(),
-                    "--catalog-session",
-                    catalog.as_str(),
-                ],
-            ),
-        ] {
-            let mut old = old;
-            let before = parity.old(&format!("{name} {}", read.join(" ")), || {
-                old.args(read).output().unwrap()
-            });
-            let (code, stdout, stderr) = ctl(&selection, read);
-            assert_eq!(code == 0, before.success, "{name} {read:?}: {stderr}");
-            assert_eq!(
-                comparable_text(&parity.canonical(&stdout)),
-                comparable_text(&before.stdout),
-                "{name} {read:?}"
-            );
-            if code != 0 {
-                assert_eq!(
-                    parity
-                        .canonical(&stderr)
-                        .lines()
-                        .last()
-                        .unwrap_or_default()
-                        .strip_prefix("airkctl: "),
-                    before
-                        .stderr
-                        .lines()
-                        .last()
-                        .unwrap_or_default()
-                        .strip_prefix("Error: "),
-                    "{name} {read:?}"
-                );
+    let mut compared = 0;
+    for (request, flags) in [
+        (None, vec!["--service-project", binding.as_str()]),
+        (Some(selection), vec!["--catalog-session", catalog.as_str()]),
+    ] {
+        for (line, read) in &reads {
+            let read: UsageDocumentRead = serde_json::from_value(read.clone())?;
+            let expected = current_native(
+                &service.control,
+                ControlMethod::UsageDocument {
+                    project: service.project.binding,
+                    catalog: request.clone(),
+                    read,
+                },
+            )?;
+            let actual = current_ctl(&service.control, &flags, line)?;
+            match expected {
+                ControlResponse::UsageDocument { document } => {
+                    assert!(
+                        actual.status.success(),
+                        "{line:?}: {}",
+                        String::from_utf8_lossy(&actual.stderr)
+                    );
+                    assert!(actual.stderr.is_empty());
+                    if let Some(text) = document.as_str() {
+                        assert_eq!(
+                            std::str::from_utf8(&actual.stdout)?,
+                            text,
+                            "complete native text report"
+                        );
+                    } else {
+                        assert_eq!(
+                            comparable(serde_json::from_slice(&actual.stdout)?),
+                            comparable(document),
+                            "complete native usage document; no metric masking"
+                        );
+                    }
+                }
+                ControlResponse::UsageReadFailed { message, native } => {
+                    assert_eq!(actual.status.code(), Some(1));
+                    if let Some(native) = native {
+                        assert_eq!(
+                            comparable(serde_json::from_slice(&actual.stdout)?),
+                            comparable(native)
+                        );
+                    } else {
+                        assert!(actual.stdout.is_empty());
+                    }
+                    let error: airkctl::contract::ErrorLine =
+                        serde_json::from_slice(&actual.stderr)?;
+                    assert_eq!(error.message, message);
+                    assert_eq!(error.code, "operation_failed");
+                }
+                other => anyhow::bail!(
+                    "unexpected native usage response: {}",
+                    serde_json::to_string(&other)?
+                ),
             }
+            compared += 1;
         }
     }
-    parity.finish();
+    assert_eq!(compared, 12, "complete usage selections/input catalog");
     Ok(())
 }
 
-/// `model-catalog` (split step 3c.5d): `airkctl` prints the report `airk`
-/// printed, from the service (M10).
+/// The complete current service model catalog reaches the CLI unchanged.
+/// The U95 catalog remains historical evidence for its original model/runtime.
 #[test]
 fn airkctl_model_catalog_matches_airk() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "ctl-models");
-    let control = service.control.to_str().unwrap().to_owned();
-    let mut parity = Parity::new("airkctl_model_catalog_matches_airk");
-    parity.substitute_path(root.path(), "<ROOT>");
-    parity.substitute_path(state.path(), "<STATE>");
-    parity.service(&service);
-    let before = parity.old("model-catalog", || {
-        Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("model-catalog")
-            .output()
-            .unwrap()
-    });
-    assert!(before.success);
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let mut io = airkctl::cli::Io {
-        read_attempt: None,
-        stdin: &mut std::io::empty(),
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-        full_responses: false,
-        window: None,
+    let airk_core::service::ControlResponse::ModelCatalog { document } =
+        service.request(airk_core::service::ControlMethod::ModelCatalog {})
+    else {
+        anyhow::bail!("missing current native model catalog");
     };
-    let line = [
-        "airkctl",
-        "--service-runtime-dir",
-        &control,
-        "model-catalog",
-    ]
-    .map(std::ffi::OsString::from)
-    .to_vec();
-    let code = airkctl::cli::run(line, &mut io);
-    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&stderr));
-    assert_eq!(parity.canonical(&String::from_utf8(stdout)?), before.stdout);
-    parity.finish();
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("model-catalog")
+        .output()?;
+    assert_eq!(success(output), document);
+    // Never recapture an old product catalog to make a current comparison pass.
+    let historical: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/split/parity/airkctl_model_catalog_matches_airk.json"
+    ))?;
+    let historical: Value = serde_json::from_str(
+        historical["cases"]["model-catalog"]["stdout"]
+            .as_str()
+            .unwrap(),
+    )?;
+    assert_eq!(
+        historical["catalog"]["default_profile"],
+        "minilm-l6-v2-u8-v1"
+    );
+    assert_eq!(
+        historical["capabilities"]["runtime"],
+        "onnxruntime-cpu/1.22.1/airk-int8-b1-1"
+    );
     Ok(())
 }
 
@@ -2266,247 +2669,221 @@ fn airkctl_explorer_matches_airk() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `agents endpoint`, `agents info` and `agents revoke` (split step 3e.2):
-/// `airkctl` prints what `airk runtime http-endpoint`, `http-connection-info`
-/// and `http-revoke` printed for the same installed service and connection.
+/// Modern endpoint output carries the entire checked native descriptor and
+/// all three canonical manual entries, outside the persisted descriptor.
 #[test]
 fn airkctl_agent_connections_match_airk() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse};
     let source = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     let service = common::Service::reviewed(source.path(), data.path(), "ctl-agents");
-    let control = service.control.to_str().unwrap().to_owned();
-    let inputs = tempfile::tempdir()?;
-    let private = inputs.path().join("private");
-    airk_cli::local_ipc::prepare_root(&private)?;
-    let selection = private.join("selection.json");
-    fs::write(&selection, serde_json::to_vec(&service.http_selection())?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&selection, fs::Permissions::from_mode(0o600))?;
-    }
-    let runtime = |role: &str, extra: &[&str]| -> anyhow::Result<std::process::Output> {
+    let ControlResponse::AgentEndpoint { endpoint, manual } =
+        service.request(ControlMethod::AgentEndpoint {})
+    else {
+        anyhow::bail!("missing current native agent endpoint");
+    };
+    endpoint.validate()?;
+    assert_eq!(
+        manual,
+        airk_core::agent_manual::project_entries(endpoint.url)
+    );
+    let mut expected = serde_json::to_value(endpoint)?;
+    expected["manual"] = serde_json::to_value(manual)?;
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .args(["agents", "endpoint"])
+        .output()?;
+    assert_eq!(success(output), expected);
+    Ok(())
+}
+
+/// Explicit pre-U110 compatibility: references, offline credential helper,
+/// ownership and revoke still agree with the current native legacy handlers.
+/// U95 captures retain their original bytes and are never current expectations.
+#[test]
+fn legacy_agent_credentials_keep_complete_current_native_results() -> anyhow::Result<()> {
+    use airk_core::service::{ControlMethod, ControlResponse};
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let service = common::Service::reviewed(source.path(), data.path(), "ctl-legacy-agents");
+    let runtime = |role: &str, extra: &[&str]| -> anyhow::Result<Output> {
         Ok(service
-            .installed_command(source.path(), data.path(), "ctl-agents")
+            .installed_command(source.path(), data.path(), "ctl-legacy-agents")
             .args(["runtime", role, "--install-dir"])
             .arg(service.install_dir())
             .args(extra)
             .output()?)
     };
-    let ctl = |arguments: &[&str]| -> (u8, String, String) {
-        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        let mut io = airkctl::cli::Io {
-            read_attempt: None,
-            stdin: &mut std::io::empty(),
-            stdout: &mut stdout,
-            stderr: &mut stderr,
-            full_responses: false,
-            window: None,
-        };
-        let line = [
-            "airkctl",
-            "--service-runtime-dir",
-            control.as_str(),
-            "agents",
-        ]
-        .into_iter()
-        .chain(arguments.iter().copied())
-        .map(std::ffi::OsString::from)
-        .collect();
-        let code = airkctl::cli::run(line, &mut io);
-        (
-            code,
-            String::from_utf8(stdout).unwrap(),
-            String::from_utf8(stderr).unwrap(),
-        )
+    let ctl = |arguments: &[&str]| -> std::io::Result<Output> {
+        common::ctl::Ctl::new()
+            .arg("--service-runtime-dir")
+            .arg(&service.control)
+            .arg("agents")
+            .args(arguments)
+            .output()
     };
-    let same =
-        |parity: &Parity, name: &str, old: common::parity::Recorded, new: (u8, String, String)| {
-            assert_eq!(new.0 == 0, old.success, "{name}: {}", new.2);
-            assert_eq!(parity.canonical(&new.1), old.stdout, "{name}");
-            if new.0 != 0 {
-                assert_eq!(
-                    parity
-                        .canonical(&new.2)
-                        .lines()
-                        .last()
-                        .unwrap_or_default()
-                        .strip_prefix("airkctl: "),
-                    old.stderr
-                        .lines()
-                        .last()
-                        .unwrap_or_default()
-                        .strip_prefix("Error: "),
-                    "{name}"
-                );
-            }
-        };
+    let same = |native: Output, cli: Output| -> anyhow::Result<()> {
+        assert_eq!(
+            cli.status.success(),
+            native.status.success(),
+            "native={} cli={}",
+            String::from_utf8_lossy(&native.stderr),
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        if native.status.success() {
+            assert!(native.stderr.is_empty() && cli.stderr.is_empty());
+            assert_eq!(
+                serde_json::from_slice::<Value>(&cli.stdout)?,
+                serde_json::from_slice::<Value>(&native.stdout)?
+            );
+        } else {
+            assert_eq!(cli.stdout, native.stdout);
+            let native = String::from_utf8(native.stderr)?;
+            let cli = String::from_utf8(cli.stderr)?;
+            assert_eq!(
+                cli.trim().strip_prefix("airkctl: "),
+                native.trim().strip_prefix("Error: ")
+            );
+        }
+        Ok(())
+    };
     let id = airk_kernel::service_broker::new_instance_id()?.to_string();
     let unknown = airk_kernel::service_broker::new_instance_id()?.to_string();
-    let mut parity = Parity::new("airkctl_agent_connections_match_airk");
-    parity.substitute(&id, "<CONNECTION>");
-    parity.substitute(&unknown, "<UNKNOWN_CONNECTION>");
-    parity.substitute_path(source.path(), "<SOURCE>");
-    parity.substitute_path(data.path(), "<DATA>");
-    parity.substitute_path(inputs.path(), "<INPUTS>");
-    parity.service(&service);
-    parity.mask_json_fields(CLOCK_FIELDS);
-    // The bearer token is a secret and differs per run; `user` names the
-    // account that captured the fixture.
-    parity.mask_json_fields(&["Authorization", "user"]);
-    // The endpoint's identities and loopback URL are this run's.
-    let endpoint = ctl(&["endpoint"]);
-    if let Ok(value) = serde_json::from_str::<Value>(&endpoint.1) {
-        parity.substitute_identifiers(&value, "ENDPOINT");
-    }
-    let old = parity.old("endpoint", || runtime("http-endpoint", &[]).unwrap());
-    same(&parity, "endpoint", old, endpoint);
-    let old = parity.old("info of an unknown connection", || {
-        runtime("http-connection-info", &["--connection-id", &unknown]).unwrap()
-    });
     same(
-        &parity,
-        "info of an unknown connection",
-        old,
-        ctl(&["info", "--connection-id", &unknown]),
-    );
-    let enrolled = parity.old("enroll", || {
-        runtime(
-            "http-connection",
-            &[
-                "--selection-file",
-                selection.to_str().unwrap(),
-                "--connection-id",
-                &id,
-                "--client",
-                "codex",
-            ],
-        )
-        .unwrap()
-    });
-    assert!(enrolled.success, "{}", enrolled.stderr);
-    if !parity.capturing() {
-        // The recorded run enrolled through `airk runtime http-connection`;
-        // this run makes the same enrollment through its control method.
-        enroll_codex_connection(&service, &id)?;
-    }
-    let old = parity.old("info", || {
-        runtime("http-connection-info", &["--connection-id", &id]).unwrap()
-    });
-    same(&parity, "info", old, ctl(&["info", "--connection-id", &id]));
-    let (code, stdout, stderr) = ctl(&["info", "--connection-id", &id]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(
-        serde_json::from_str::<Value>(&stdout)?
-            .get("token")
-            .is_none(),
-        "{stdout}"
-    );
-    // The offline header helper (3e.3): same header, and the same refusals
-    // for an unknown connection and, below, a revoked one.
-    let credential = |parity: &mut Parity, case: &str, id: &str| -> anyhow::Result<_> {
-        Ok((
-            parity.old(case, || {
-                runtime(
-                    "http-credential",
-                    &["--connection-id", id, "--format", "header-json"],
-                )
-                .unwrap()
-            }),
-            ctl(&[
-                "credential",
-                "--connection-id",
-                id,
-                "--format",
-                "header-json",
-            ]),
-        ))
-    };
-    let (old, new) = credential(&mut parity, "credential", &id)?;
-    assert!(
-        new.1.contains("\"Authorization\":\"Bearer airk1."),
-        "{}",
-        new.2
-    );
-    same(&parity, "credential", old, new);
-    let (old, new) = credential(&mut parity, "credential of an unknown connection", &unknown)?;
-    same(&parity, "credential of an unknown connection", old, new);
-    // M16 (3e.4): `agents list --connection-id` answers what
-    // `lookup-http-connection` answers, without its selected-runtime field.
-    let airk_core::service::ControlResponse::Health {
-        observation: health,
-    } = service.request(airk_core::service::ControlMethod::Health)
+        runtime("http-connection-info", &["--connection-id", &unknown])?,
+        ctl(&["info", "--connection-id", &unknown])?,
+    )?;
+    enroll_codex_connection(&service, &id)?;
+    let ControlResponse::AgentConnectionInfo { connection } =
+        service.request(ControlMethod::AgentConnectionInfo {
+            connection_id: id.parse()?,
+        })
     else {
+        anyhow::bail!("missing enrolled legacy connection");
+    };
+    connection.validate()?;
+    assert_eq!(
+        success(ctl(&["info", "--connection-id", &id])?),
+        serde_json::to_value(&connection)?
+    );
+    same(
+        runtime("http-connection-info", &["--connection-id", &id])?,
+        ctl(&["info", "--connection-id", &id])?,
+    )?;
+    let header = success(ctl(&[
+        "credential",
+        "--connection-id",
+        &id,
+        "--format",
+        "header-json",
+    ])?);
+    assert_eq!(header.as_object().unwrap().len(), 1);
+    assert!(
+        header["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("Bearer airk1.")
+    );
+    same(
+        runtime(
+            "http-credential",
+            &["--connection-id", &id, "--format", "header-json"],
+        )?,
+        ctl(&[
+            "credential",
+            "--connection-id",
+            &id,
+            "--format",
+            "header-json",
+        ])?,
+    )?;
+    same(
+        runtime(
+            "http-credential",
+            &["--connection-id", &unknown, "--format", "header-json"],
+        )?,
+        ctl(&[
+            "credential",
+            "--connection-id",
+            &unknown,
+            "--format",
+            "header-json",
+        ])?,
+    )?;
+    let ControlResponse::Health { observation } = service.request(ControlMethod::Health) else {
         anyhow::bail!("missing service health");
     };
-    let active = health.runtime_sha256.clone().unwrap_or_default();
-    parity.substitute(&active, "<ACTIVE>");
-    for (name, target) in [("owned", id.as_str()), ("not owned", unknown.as_str())] {
-        let old = parity.old(&format!("lookup {name}"), || {
-            runtime(
-                "lookup-http-connection",
-                &["--expected-active", &active, "--connection-id", target],
-            )
-            .unwrap()
-        });
-        assert!(old.success, "{}", old.stderr);
-        let mut old: Value = serde_json::from_str(&old.stdout)?;
-        // The run's own active runtime digest, in canonical space.
-        assert_eq!(old["active"], parity.canonical(&active).as_str());
-        old.as_object_mut().unwrap().remove("active");
-        let (code, new, stderr) = ctl(&["list", "--connection-id", target]);
-        assert_eq!(code, 0, "{name}: {stderr}");
-        assert_eq!(
-            serde_json::from_str::<Value>(&parity.canonical(&new))?,
-            old,
-            "{name}"
-        );
+    let active = observation.runtime_sha256.unwrap();
+    for target in [&id, &unknown] {
+        let ControlResponse::AgentConnectionOwnership { result } =
+            service.request(ControlMethod::AgentConnectionOwnership {
+                connection_id: target.parse()?,
+            })
+        else {
+            anyhow::bail!("missing legacy ownership");
+        };
+        let cli = success(ctl(&["list", "--connection-id", target])?);
+        assert_eq!(cli, result);
+        let mut native = success(runtime(
+            "lookup-http-connection",
+            &["--expected-active", &active, "--connection-id", target],
+        )?);
+        // The reviewed runtime wrapper alone carries its selected runtime.
+        assert_eq!(native["active"], active);
+        native.as_object_mut().unwrap().remove("active");
+        assert_eq!(cli, native);
     }
-    // V1 (3e.9): the service verifies its own MCP endpoint with the stored
-    // credential, and no token reaches the output.
-    let (code, verified, stderr) = ctl(&["verify", "--connection-id", &id]);
-    assert_eq!(code, 0, "{stderr}");
-    let verified: Value = serde_json::from_str(&verified)?;
-    assert_eq!(verified["verified"], true, "{verified}");
+    let ControlResponse::AgentConnectionVerified { result } =
+        service.request(ControlMethod::AgentConnectionVerify {
+            connection_id: id.parse()?,
+        })
+    else {
+        anyhow::bail!("legacy connection did not verify");
+    };
+    let verified = success(ctl(&["verify", "--connection-id", &id])?);
+    assert_eq!(verified, result);
+    assert_eq!(verified["verified"], true);
     assert_eq!(verified["http_status"], 200);
-    assert!(!verified.to_string().contains("airk1."), "{verified}");
-    // Revoke through airkctl, then airk sees the same revoked connection.
-    let (code, revoked, stderr) = ctl(&["revoke", "--connection-id", &id]);
-    assert_eq!(code, 0, "{stderr}");
-    let revoked: Value = serde_json::from_str(&revoked)?;
-    assert_eq!(revoked["status"], "http_revoked");
-    assert_eq!(revoked["connection_id"], id);
-    let old = parity.old("info after revoke", || {
-        runtime("http-connection-info", &["--connection-id", &id]).unwrap()
-    });
-    same(
-        &parity,
-        "info after revoke",
-        old,
-        ctl(&["info", "--connection-id", &id]),
-    );
-    let old = parity.old("revoke again", || {
-        runtime("http-revoke", &["--connection-id", &id]).unwrap()
-    });
-    same(
-        &parity,
-        "revoke again",
-        old,
-        ctl(&["revoke", "--connection-id", &id]),
-    );
-    // A revoked connection is owned-but-unavailable and does not verify.
-    let (code, after, stderr) = ctl(&["list", "--connection-id", &id]);
-    assert_eq!(code, 0, "{stderr}");
+    assert!(!verified.to_string().contains("airk1."));
+    let revoked = success(ctl(&["revoke", "--connection-id", &id])?);
     assert_eq!(
-        serde_json::from_str::<Value>(&after)?["code"],
-        "owned_connection_revoked"
+        revoked,
+        serde_json::to_value(ControlResponse::HttpRevoked {
+            connection_id: id.parse()?
+        })?
     );
-    let (code, _, _) = ctl(&["verify", "--connection-id", &id]);
-    assert_ne!(code, 0);
-    let (old, new) = credential(&mut parity, "credential after revoke", &id)?;
-    assert_ne!(new.0, 0);
-    same(&parity, "credential after revoke", old, new);
-    parity.finish();
+    same(
+        runtime("http-connection-info", &["--connection-id", &id])?,
+        ctl(&["info", "--connection-id", &id])?,
+    )?;
+    same(
+        runtime("http-revoke", &["--connection-id", &id])?,
+        ctl(&["revoke", "--connection-id", &id])?,
+    )?;
+    let ControlResponse::AgentConnectionOwnership { result } =
+        service.request(ControlMethod::AgentConnectionOwnership {
+            connection_id: id.parse()?,
+        })
+    else {
+        anyhow::bail!("missing revoked legacy ownership");
+    };
+    assert_eq!(success(ctl(&["list", "--connection-id", &id])?), result);
+    assert_eq!(result["code"], "owned_connection_revoked");
+    assert!(!ctl(&["verify", "--connection-id", &id])?.status.success());
+    same(
+        runtime(
+            "http-credential",
+            &["--connection-id", &id, "--format", "header-json"],
+        )?,
+        ctl(&[
+            "credential",
+            "--connection-id",
+            &id,
+            "--format",
+            "header-json",
+        ])?,
+    )?;
     Ok(())
 }
 
@@ -2639,160 +3016,321 @@ fn airkctl_trust_and_issuer_rotation_match_airk() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `agents connect/list/repair/remove` (split 3e.6–3e.8) on a live service:
-/// enroll a reviewed selection, write Claude Code and Codex project entries
-/// naming the U92 helper, classify them, repair a missing helper and remove
-/// them, keeping the other server.
+/// Current URL-only configuration on the real service, including all three
+/// native manual entries, retained repair/remove and refused legacy sources.
 #[test]
 fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Result<()> {
+    use airk_core::agent_manual::{ManualClient, ManualScope};
+    use airk_process::bounded_command::{Invocation, execute_with_timeout};
+    use std::time::Duration;
     let source = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     let service = common::Service::reviewed(source.path(), data.path(), "ctl-agentcfg");
-    let control = service.control.to_str().unwrap().to_owned();
     let inputs = tempfile::tempdir()?;
-    let private = inputs.path().join("private");
-    airk_cli::local_ipc::prepare_root(&private)?;
-    let selection = private.join("selection.json");
-    fs::write(&selection, serde_json::to_vec(&service.http_selection())?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&selection, fs::Permissions::from_mode(0o600))?;
+    let project = inputs.path().canonicalize()?.join("private");
+    airk_cli::local_ipc::prepare_root(&project)?;
+    let project = std::path::PathBuf::from(
+        project
+            .to_str()
+            .unwrap()
+            .strip_prefix(r"\\?\")
+            .unwrap_or(project.to_str().unwrap()),
+    );
+    // Eligibility is actual isolated Git/npm configuration, never an override
+    // of the user's environment or the production whole-file retention fence.
+    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|directory| directory.join(if cfg!(windows) { "git.exe" } else { "git" }))
+        .find(|candidate| candidate.is_absolute() && candidate.is_file())
+        .ok_or_else(|| anyhow::anyhow!("Git is required for the retained-edit fixture"))?
+        .canonicalize()?;
+    let git_run = |arguments: &[&str]| -> anyhow::Result<()> {
+        let mut args = vec![
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            project.to_str().unwrap(),
+        ];
+        args.extend_from_slice(arguments);
+        let output = execute_with_timeout(&Invocation::new(&git, &args), Duration::from_secs(5))?;
+        anyhow::ensure!(output.success, "fixture Git setup failed: {}", output.text);
+        Ok(())
+    };
+    git_run(&["init", "--quiet", "--template="])?;
+    let excludes = project.join("empty-excludes");
+    fs::write(&excludes, b"")?;
+    git_run(&["config", "core.excludesFile", excludes.to_str().unwrap()])?;
+    fs::write(project.join(".gitignore"), b".airk/\n")?;
+    fs::write(project.join("package.json"), br#"{"name":"airk-agent-integration-fixture","version":"0.0.0","packageManager":"npm@11.12.1","files":["payload"],"main":"payload/main.js"}"#)?;
+    fs::create_dir(project.join("payload"))?;
+    fs::write(project.join("payload/main.js"), b"fixture\n")?;
+    for directory in [".codex", ".vscode"] {
+        airk_cli::local_ipc::prepare_root(&project.join(directory))?;
     }
-    let project = tempfile::tempdir()?;
-    let project = project.path().canonicalize()?;
-    fs::write(
-        project.join(".mcp.json"),
-        "{\n  \"mcpServers\": {\n    \"other\": {\"command\": \"node\", \"args\": [\"x\"]}\n  }\n}\n",
-    )?;
-    let tools = inputs.path().canonicalize()?.join("bin");
-    fs::create_dir(&tools)?;
-    let name = if cfg!(windows) {
-        "airkctl.exe"
-    } else {
-        "airkctl"
-    };
-    let helper = tools.join(name);
-    fs::write(&helper, b"fictional airkctl")?;
-    let ctl = |arguments: &[&str]| -> (u8, Value, String) {
-        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        let mut io = airkctl::cli::Io {
-            read_attempt: None,
-            stdin: &mut std::io::empty(),
-            stdout: &mut stdout,
-            stderr: &mut stderr,
-            full_responses: false,
-            window: None,
-        };
-        let line = [
-            "airkctl",
-            "--service-runtime-dir",
-            control.as_str(),
-            "agents",
-        ]
-        .into_iter()
-        .chain(arguments.iter().copied())
-        .map(std::ffi::OsString::from)
-        .collect();
-        let code = airkctl::cli::run(line, &mut io);
-        let stdout = String::from_utf8(stdout).unwrap();
+    let originals = [
         (
-            code,
-            serde_json::from_str(&stdout).unwrap_or(Value::Null),
-            String::from_utf8(stderr).unwrap(),
-        )
+            ManualClient::Claude,
+            "claude",
+            "claude",
+            ".mcp.json",
+            "{\n  \"mcpServers\": {\n    \"other\": {\"command\": \"node\", \"args\": [\"x\"]}\n  }\n}\n",
+        ),
+        (
+            ManualClient::Codex,
+            "codex",
+            "codex",
+            ".codex/config.toml",
+            "# Preserve the other server.\n[mcp_servers.other]\ncommand = \"node\"\nargs = [\"x\"]\n",
+        ),
+        (
+            ManualClient::Vscode,
+            "vscode",
+            "copilot",
+            ".vscode/mcp.json",
+            "{\n  \"servers\": {\n    \"other\": {\"command\": \"node\", \"args\": [\"x\"]}\n  }\n}\n",
+        ),
+    ];
+    // Native targets join each path component; preserve the host's spelling
+    // in the complete manual DTO as well as the actual file operations.
+    let config_file = |relative: &str| {
+        Path::new(relative)
+            .components()
+            .fold(project.clone(), |path, part| path.join(part.as_os_str()))
     };
-    let id = airk_kernel::service_broker::new_instance_id()?.to_string();
+    for (_, _, _, relative, original) in originals {
+        fs::write(config_file(relative), original)?;
+    }
+    let ctl = |arguments: &[&str]| -> std::io::Result<Output> {
+        common::ctl::Ctl::new()
+            .args(["--output", "json", "--service-runtime-dir"])
+            .arg(&service.control)
+            .arg("agents")
+            .args(arguments)
+            .output()
+    };
+    let endpoint = success(ctl(&["endpoint"])?);
+    let url = endpoint["url"].as_str().unwrap();
     let folder = project.to_str().unwrap();
-    let (code, connected, stderr) = ctl(&[
-        "connect",
+    let mut connected_files = Vec::new();
+    for (client, name, report_name, relative, original) in originals {
+        let file = config_file(relative);
+        let manual = airk_core::agent_manual::entry(
+            client,
+            ManualScope::Project,
+            file.to_str().unwrap().into(),
+            "airk",
+            url.parse()?,
+        )?;
+        let requested = success(ctl(&["manual", "--client", name, "--project", folder])?);
+        assert_eq!(requested, serde_json::to_value(&manual)?);
+        assert_eq!(
+            fs::read_to_string(&file)?,
+            original,
+            "manual must be read-only"
+        );
+        let connected = success(ctl(&["connect", "--client", name, "--project", folder])?);
+        assert_eq!(
+            connected,
+            json!({"schema":1,"client":report_name,"scope":"project", "file":file,
+            "serverKey":"airk","url":url,"changed":true,"manual":manual})
+        );
+        let text = fs::read_to_string(&file)?;
+        assert!(text.contains("other") && text.contains(url), "{text}");
+        for retired in [
+            "Authorization",
+            "headersHelper",
+            "http_headers_helper",
+            "bearer_token_env_var",
+            "agents credential",
+            "airk1.",
+        ] {
+            assert!(
+                !text.contains(retired),
+                "unexpected credential marker {retired}: {text}"
+            );
+        }
+        let unchanged = success(ctl(&["connect", "--client", name, "--project", folder])?);
+        let mut expected = connected;
+        expected["changed"] = json!(false);
+        assert_eq!(unchanged, expected);
+        assert_eq!(fs::read_to_string(&file)?, text);
+        connected_files.push((client, file, text));
+    }
+    let list = || -> anyhow::Result<Value> {
+        Ok(success(ctl(&["list", "--project", folder, "--no-user"])?))
+    };
+    let listed = list()?;
+    assert_eq!(listed["findings"], json!([]), "{listed}");
+    assert_eq!(listed["blockers"], json!([]), "{listed}");
+    let entries = listed["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3, "{listed}");
+    for entry in entries {
+        assert!(entry.get("connectionId").is_none(), "{entry}");
+        assert_eq!(entry["url"], url);
+        assert_eq!(entry["transport"], "https");
+        assert_eq!(entry["scope"], "project");
+        assert_eq!(
+            entry["status"],
+            if entry["agent"] == "copilot" {
+                json!("ok")
+            } else {
+                Value::Null
+            }
+        );
+    }
+    // Every retired source form refuses and preserves all complete files.
+    let id = "0123456789abcdef0123456789abcdef";
+    for retired in [
+        vec!["--connection-id", id],
+        vec!["--selection-file", "missing-selection.json"],
+        vec![
+            "--connection-id",
+            id,
+            "--selection-file",
+            "missing-selection.json",
+        ],
+    ] {
+        let mut arguments = vec!["connect", "--client", "claude", "--project", folder];
+        arguments.extend(retired);
+        let output = ctl(&arguments)?;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let refusal: Value = serde_json::from_slice(&output.stderr)?;
+        assert_eq!(refusal["class"], "refused");
+        assert_eq!(refusal["code"], "operation_failed");
+        assert_eq!(refusal["retryable"], false);
+        assert!(
+            refusal["message"]
+                .as_str()
+                .unwrap()
+                .contains("no longer exist"),
+            "{refusal}"
+        );
+        for (_, file, bytes) in &connected_files {
+            assert_eq!(fs::read_to_string(file)?, *bytes);
+        }
+    }
+    // Stale endpoint and credential fields are recognized; repair preserves
+    // every other field and removes the retired authority rather than re-enrolling.
+    for (client, file, text) in &connected_files {
+        let stale = if *client == ManualClient::Codex {
+            text.replace(url, "https://127.0.0.1:1/mcp").replace(
+                "[mcp_servers.airk]\n",
+                "[mcp_servers.airk]\nbearer_token_env_var = \"RETIRED_TOKEN\"\n",
+            )
+        } else {
+            let mut value: Value = serde_json::from_str(text)?;
+            let container = if *client == ManualClient::Claude {
+                "mcpServers"
+            } else {
+                "servers"
+            };
+            value[container]["airk"]["url"] = json!("https://127.0.0.1:1/mcp");
+            value[container]["airk"]["headers"]["Authorization"] =
+                json!("Bearer retired-placeholder");
+            value[container]["airk"]["headersHelper"] = json!(
+                "retired airkctl agents credential --connection-id <connection-id> --format header-json"
+            );
+            serde_json::to_string_pretty(&value)?
+        };
+        fs::write(file, stale)?;
+    }
+    let stale = list()?;
+    let findings = stale["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 3, "{stale}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding["problem"] == "https_unknown_connection"
+                && finding["detail"].as_str().unwrap().contains("U110")),
+        "{stale}"
+    );
+    let repaired = success(ctl(&["repair", "--project", folder, "--no-user"])?);
+    assert_eq!(repaired["schema"], 1);
+    assert_eq!(repaired["blockers"], json!([]));
+    let actions = repaired["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 3, "{repaired}");
+    for action in actions {
+        assert_eq!(action["changed"], true, "{action}");
+        assert_eq!(action["error"], Value::Null, "{action}");
+        assert_eq!(action["url"], url);
+        assert_eq!(action["problem"], "https_unknown_connection");
+    }
+    for (client, file, text) in &connected_files {
+        let repaired = fs::read_to_string(file)?;
+        if *client == ManualClient::Codex {
+            assert_eq!(
+                toml::from_str::<toml::Value>(&repaired)?,
+                toml::from_str::<toml::Value>(text)?
+            );
+            assert!(repaired.contains("# Preserve the other server."));
+        } else {
+            assert_eq!(
+                serde_json::from_str::<Value>(&repaired)?,
+                serde_json::from_str::<Value>(text)?
+            );
+        }
+    }
+    assert_eq!(list()?["findings"], json!([]));
+    let no_op = success(ctl(&["repair", "--project", folder, "--no-user"])?);
+    assert_eq!(no_op, json!({"schema":1,"actions":[],"blockers":[]}));
+    let removed = success(ctl(&["remove", "--project", folder, "--no-user"])?);
+    assert_eq!(removed["actions"].as_array().unwrap().len(), 3, "{removed}");
+    assert!(
+        removed["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| action["changed"] == true && action["error"].is_null()),
+        "{removed}"
+    );
+    assert_eq!(removed["blockers"], json!([]));
+    assert_eq!(list()?["entries"], json!([]));
+    for (client, _, _, relative, original) in originals {
+        let final_text = fs::read_to_string(config_file(relative))?;
+        if client == ManualClient::Codex {
+            assert_eq!(
+                toml::from_str::<toml::Value>(&final_text)?,
+                toml::from_str::<toml::Value>(original)?
+            );
+            assert!(final_text.contains("# Preserve the other server."));
+        } else {
+            assert_eq!(
+                serde_json::from_str::<Value>(&final_text)?,
+                serde_json::from_str::<Value>(original)?
+            );
+        }
+    }
+    // A normal shared/unreviewed whole-file target remains refused, with the
+    // exact complete manual entry available even though automatic editing failed.
+    let unsafe_project = inputs.path().join("unreviewed");
+    fs::create_dir(&unsafe_project)?;
+    let unsafe_file = unsafe_project.join(".mcp.json");
+    let original = b"{\"mcpServers\":{\"other\":{\"command\":\"node\"}}}\n";
+    fs::write(&unsafe_file, original)?;
+    let unsafe_folder = unsafe_project.to_str().unwrap();
+    let manual = success(ctl(&[
+        "manual",
         "--client",
         "claude",
-        "--connection-id",
-        &id,
-        "--selection-file",
-        selection.to_str().unwrap(),
         "--project",
-        folder,
-        "--airkctl",
-        helper.to_str().unwrap(),
-    ]);
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(connected["changed"], true, "{connected}");
-    let claude = fs::read_to_string(project.join(".mcp.json"))?;
-    assert!(claude.contains("\"other\""), "{claude}");
-    assert!(
-        claude.contains(&format!(
-            "agents credential --connection-id {id} --format header-json"
-        )),
-        "{claude}"
+        unsafe_folder,
+    ])?);
+    let refused = ctl(&["connect", "--client", "claude", "--project", unsafe_folder])?;
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    let refused: Value = serde_json::from_slice(&refused.stderr)?;
+    assert_eq!(refused["code"], "agent_config_edit_refused");
+    let typed: airk_core::agent_manual::AgentConfigRefusal =
+        serde_json::from_value(refused["native"].clone())?;
+    assert_eq!(
+        typed.reason,
+        airk_core::agent_manual::AgentConfigRefusalReason::AutomaticPolicy
     );
-    assert!(!claude.contains("airk1."), "{claude}");
-    let (code, _, stderr) = ctl(&[
-        "connect",
-        "--client",
-        "codex",
-        "--connection-id",
-        &id,
-        "--project",
-        folder,
-        "--airkctl",
-        helper.to_str().unwrap(),
-    ]);
-    assert_eq!(code, 0, "{stderr}");
-    let list = || ctl(&["list", "--project", folder, "--no-user"]);
-    let (code, listed, stderr) = list();
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(listed["findings"], serde_json::json!([]), "{listed}");
-    let entries = listed["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 2, "{listed}");
-    assert!(
-        entries
-            .iter()
-            .all(|entry| entry["connectionId"] == id.as_str()),
-        "{listed}"
-    );
-    // The helper disappears: both entries report it, and repair rewrites them.
-    fs::remove_file(&helper)?;
-    let (_, listed, _) = list();
-    let problems: Vec<_> = listed["findings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|finding| finding["problem"].clone())
-        .collect();
-    assert_eq!(problems, vec!["https_helper_missing"; 2], "{listed}");
-    let replacement = tools.join("new");
-    fs::create_dir(&replacement)?;
-    let moved = replacement.join(name);
-    fs::write(&moved, b"fictional airkctl")?;
-    let (code, repaired, stderr) = ctl(&[
-        "repair",
-        "--project",
-        folder,
-        "--no-user",
-        "--airkctl",
-        moved.to_str().unwrap(),
-    ]);
-    assert_eq!(code, 0, "{stderr}");
-    let actions = repaired["actions"].as_array().unwrap();
-    assert_eq!(actions.len(), 2, "{repaired}");
-    assert!(
-        actions.iter().all(|action| action["changed"] == true),
-        "{repaired}"
-    );
-    let (_, listed, _) = list();
-    assert_eq!(listed["findings"], serde_json::json!([]), "{listed}");
-    let (code, removed, stderr) = ctl(&["remove", "--project", folder, "--no-user"]);
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(removed["actions"].as_array().unwrap().len(), 2, "{removed}");
-    let claude = fs::read_to_string(project.join(".mcp.json"))?;
-    assert!(
-        claude.contains("\"other\"") && !claude.contains("agents credential"),
-        "{claude}"
-    );
-    let (_, listed, _) = list();
-    assert_eq!(listed["entries"], serde_json::json!([]), "{listed}");
+    assert_eq!(serde_json::to_value(typed.manual)?, manual);
+    assert_eq!(typed.file, manual["file"].as_str().unwrap());
+    assert_eq!(fs::read(&unsafe_file)?, original);
+    assert!(!unsafe_project.join(".airk").exists());
     Ok(())
 }
 
@@ -2879,11 +3417,38 @@ fn airkctl_explorer_get_handoff_reads_a_published_handoff() -> anyhow::Result<()
 /// the lease.
 #[test]
 fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Result<()> {
-    use std::sync::{Arc, Mutex};
-    struct Shared(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Shared {
+    use std::{
+        io::{Cursor, Read},
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    struct Input {
+        pending: Cursor<Vec<u8>>,
+        incoming: mpsc::Receiver<Vec<u8>>,
+    }
+    impl Read for Input {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            loop {
+                let count = self.pending.read(bytes)?;
+                if count != 0 {
+                    return Ok(count);
+                }
+                match self.incoming.recv() {
+                    Ok(next) => self.pending = Cursor::new(next),
+                    Err(_) => return Ok(0),
+                }
+            }
+        }
+    }
+    struct Output(mpsc::Sender<Vec<u8>>);
+    impl std::io::Write for Output {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
+            self.0
+                .send(bytes.to_vec())
+                .map_err(|_| std::io::ErrorKind::BrokenPipe)?;
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
@@ -2904,28 +3469,42 @@ fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Re
     else {
         anyhow::bail!("missing service health");
     };
-    let mut input = frame(json!({"id": "01".repeat(16), "request": {"hello": {
-        "protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}}));
-    input.extend(frame(json!({"id": "02".repeat(16), "request": {"invoke": {
-        "argv": ["projects"], "deadline_ms": 30000}}})));
-    let output = Arc::new(Mutex::new(Vec::new()));
+    let (send, incoming) = mpsc::channel();
+    let (outgoing, receive) = mpsc::channel();
     let mut options =
         airkctl::cli::session::Options::new(env!("CARGO_PKG_VERSION"), "0".repeat(64));
     options.control_root = Some(service.control.clone());
     options.label = "live window".into();
-    let code = airkctl::cli::session::serve_streams(
-        std::io::Cursor::new(input),
-        Shared(output.clone()),
-        options,
-    );
-    assert_eq!(code, 0);
-    let bytes = output.lock().unwrap().clone();
-    let mut frames = Vec::new();
-    let mut rest = &bytes[..];
-    while rest.len() >= 4 {
-        let length = u32::from_be_bytes(rest[..4].try_into()?) as usize;
-        frames.push(serde_json::from_slice::<Value>(&rest[4..4 + length])?);
-        rest = &rest[4 + length..];
+    let actor = std::thread::spawn(move || {
+        airkctl::cli::session::serve_streams(
+            Input {
+                pending: Cursor::new(Vec::new()),
+                incoming,
+            },
+            Output(outgoing),
+            options,
+        )
+    });
+    send.send(frame(json!({"id": "01".repeat(16), "request": {"hello": {
+        "protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}})))?;
+    send.send(frame(json!({"id": "02".repeat(16), "request": {"invoke": {
+        "argv": ["projects"], "deadline_ms": 30000}}})))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut bytes = Vec::new();
+    let mut parsed = 0;
+    let mut frames: Vec<Value> = Vec::new();
+    while !frames.iter().any(|frame| frame["id"] == "02".repeat(16)) {
+        bytes.extend(receive.recv_timeout(deadline.saturating_duration_since(Instant::now()))?);
+        while bytes.len() >= parsed + 4 {
+            let length = u32::from_be_bytes(bytes[parsed..parsed + 4].try_into()?) as usize;
+            if bytes.len() < parsed + 4 + length {
+                break;
+            }
+            frames.push(serde_json::from_slice(
+                &bytes[parsed + 4..parsed + 4 + length],
+            )?);
+            parsed += 4 + length;
+        }
     }
     let reply = |id: &str| {
         frames
@@ -2941,78 +3520,47 @@ fn airkctl_session_opens_and_closes_its_window_on_a_live_service() -> anyhow::Re
         observation.instance.to_string()
     );
     assert!(hello["outcome"]["window_id"].is_string(), "{hello}");
+    let airk_core::service::ControlResponse::AssistanceWindows { windows } =
+        service.request(airk_core::service::ControlMethod::AssistanceWindows {})
+    else {
+        anyhow::bail!("missing active window listing");
+    };
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert_eq!(
+        serde_json::to_value(&windows)?[0]["window_id"],
+        hello["outcome"]["window_id"]
+    );
     let invoked = reply(&"02".repeat(16));
-    let control = service.control.to_str().unwrap().to_owned();
     let one_shot = common::ctl::Ctl::new()
-        .args(["projects", "--runtime-dir", &control])
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("projects")
         .output()?;
+    assert!(
+        one_shot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&one_shot.stderr)
+    );
+    assert_eq!(invoked["outcome"]["status"], "invoked", "{invoked}");
     assert_eq!(invoked["outcome"]["exit_code"], 0, "{invoked}");
     assert_eq!(
         invoked["outcome"]["stdout"],
         String::from_utf8(one_shot.stdout)?
     );
+    assert_eq!(
+        invoked["outcome"]["stderr"],
+        String::from_utf8(one_shot.stderr)?
+    );
+    // EOF is cancellation by contract; deliver it only after the response is observed.
+    drop(send);
+    assert_eq!(actor.join().expect("session actor panicked"), 0);
+    bytes.extend(receive.try_iter().flatten());
     assert!(!String::from_utf8_lossy(&bytes).contains("lease"));
-    // End of input closed the window.
     let airk_core::service::ControlResponse::AssistanceWindows { windows } =
         service.request(airk_core::service::ControlMethod::AssistanceWindows {})
     else {
-        anyhow::bail!("missing window listing");
+        anyhow::bail!("missing final window listing");
     };
     assert!(windows.is_empty(), "{windows:?}");
     Ok(())
-}
-
-/// Usage-report text that varies per run: the root binding's digest bytes
-/// and measured figures (`…Us: n`, `…Bytes: n`, `RSS: Some(n)`), at any JSON
-/// escape level.
-fn mask_measured_usage_text(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    'scan: while !rest.is_empty() {
-        for (marker, close) in [
-            ("root_binding", Some(']')),
-            ("latency_buckets", Some(']')),
-            ("Us: ", None),
-            ("Bytes: ", None),
-            ("RSS: Some(", None),
-        ] {
-            if let Some(after) = rest.strip_prefix(marker) {
-                out.push_str(marker);
-                match close {
-                    Some(end) => {
-                        // Skip the quote/escape run and `:[`, then the array body.
-                        let open = after.find('[').map_or(0, |at| at + 1);
-                        let body = after[open..].find(end).map_or(after.len(), |at| open + at);
-                        out.push_str(&after[..open]);
-                        out.push_str("<MASKED>");
-                        rest = &after[body..];
-                    }
-                    None => {
-                        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-                        if digits > 0 {
-                            out.push_str("<MASKED>");
-                        }
-                        rest = &after[digits..];
-                    }
-                }
-                continue 'scan;
-            }
-        }
-        // A Markdown table row's last cell (the measured column, e.g.
-        // "Returned bytes"), escaped or not.
-        if out.ends_with("| ") {
-            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-            if digits > 0
-                && (rest[digits..].starts_with(" |\\n") || rest[digits..].starts_with(" |\n"))
-            {
-                out.push_str("<MASKED>");
-                rest = &rest[digits..];
-                continue 'scan;
-            }
-        }
-        let next = rest.chars().next().unwrap();
-        out.push(next);
-        rest = &rest[next.len_utf8()..];
-    }
-    out
 }

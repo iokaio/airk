@@ -156,12 +156,12 @@ preserves legacy artifacts and reports original/manual removal guidance.
 `ArbiterNextRead` is sent once. Its I1 exchange requires the existing typed
 same-host `ReadAttemptBudget`: schema, clock and bounds validate before connect.
 The adapter intersects its absolute remaining time with `remaining_ms` and the
-existing 30-second optional ceiling, sampling Tokio before the native clock so
+D06 120-second optional ceiling, sampling Tokio before the native clock so
 conversion cannot add time. One retained absolute Tokio deadline covers connect,
 encoding, write and response; connect/write retain their five-second ceilings.
 After encoding and before the first write, expired work refuses without sending.
 The response may arrive after five seconds only within that original deadline;
-no fresh 30-second response window or retry is created. Other control methods keep their existing deadlines. ToolsCall without an
+no fresh 120-second response window or retry is created. Other control methods keep their existing deadlines. ToolsCall without an
 attempt retains its legacy135-second response window; the supplied-attempt
 variant follows the original allowance documented below.
 Tests use the actual framed duplex exchange, observed request barriers and paused
@@ -180,8 +180,9 @@ read/model dispatch. Native/Tokio sampling is conservative. Existing shorter
 connect/write caps and all frame/input limits remain unchanged. No timeout,
 unknown response or old closed-reader refusal creates a retry or None fallback.
 Generic queries can retain budgets above30s, up to Core's existing125s ceiling.
-Only Answer intersects its own serialized120000ms ceiling (relaxed from 30000ms in 1.8.201); optional next-read
-keeps its existing30s cap. None remains125s canonical/135s response behavior.
+Answer intersects its serialized 120000-ms operation ceiling; optional next-read
+and Focus/Context callbacks intersect that same approved D06 ceiling with the
+original caller expiry. None remains 125s canonical/135s response behavior.
 Service scope/backend resolution, frontend/MCP capacity handling, native member
 reads, Kernel and scorer share the earliest decoded parent context. Existing
 accepted-work ownership and cleanup/settlement guards remain in force.
@@ -195,7 +196,7 @@ original ReadAttemptBudget, actual worker/source scope, immutable publication,
 exact full-hit/order/window bindings, original parent/partition allocation and
 one-use local read ordinal. The once-only I1 exchange uses the same conservative
 clock conversion as ContextAction: connect, encode, write and read share the
-earliest captured deadline, at most30seconds, with unchanged shorter connect/write
+earliest captured deadline, at most 120 seconds under D06, with unchanged shorter connect/write
 ceilings and128KiB request/4MiB response limits. No timeout or uncertain response
 allows replay, a new attempt, a fresh allowance or an unprotected fallback.
 
@@ -213,3 +214,27 @@ custody. Existing 128KiB tool request and 4MiB response bounds apply. Acceptance
 starts owned bounded background import; a lost response retains unknown outcome,
 not rollback or automatic retry authorization. No public ManagementRequest path
 field or new untrusted model manifest authority is introduced.
+
+## Final-plan D04 endpoint presentation
+
+`ControlResponse::AgentEndpoint` adds `manual`, the three Core-rendered
+project-relative agent entries for its exact checked endpoint URL. This inert
+setup projection grants no write or read scope authority and is outside the
+persisted `EndpointDescriptor` and its digest. The descriptor's wire bytes,
+strict decode, schema and source identity remain unchanged. Local control and
+Admin preserve the complete vector; I2 flattens only the descriptor as before
+and appends the same `manual` field.
+
+
+## Final-plan D06 budget propagation
+
+The shipping Arbiter operation is one shared 8192-input-token/120000-ms request.
+The generic read attempt retains its 125000-ms maximum: the extra 5000 ms is
+transport/response overhead and never a new native-work window. The optional
+callback intersects its requested remaining time with the original same-host
+absolute expiry and the 120000-ms operation ceiling. Metadata callbacks, grant
+TTL, installer timers and unrelated short safety caps retain their own rules.
+Historical 2048/30000 requests remain explicit controls; their old evidence is
+not qualification at the larger shipping default. Core's
+[runtime budget decision](../../docs/arbiter/runtime-budget-contract.md) records
+the additive fixture and unchanged graph/publication requirements.

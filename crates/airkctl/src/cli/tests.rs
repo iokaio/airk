@@ -33,7 +33,12 @@ fn run_line(arguments: &[&str]) -> (u8, String, String) {
     };
     let mut line = vec![OsString::from("airkctl")];
     line.extend(arguments.iter().map(OsString::from));
-    let code = run(line, &mut io);
+    // Parser/output unit fixtures never discover or start the user's real
+    // installation. Install-reader and admission suites retain those proofs.
+    let code = crate::install::with_fixture_discovery(
+        || crate::install::Discovery::NotFound,
+        || run(line, &mut io),
+    );
     (
         code,
         String::from_utf8(stdout).unwrap(),
@@ -66,8 +71,10 @@ fn version_answers_locally_in_both_formats() {
             "agents-launch/1",
             "agents-verify/1",
             "agents-entry-remove/1",
+            "agents-manual/1",
             "admin-launch/1",
-            "window-scope/1"
+            "window-scope/1",
+            "admin-management/1"
         ])
     );
 }
@@ -142,18 +149,14 @@ fn unserved_commands_and_argument_errors_keep_their_classes() {
 
 #[test]
 fn a_missing_installation_or_service_exits_three() {
-    // Discovery reads the fixed per-user pointer (no override, by design), so
-    // the missing-installation branch is observable only on a host without an
-    // installation (CI); the missing-service branch below runs everywhere.
-    if matches!(
-        crate::install::discover(),
-        crate::install::Discovery::NotFound
-    ) {
-        let (code, _, stderr) = run_line(&["status"]);
-        assert_eq!(code, 3);
-        assert!(stderr.contains("--service-runtime-dir"), "{stderr}");
-    }
-    let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
+    // run_line injects NotFound through the existing thread-local discovery
+    // seam, so both branches run even on an installed development host.
+    let (code, _, stderr) = run_line(&["status"]);
+    assert_eq!(code, 3);
+    assert!(stderr.contains("--service-runtime-dir"), "{stderr}");
+    let fixture = tempfile::tempdir().unwrap();
+    let missing = fixture.path().join("absent-control");
+    assert!(!missing.exists());
     let (code, _, stderr) = run_line(&[
         "--output",
         "json",
@@ -285,41 +288,46 @@ fn cli_reference_documents_every_public_command() {
 /// U104: `library set-create --index` checks its indexes before any request.
 #[test]
 fn set_create_indexes_are_checked_before_the_service() {
-    let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
-    let missing = missing.to_str().unwrap();
-    let (code, _, stderr) = run_line(&[
-        "library",
-        "set-create",
-        "--name",
-        "Docs",
-        "--index",
-        "not-an-index",
-        "--runtime-dir",
-        missing,
-    ]);
-    assert_eq!(
-        (code, stderr.as_str()),
-        (2, "airkctl: invalid --index: not-an-index\n")
-    );
-    let index = "idx_01010101010101010101010101010101";
-    let (code, _, stderr) = run_line(&[
-        "library",
-        "set-create",
-        "--name",
-        "Docs",
-        "--index",
-        index,
-        "--index",
-        index,
-        "--runtime-dir",
-        missing,
-    ]);
-    assert_eq!(
-        (code, stderr.as_str()),
-        (
-            2,
-            "airkctl: --index idx_01010101010101010101010101010101 is named twice\n"
-        )
+    online_admission::with_probe(
+        |_| panic!("invalid or repeated index must not probe or start a service"),
+        || {
+            let missing = std::env::temp_dir().join("airkctl-no-such-control-root");
+            let missing = missing.to_str().unwrap();
+            let (code, _, stderr) = run_line(&[
+                "library",
+                "set-create",
+                "--name",
+                "Docs",
+                "--index",
+                "not-an-index",
+                "--runtime-dir",
+                missing,
+            ]);
+            assert_eq!(
+                (code, stderr.as_str()),
+                (2, "airkctl: invalid --index: not-an-index\n")
+            );
+            let index = "idx_01010101010101010101010101010101";
+            let (code, _, stderr) = run_line(&[
+                "library",
+                "set-create",
+                "--name",
+                "Docs",
+                "--index",
+                index,
+                "--index",
+                index,
+                "--runtime-dir",
+                missing,
+            ]);
+            assert_eq!(
+                (code, stderr.as_str()),
+                (
+                    2,
+                    "airkctl: --index idx_01010101010101010101010101010101 is named twice\n"
+                )
+            );
+        },
     );
 }
 
@@ -479,4 +487,114 @@ fn portable_recovery_parser_accepts_only_original_request_not_pid_or_location_ov
     ] {
         assert!(Cli::try_parse_from(args).is_err());
     }
+}
+
+#[test]
+fn manual_setup_command_accepts_every_supported_client_and_scope_without_edit_flags() {
+    for client in ["claude", "codex", "vscode"] {
+        for user in [false, true] {
+            let mut arguments = vec![
+                "airkctl",
+                "agents",
+                "manual",
+                "--client",
+                client,
+                "--project",
+                "/work/app",
+            ];
+            if user {
+                arguments.push("--user");
+            }
+            assert!(Cli::try_parse_from(&arguments).is_ok(), "{arguments:?}");
+        }
+    }
+    assert!(Cli::try_parse_from(["airkctl", "agents", "manual", "--client", "unknown"]).is_err());
+}
+
+#[test]
+fn set_create_valid_indexes_keep_the_original_online_admission() {
+    let fixture = tempfile::tempdir().unwrap();
+    let control = plain(fixture.path().join("control"));
+    let expected = control.clone();
+    let (code, _, stderr) = online_admission::with_probe(
+        move |actual| {
+            assert_eq!(actual, expected);
+            Err(ErrorLine::new(
+                ExitClass::Refused,
+                "fixture_admission_refused",
+                false,
+                "fixture admission refused",
+            ))
+        },
+        || {
+            run_line(&[
+                "--output",
+                "json",
+                "library",
+                "set-create",
+                "--name",
+                "Docs",
+                "--index",
+                "idx_01010101010101010101010101010101",
+                "--runtime-dir",
+                control.to_str().unwrap(),
+            ])
+        },
+    );
+    assert_eq!(code, 1);
+    let refusal: Value = serde_json::from_str(stderr.trim()).unwrap();
+    assert_eq!(refusal["code"], "fixture_admission_refused");
+    assert_eq!(refusal["class"], "refused");
+    assert!(
+        !control.exists(),
+        "refused admission cannot create a control root"
+    );
+}
+
+#[test]
+fn agents_connect_selection_file_alone_refuses_before_installation_or_service_admission() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut io = Io {
+        read_attempt: None,
+        stdin: &mut std::io::empty(),
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: false,
+        window: None,
+    };
+    let arguments = [
+        "airkctl",
+        "--output",
+        "json",
+        "agents",
+        "connect",
+        "--client",
+        "claude",
+        "--selection-file",
+        "missing-selection.json",
+        "--project",
+        "missing-project",
+    ]
+    .map(OsString::from)
+    .to_vec();
+    let code = crate::install::with_fixture_discovery(
+        || panic!("retired selection must not discover the user's installation"),
+        || {
+            online_admission::with_probe(
+                |_| panic!("retired selection must not probe or start a service"),
+                || run(arguments, &mut io),
+            )
+        },
+    );
+    assert_eq!(code, ExitClass::Refused.code());
+    assert!(stdout.is_empty());
+    let refusal: Value = serde_json::from_slice(&stderr).unwrap();
+    assert_eq!(refusal["class"], "refused");
+    assert_eq!(refusal["code"], "operation_failed");
+    assert_eq!(refusal["retryable"], false);
+    assert_eq!(
+        refusal["message"],
+        "AIRK agent connections no longer exist; agents connect writes the endpoint URL only (U110); --selection-file missing-selection.json was not used."
+    );
 }

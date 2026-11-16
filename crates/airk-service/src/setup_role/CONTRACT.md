@@ -413,7 +413,9 @@ owner and original receipt/roots; ordinary service mutations acquire install.loc
 and refuse any unsettled owner. Status cannot authorize mutation. The same
 SMAppService Objective-C bridge validates the exact split plist dictionary;
 legacy managed plists keep their original branch. RequiresApproval is reported
-as consent-required; registration never claims Enabled from API success alone.
+as consent-required; registration never claims Enabled from API success alone. Transaction-owned
+login authorization reconciles the pointer in its retained authority directory;
+it never substitutes the process-global pointer for that captured owner.
 
 
 A moved-program setup drains both exact old/new image sets and unregisters the

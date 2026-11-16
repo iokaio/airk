@@ -44,6 +44,7 @@ const CAPABILITIES: &[&str] = &[
     "agents-launch/1",
     "agents-verify/1",
     "agents-entry-remove/1",
+    "agents-manual/1",
     "admin-launch/1",
     "window-scope/1",
     "admin-management/1",
@@ -341,6 +342,21 @@ enum AgentsCommand {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
+    },
+    /// Print exact manual setup text for a selected client and file, without editing it.
+    Manual {
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        client: crate::agents::Client,
+        /// Use this user's configuration file instead of the project file.
+        #[arg(long)]
+        user: bool,
+        /// The project folder (default: the current directory).
+        #[arg(long)]
+        project: Option<PathBuf>,
+        #[arg(long, default_value = "airk")]
+        server_key: String,
     },
     /// Legacy (pre-U110): read an existing connection's verified references; agents no longer use connections.
     Info {
@@ -2094,6 +2110,7 @@ impl AgentsCommand {
     fn runtime_dir(&self) -> Option<PathBuf> {
         match self {
             AgentsCommand::Endpoint { runtime_dir }
+            | AgentsCommand::Manual { runtime_dir, .. }
             | AgentsCommand::Info { runtime_dir, .. }
             | AgentsCommand::Revoke { runtime_dir, .. }
             | AgentsCommand::Credential { runtime_dir, .. }
@@ -2193,6 +2210,20 @@ fn parse_agent_entry(value: &str) -> Result<crate::agents::config::Entry, String
 /// `agents …` (split 3e).
 fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand) -> u8 {
     use crate::agents::manage;
+    if let AgentsCommand::Connect {
+        connection_id: None,
+        selection_file: Some(file),
+        ..
+    } = &action
+    {
+        return fail(
+            cx,
+            &crate::registration::failed(&format!(
+                "AIRK agent connections no longer exist; agents connect writes the endpoint URL only (U110); --selection-file {} was not used.",
+                file.display()
+            )),
+        );
+    }
     let control = match action.runtime_dir().or(selection.control.clone()) {
         Some(control) => control,
         None => match installed(cx) {
@@ -2237,6 +2268,31 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
             };
         }
         AgentsCommand::Endpoint { .. } => crate::agents::endpoint(&control, VERSION),
+        AgentsCommand::Manual {
+            client,
+            user,
+            project,
+            server_key,
+            ..
+        } => match inputs(project.as_slice(), *user) {
+            Err(line) => Err(line),
+            Ok((projects, airkctl, user)) => manage::manual(
+                &manage::Inputs {
+                    control: &control,
+                    version: VERSION,
+                    airkctl: &airkctl,
+                    projects,
+                    user,
+                },
+                *client,
+                if user {
+                    crate::agents::config::Scope::User
+                } else {
+                    crate::agents::config::Scope::Project
+                },
+                server_key,
+            ),
+        },
         AgentsCommand::Info { connection_id, .. } => {
             crate::agents::info(&control, VERSION, *connection_id)
         }

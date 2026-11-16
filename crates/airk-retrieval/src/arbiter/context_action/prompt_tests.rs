@@ -396,3 +396,16 @@ pub(crate) fn legacy_prompt(
         policy: roster.policy,
     })
 }
+
+#[test]
+fn qualification_parts_reconstruct_exact_original_question_and_read_menu() -> Result<()> {
+    let (records, choices, roster, expected) = built()?;
+    let actual = prompt_from_parts("Where is caf\u{e9} defined?", &records, &choices, &roster)?;
+    assert_eq!(actual.state, expected.state);
+    assert_eq!(actual.question, expected.question);
+    assert!(prompt_from_parts("A substituted question", &records, &choices, &roster).is_err());
+    let mut changed = choices.clone();
+    changed[1].target = "other.rs:1-4".into();
+    assert!(prompt_from_parts("Where is caf\u{e9} defined?", &records, &changed, &roster).is_err());
+    Ok(())
+}

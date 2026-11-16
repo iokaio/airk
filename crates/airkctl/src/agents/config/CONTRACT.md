@@ -207,3 +207,34 @@ native failure phases, durable interruption, concurrent/open-writer behavior,
 privacy, direct/root/auxiliary ingestion, public reads, Git/package eligibility
 and caller conflict/unknown presentation require their identified native,
 transport and platform evidence. Scoped tests do not establish a release.
+
+## Final-plan D04 manual recovery decision (15 November 2026)
+
+Automatic editing still requires the complete displaced file and recovery path
+(including unrelated server secrets and concurrent edits) to satisfy every
+existing retention fence. U110's token-free fields do not make a shared parent
+eligible. No privacy, source exclusion, no-clobber, concurrent-change, capacity,
+durability or uncertain-outcome check is relaxed; no ACL is changed.
+
+Core `agent_manual` owns the inert `AgentManualEntry` projection: `client`,
+`scope`, exact `file`, `format` (`json` or `toml`) and complete `text`. The CLI
+resolves its selected file and renders from the checked live loopback endpoint.
+`agents manual --client <claude|codex|vscode> --project <folder> [--user]`
+reads no configuration contents and creates no target/recovery artifacts. Text
+is an entry to merge, never permission to replace unrelated configuration.
+A port change needs freshly rendered text. Rust's I2/I3 schemas and semantic
+cases carry this same data to both clients; TypeScript builds no configuration.
+
+Connect success includes `manual`. Writer failures retain the native exit code
+and complete detail, with typed `AgentConfigRefusal` in `ErrorLine.native`:
+`reason`, `detail`, `file`, `manual` (null only if the live endpoint is
+unavailable). Reasons distinguish `automatic_policy`, `conflict_retained` and
+`outcome_unknown`; consumers never parse the English prefix. A policy refusal
+cannot imply that the current target changed; conflict/unknown never authorizes
+an automatic retry or manual replacement before retained artifacts are reviewed.
+
+The real session-command removal regression uses the same test-only `Editable`
+private Git/npm fixture as retained-writer regressions and compares the complete
+canonical action/error/blocker result. The fixture is shared crate-locally only
+under `cfg(test)`; production eligibility, ownership and recovery checks remain
+the actual writer's checks, with refusal coverage retained separately.

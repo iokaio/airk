@@ -49,6 +49,13 @@ pub fn document() -> serde_json::Value {
     root::<context_action::ContextResponseV2>(&mut generator, &mut roots);
     root::<context_action::ContextActionRoster>(&mut generator, &mut roots);
     root::<context_action::calibration::JointCalibration>(&mut generator, &mut roots);
+    root::<context_action::calibration::terminal::TerminalQualification>(
+        &mut generator,
+        &mut roots,
+    );
+    root::<context_action::calibration::terminal::TerminalAnnotations>(&mut generator, &mut roots);
+    root::<context_action::calibration::terminal::TerminalRawCapture>(&mut generator, &mut roots);
+    root::<context_action::calibration::terminal::IndependenceAnalysis>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()
@@ -68,6 +75,13 @@ mod tests {
         let actual = super::document();
         let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../packages/contracts-gen/arbiter.schema.json");
+        if std::env::var_os("AIRK_WRITE_CONTRACT_SCHEMA") == Some("1".into()) {
+            let mut bytes = serde_json::to_vec_pretty(&actual).unwrap();
+            bytes.push(b'\n');
+            // The caller authorizes this fixed tracked destination explicitly.
+            // Truncate in place to preserve its existing owner and access policy.
+            std::fs::write(&expected, bytes).unwrap();
+        }
         let captured = std::fs::read(&expected)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());

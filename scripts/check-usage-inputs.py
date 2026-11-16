@@ -22,22 +22,18 @@ spec.loader.exec_module(clients)
 
 @contextmanager
 def usage_mcp(fixture, name, base):
-    """Exercise real transport with immutable native Codex attribution."""
+    """Exercise the tokenless transport with explicit index scope and clientInfo attribution."""
     if fixture.single_image:
         spec = importlib.util.spec_from_file_location("usage_https_fixture", Path(__file__).with_name("http_fixture.py"))
         transport = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(transport)
         selected = fixture.scopes[name]
-        connection = fixture.enroll_http({"kind": "scoped", "selection": selected}, uuid.uuid4().hex, "codex")
+        endpoint = fixture.http_endpoint()
         health = fixture.rpc("health")["observation"]
         fixture.assert_alive()
         assert health["instance"] == fixture.managed_health["instance"]
-        transport.validate_native_identity(connection, health)
-        assert connection["selection"]["kind"] == "scoped"
-        actual, expected = connection["selection"]["selection"].copy(), selected.copy()
-        assert actual.pop("expected_catalog_revision") >= expected.pop("expected_catalog_revision")
-        assert actual == expected, "Usage HTTP enrollment changed reviewed scope"
-        network = transport.McpClient(connection, fixture.control)
+        transport.validate_native_identity(endpoint, health)
+        network = transport.McpClient(endpoint, fixture.control, scope={"index_ids": [selected["index_id"]]})
         try:
             yield network.send, network.receive
         finally:

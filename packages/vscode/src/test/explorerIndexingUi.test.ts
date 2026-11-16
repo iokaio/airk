@@ -395,7 +395,7 @@ test('U110 Management › Agents puts the task first: pick an agent, Connect, se
     const rendered=names[0].type(names[0].props),spans=nodes(rendered).filter((node:any)=>node.type==='span'&&node.props.title);
     assert.deepEqual(plain(spans.map((node:any)=>[node.props.title,text(node)])),[['Services <b>and</b> UI','Application Project'],[secondId,secondId]]);
     // The native reports and AIRK Admin are in the collapsed Details.
-    const details=nodes(tree).find(node=>node.type==='details');
+    const details=nodes(tree).find(node=>node.type==='details'&&nodes(node).some(child=>child.type==='summary'&&text(child)==='Details'));
     assert.ok(details&&!details.props.open,'Details is collapsed');
     assert.deepEqual(plain(component(details,'CompleteNativeResponse').map(node=>node.props.value)),[report,{url,state:'ready'},{schema:1,entries:[]}],'the complete native reports are kept');
     assert.ok(component(details,'AdminButton').some(node=>node.props.page==='agents'),'AIRK Admin › Agents stays reachable for manual setup and trust');
@@ -538,4 +538,23 @@ test('U108 the search scope notes when the pending union exceeds the reported qu
     assert.match(text(tree),/This scope searches at least 6 indexes; this machine searches 4 at a time, so searches take at least twice as long\./,'incomplete memberships give a lower bound');
     nodes(tree).find(node=>node.type==='form').props.onSubmit({preventDefault(){}});await f.flush();
     assert.deepEqual(plain(f.sent.find(message=>message.type==='indexing.scope.apply').selection),{index_ids:[ids[5],ids[0]],project_ids:[projectId]},'Apply sends the selection unchanged');
+});
+
+test('Agents shows and copies native manual bytes, and typed automatic refusal opens manual setup', async () => {
+ const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{}};
+ const props:any={state,route:{workspace:'manage',tab:'agents'},go(){},publications:[]};
+ const f=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
+ const manual={client:'claude',scope:'project',file:'/work/a & b/.mcp.json',format:'json',text:'{\n  "mcpServers": {}\n}\n'};
+ f.hold('agents.read');f.render();await f.flush();
+ f.release('agents.read',{folder:'/work/a & b',entries:[],manual:[manual]});await f.flush();
+ let tree=f.render();assert.ok(nodes(tree).some(node=>node.type==='pre'&&node.props.children===manual.text));
+ button(tree,/^Copy complete entry$/).props.onClick();await f.flush();
+ assert.deepEqual(f.sent.map(fields).at(-1),{type:'clipboard.write',text:manual.text});
+ f.hold('agents.connect');button(f.render(),/^Connect$/).props.onClick();await f.flush();
+ f.release('agents.connect',{status:'refused',manual,refusal:{reason:'automatic_policy',file:manual.file,detail:'parent grants foreign mutation',manual}});await f.flush();
+ f.release('agents.read',{folder:'/work/a & b',entries:[],manual:[manual]});await f.flush();tree=f.render();
+ const section=nodes(tree).find(node=>node.type==='details'&&nodes(node).some(child=>child.type==='summary'&&text(child)==='Set up manually'));
+ assert.equal(section.props.open,true);assert.match(text(section),/cannot safely edit this file/);assert.match(text(section),/Other accounts/);
+ assert.match(text(tree),/parent grants foreign mutation/);assert.match(text(section),/airkctl agents endpoint/);
+ assert.doesNotMatch(text(tree),/Claude Code connected/);
 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { admitAdminUiRequest, parseAdminUiRequest, type AdminUiContext, type AdminUiObservation, type Operation } from './adminUiContract';
 import { AirkctlSession, type AdminIdentity } from './airkctl/session';
+import { READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import type { MutationPreparation, SuccessEnvelope } from './generated/i3';
 
 type Pending = { operation: Operation; body: unknown; acknowledgment: { kind: 'ok'; status: number; envelope: SuccessEnvelope }; preparation: MutationPreparation };
@@ -43,7 +44,7 @@ export class AdminUiHost {
         let observedStatus: number | null = null;
         try {
             const reply = await this.session.adminCall(held.identity, request.operation, request.payload.body,
-                { deadlineMs: 120_000, admit: () => this.captured === held && admitAdminUiRequest(request, context()) === null, onStatus: status => {
+                { deadlineMs: READ_TRANSPORT_DEADLINE_MS, admit: () => this.captured === held && admitAdminUiRequest(request, context()) === null, onStatus: status => {
                     observedStatus = status;
                     if (this.captured === held) onStatus?.(status);
                 } });

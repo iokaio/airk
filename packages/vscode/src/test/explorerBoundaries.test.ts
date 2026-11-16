@@ -66,7 +66,7 @@ test('shared guided management bundles complete pure evidence workflows while re
     build.checkInputs('guided-management regression',result.metafile!,allowed);
     const inputs=Object.keys(result.metafile!.inputs);
     for(const required of ['../admin/src/EvidenceToolsScreen.tsx','../admin/src/ReviewScreen.tsx','../admin/src/StrategiesScreen.tsx',
-        'src/explorerFacts.ts','src/explorerReviewCore.ts','src/explorerStrategyRunnerCore.ts','src/explorerPlanFiles.ts'])assert.ok(inputs.includes(required),required);
+        'src/generated/arbiterBudget.ts','src/explorerFacts.ts','src/explorerReviewCore.ts','src/explorerStrategyRunnerCore.ts','src/explorerPlanFiles.ts'])assert.ok(inputs.includes(required),required);
     for(const forbidden of ['src/explorerEvidence.ts','src/serviceClient.ts','src/nativeSession.ts','src/intentJournal.ts']){
         assert.ok(!inputs.includes(forbidden),forbidden);
         assert.throws(()=>build.checkInputs('injected host controller',{inputs:{[forbidden]:{}}},allowed),/outside the allowlist/);
@@ -132,7 +132,7 @@ test('the standalone uninstall bundle retains no Indexing controller, Preact or 
 test('native read retry validators retain a pure shared dependency boundary',()=>{
     const file=path.join(source,'readRetry.ts');
     // Rust I2 owns caller binding/selection types; this import emits no runtime dependency.
-    assert.deepEqual(imports(file),['node:util','./generated/i2','./catalogSession']);
+    assert.deepEqual(imports(file),['./generated/arbiterBudget','node:util','./generated/i2','./catalogSession']);
     assert.equal(typeOnly(file,'./generated/i2'),true);
     assert.ok(imports(path.join(source,'explorerEvidence.ts')).includes('./readRetry'));
     const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
@@ -151,6 +151,23 @@ test('catalog launch model imports only the pure selector contract and keeps hos
     const build=fs.readFileSync(path.resolve(source,'..','scripts','build-explorer.cjs'),'utf8');
     assert.ok(build.includes("'src/catalogSession.ts'"));
     assert.ok(!build.includes("'src/scopeSelection.ts'"),'host selection controller must never be allowlisted in bundles');
+});
+
+/** The approved manual setup DTO import carries no runtime code or write authority. */
+function manualDtoImportAllowed(from: string, specifier: string, isTypeImport: boolean): boolean {
+    return path.resolve(from) === path.join(source, 'explorerWebview', 'agents.tsx')
+        && specifier === '../generated/i2' && isTypeImport;
+}
+
+test('manual setup admits only its exact generated native DTO type import', () => {
+    const view = path.join(source, 'explorerWebview', 'agents.tsx');
+    assert.equal(manualDtoImportAllowed(view, '../generated/i2', true), true);
+    for (const [file, specifier, typeOnly] of [
+        [view, '../generated/i2', false],
+        [view, '../airkctl/session', true],
+        [view, '../generated/i3', true],
+        [path.join(source, 'explorerWebview', 'api.ts'), '../generated/i2', true],
+    ] as const) assert.equal(manualDtoImportAllowed(file, specifier, typeOnly), false, `${file}: ${specifier}`);
 });
 
 test('Explorer webview sources import only Preact, their own files and contracts', () => {
@@ -174,7 +191,8 @@ test('Explorer webview sources import only Preact, their own files and contracts
                 || target(file, specifier) === '../../ui/src/navigation'
                 || target(file, specifier) === '../../ui/generated/help-manifest.json' && typeOnly(file, specifier)
                 || target(file, specifier) === '../../ui/src/pilotContract' && typeOnly(file, specifier);
-            const allowed = WEBVIEW_PACKAGES.has(specifier) || within(file, specifier, 'explorerWebview') || contract(file, specifier) || shared || management;
+            const allowed = WEBVIEW_PACKAGES.has(specifier) || within(file, specifier, 'explorerWebview') || contract(file, specifier) || shared || management
+                || manualDtoImportAllowed(file, specifier, typeOnly(file, specifier));
             assert.ok(allowed, `${path.relative(source, file)} imports ${specifier}`);
         }
     }

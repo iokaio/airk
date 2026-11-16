@@ -430,10 +430,14 @@ fn source_measurements_are_small_authenticated_values_independent_of_graph_bytes
         drop(read);
         let db = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
         db.execute("UPDATE current_map_buckets SET content=x'5b5d'", [])?;
+        // Opening freezes authenticated source roots and can reject the
+        // damaged map before the requested measurement lookup is reached.
+        let rejected = read_current(&store)
+            .and_then(|read| read.map_get(MapDomain::SourceMeasurement, b"file000.txt"));
+        let error = rejected.expect_err("corrupt authenticated metadata must refuse the read");
         assert!(
-            read_current(&store)?
-                .map_get(MapDomain::SourceMeasurement, b"file000.txt")
-                .is_err()
+            error.is::<airk_store::current::PrivateIntegrityFailure>(),
+            "unexpected refusal instead of authenticated damage: {error:#}"
         );
     }
     Ok(())

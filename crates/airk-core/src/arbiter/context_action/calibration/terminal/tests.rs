@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Synthetic structural controls only: no human labels or native qualification.
+use super::*;
+use serde_json::{Value, json};
+
+fn digest(byte: u8) -> Sha256Digest {
+    Sha256Digest::from_bytes([byte; 32])
+}
+fn observation(id: &str, cluster: &str) -> Result<TerminalObservation> {
+    let fixture: Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../../fixtures/split/arbiter/context_action_cases.json"
+    ))?;
+    let response: ContextResponseV2 = serde_json::from_value(fixture["cases"][0]["input"].clone())?;
+    let AssessmentResult::Selected { card, .. } = response.assessment_history[0].result.clone()
+    else {
+        anyhow::bail!("structural fixture changed");
+    };
+    let mut read = card.clone();
+    read.id = digest(90);
+    read.action = ContextAction::Read { choice: digest(91) };
+    read.gap = Gap::Definition;
+    read.reason = ContextReason::MissingDefinition;
+    let mut basis = response.assessment_history[0].basis.clone();
+    basis.read_choices_available = 1;
+    basis.read_choices_omitted = 0;
+    basis.read_choices_scored = vec![digest(91)];
+    let roster = ContextActionRoster {
+        schema: ACTION_ROSTER_SCHEMA.into(),
+        scope: response.assessment.scope,
+        input_digest: framed_digest(b"synthetic-structural-terminal-case/1", &[id.as_bytes()]),
+        policy: digest(3),
+        basis,
+        cards: vec![card.clone(), read],
+    };
+    roster.validate(&response.records)?;
+    Ok(TerminalObservation {
+        id: id.into(),
+        repository_cluster: cluster.into(),
+        question: "synthetic whole-card question".into(),
+        choices: vec![ReadChoice {
+            id: digest(91),
+            operation: NativeRead::Context,
+            target: "synthetic-policy.md:1-33".into(),
+        }],
+        roster,
+        records: response.records,
+        scores: Some(vec![3.0, 0.0]),
+        accepted_whole_cards: vec![card.id],
+        human_annotations: digest(10),
+        native_capture: digest(20),
+    })
+}
+fn fixture() -> Result<(
+    JointCalibration,
+    TerminalQualification,
+    IndependenceAnalysis,
+)> {
+    let row = observation("synthetic-cal-0", "synthetic-cal-repository")?;
+    let card = &row.roster.cards[0];
+    let mut roles = Vec::new();
+    let mut relevance = Vec::new();
+    for unit in &card.assessments {
+        if !roles.contains(&unit.role) {
+            roles.push(unit.role);
+        }
+        if !relevance.contains(&unit.relevance) {
+            relevance.push(unit.relevance);
+        }
+    }
+    let rule = JointRule {
+        action: ContextActionClass::Sufficient,
+        allowed_gaps: vec![Gap::Sufficient],
+        allowed_reasons: vec![ContextReason::RetainedEvidenceCoversQuestion],
+        allowed_roles: roles,
+        allowed_relevance: relevance,
+        minimum_raw_margin: 3.0,
+    };
+    let profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    let assets = profile
+        .assets
+        .iter()
+        .filter(|asset| {
+            matches!(
+                asset.role,
+                AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
+            )
+        })
+        .map(|asset| {
+            (
+                asset.name.clone(),
+                JointAssetBinding {
+                    role: asset.role.clone(),
+                    sha256: asset.sha256,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let calibration = JointCalibration {
+        schema: CALIBRATION_SCHEMA_V2.into(),
+        model: profile.model,
+        compiler: profile.compiler,
+        task_policy: digest(3),
+        score_abi: profile.abi,
+        assets: assets.clone(),
+        rules: vec![rule.clone()],
+        class_support: Some(vec![
+            ClassDisposition {
+                action: ContextActionClass::Read,
+                support: ClassSupport::Unsupported {
+                    reason: "synthetic no Read evidence".into(),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::Sufficient,
+                support: ClassSupport::Supported {
+                    qualification: Some(digest(9)),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::Clarify,
+                support: ClassSupport::Unsupported {
+                    reason: "human labels missing".into(),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::NoJustifiedRead,
+                support: ClassSupport::Unsupported {
+                    reason: "human labels missing".into(),
+                },
+            },
+        ]),
+    };
+    let confirmation = (0..299)
+        .map(|index| {
+            observation(
+                &format!("synthetic-confirm-{index}"),
+                &format!("synthetic-confirm-repository-{index}"),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let qualification = TerminalQualification {
+        schema: QUALIFICATION_SCHEMA.into(),
+        model: calibration.model,
+        compiler: calibration.compiler,
+        task_policy: calibration.task_policy,
+        assets,
+        rule,
+        criteria: TerminalCriteria {
+            freeze: digest(30),
+            calibration_population: population_identity(std::slice::from_ref(&row))?,
+            confirmation_population: population_identity(&confirmation)?,
+            minimum_cal_population: 1,
+            minimum_confirmation_population: 299,
+            minimum_cal_accepted: 1,
+            minimum_confirmation_accepted: 299,
+            minimum_coverage: 1.0,
+            maximum_false_acceptance_upper: 0.01,
+        },
+        calibration: vec![row],
+        confirmation,
+        independence_analysis: digest(40),
+    };
+    let summary = replay(
+        &qualification.rule,
+        qualification.task_policy,
+        &qualification.confirmation,
+    )?;
+    let analysis = IndependenceAnalysis {
+        schema: INDEPENDENCE_SCHEMA.into(),
+        action: ContextActionClass::Sufficient,
+        criteria_freeze: digest(30),
+        accepted_sample: summary.accepted_sample,
+        accepted_cases: 299,
+        repository_clusters: 299,
+        effective_independent_cases: 299.0,
+        method: "reviewed_repository_cluster_effective_n/1".into(),
+    };
+    Ok((calibration, qualification, analysis))
+}
+#[test]
+fn terminal_independent_confirmation_recomputes_zero_error_risk_without_inventing_gold()
+-> Result<()> {
+    let (calibration, qualification, analysis) = fixture()?;
+    let summary = qualification.validate(&calibration, &analysis)?;
+    assert_eq!(summary.confirmation.accepted, 299);
+    assert!(summary.one_sided_95_false_acceptance_upper < 0.01);
+    let mut nonfitted = qualification.clone();
+    nonfitted.rule.minimum_raw_margin = 1.0;
+    let mut nonfitted_calibration = calibration.clone();
+    nonfitted_calibration.rules[0].minimum_raw_margin = 1.0;
+    assert!(
+        nonfitted
+            .validate(&nonfitted_calibration, &analysis)
+            .is_err(),
+        "a confirmation-selected cutoff cannot replace deterministic CAL fit"
+    );
+    let mut insufficient = analysis.clone();
+    insufficient.effective_independent_cases = 298.0;
+    assert!(qualification.validate(&calibration, &insufficient).is_err());
+    let mut impossible = analysis.clone();
+    impossible.effective_independent_cases = 300.0;
+    assert!(qualification.validate(&calibration, &impossible).is_err());
+    let mut wrong_clusters = analysis;
+    wrong_clusters.repository_clusters = 1;
+    assert!(
+        qualification
+            .validate(&calibration, &wrong_clusters)
+            .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn terminal_cal_fit_never_replaces_unsupported_global_winner_and_preserves_unknown() -> Result<()> {
+    let (_, qualification, _) = fixture()?;
+    let good = qualification.calibration[0].clone();
+    let mut unknown = observation("synthetic-unknown", "synthetic-unknown-repository")?;
+    unknown.scores = Some(vec![2.0, 0.0]);
+    unknown.accepted_whole_cards.clear();
+    let selected = fit_terminal_rule(
+        &qualification.rule,
+        qualification.task_policy,
+        &[good.clone(), unknown.clone()],
+    )?
+    .unwrap();
+    assert_eq!(selected.minimum_raw_margin, 3.0);
+    assert!(
+        fit_terminal_rule(&qualification.rule, qualification.task_policy, &[unknown])?.is_none()
+    );
+    let mut unsupported = good;
+    unsupported.scores = Some(vec![3.0, 4.0]);
+    assert!(
+        fit_terminal_rule(
+            &qualification.rule,
+            qualification.task_policy,
+            &[unsupported]
+        )?
+        .is_none()
+    );
+    Ok(())
+}
+#[test]
+fn terminal_v2_explicit_class_dispositions_preserve_historical_serialization() -> Result<()> {
+    let (calibration, _, _) = fixture()?;
+    calibration.validate_class_support()?;
+    let mut legacy = calibration.clone();
+    legacy.schema = CALIBRATION_SCHEMA.into();
+    legacy.class_support = None;
+    assert!(
+        serde_json::to_value(&legacy)?
+            .get("class_support")
+            .is_none()
+    );
+    legacy.validate_class_support()?;
+    legacy.class_support = calibration.class_support.clone();
+    assert!(legacy.validate_class_support().is_err());
+    let mut missing = calibration.clone();
+    missing.class_support.as_mut().unwrap().pop();
+    assert!(missing.validate_class_support().is_err());
+    let mut duplicate = calibration.clone();
+    duplicate.class_support.as_mut().unwrap()[3].action = ContextActionClass::Clarify;
+    assert!(duplicate.validate_class_support().is_err());
+    for action in [
+        ContextActionClass::Sufficient,
+        ContextActionClass::Clarify,
+        ContextActionClass::NoJustifiedRead,
+    ] {
+        let mut unsupported = calibration.clone();
+        unsupported.rules.clear();
+        for class in unsupported.class_support.as_mut().unwrap() {
+            class.support = ClassSupport::Unsupported {
+                reason: "no exact human evidence".into(),
+            };
+        }
+        unsupported.validate_class_support()?;
+        let mut card = observation("synthetic-class", "synthetic-repository")?
+            .roster
+            .cards
+            .remove(0);
+        card.action = match action {
+            ContextActionClass::Sufficient => ContextAction::Sufficient,
+            ContextActionClass::Clarify => ContextAction::Clarify,
+            ContextActionClass::NoJustifiedRead => ContextAction::NoJustifiedRead,
+            _ => unreachable!(),
+        };
+        assert!(!unsupported.accepts(&card, 100.0));
+    }
+    Ok(())
+}
+fn source_fixture(
+    qualification: &TerminalQualification,
+) -> Result<(
+    BTreeMap<Sha256Digest, TerminalAnnotations>,
+    BTreeMap<Sha256Digest, TerminalRawCapture>,
+)> {
+    let rows = qualification
+        .calibration
+        .iter()
+        .chain(&qualification.confirmation);
+    let labels = rows
+        .clone()
+        .map(|row| {
+            Ok(TerminalHumanLabel {
+                id: row.id.clone(),
+                action: qualification.rule.action,
+                repository_cluster: row.repository_cluster.clone(),
+                visible_input: row.visible_input()?,
+                accepted_whole_cards: row.accepted_whole_cards.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let raw = rows
+        .map(|row| {
+            Ok(TerminalRawRow {
+                id: row.id.clone(),
+                visible_input: row.visible_input()?,
+                compiled_input: Some(digest(60)),
+                input_tokens: Some(8),
+                scores: row.scores.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((
+        BTreeMap::from([(
+            digest(10),
+            TerminalAnnotations {
+                schema: ANNOTATIONS_SCHEMA.into(),
+                human_review_reference: "SYNTHETIC TEST ONLY; NOT HUMAN GOLD".into(),
+                rows: labels,
+            },
+        )]),
+        BTreeMap::from([(
+            digest(20),
+            TerminalRawCapture {
+                schema: RAW_CAPTURE_SCHEMA.into(),
+                model: qualification.model,
+                compiler: qualification.compiler,
+                task_policy: qualification.task_policy,
+                assets: qualification.assets.clone(),
+                execution_identity: "synthetic-not-native-execution".into(),
+                native_execution_receipt: digest(50),
+                rows: raw,
+            },
+        )]),
+    ))
+}
+#[test]
+fn terminal_original_sources_must_cover_exact_whole_card_and_raw_scores() -> Result<()> {
+    let (_, qualification, _) = fixture()?;
+    let (labels, captures) = source_fixture(&qualification)?;
+    qualification.validate_sources(&labels, &captures)?;
+    let mut question_changed = qualification.clone();
+    question_changed.calibration[0]
+        .question
+        .push_str(" substituted");
+    assert!(
+        question_changed
+            .validate_sources(&labels, &captures)
+            .is_err()
+    );
+    let mut menu_changed = qualification.clone();
+    menu_changed.calibration[0].choices[0]
+        .target
+        .push_str(" substituted");
+    assert!(menu_changed.validate_sources(&labels, &captures).is_err());
+    assert!(
+        qualification
+            .validate_sources(&BTreeMap::new(), &captures)
+            .is_err()
+    );
+    assert!(
+        qualification
+            .validate_sources(&labels, &BTreeMap::new())
+            .is_err()
+    );
+    let mut wrong = labels.clone();
+    wrong.get_mut(&digest(10)).unwrap().rows[0]
+        .accepted_whole_cards
+        .clear();
+    assert!(qualification.validate_sources(&wrong, &captures).is_err());
+    let mut wrong = captures;
+    wrong.get_mut(&digest(20)).unwrap().rows[0].scores = Some(vec![30.0, 0.0]);
+    assert!(qualification.validate_sources(&labels, &wrong).is_err());
+    Ok(())
+}
+fn refusal_cases() -> Result<Vec<Value>> {
+    let (calibration, qualification, analysis) = fixture()?;
+    let mut cases = Vec::new();
+    for (id, mutated) in [
+        ("terminal_false_sufficiency", {
+            let mut v = qualification.clone();
+            v.confirmation[0].accepted_whole_cards.clear();
+            v
+        }),
+        ("terminal_cal_confirmation_overlap", {
+            let mut v = qualification.clone();
+            v.confirmation[0] = v.calibration[0].clone();
+            v
+        }),
+        ("terminal_repository_overlap", {
+            let mut v = qualification.clone();
+            v.confirmation[0].repository_cluster = v.calibration[0].repository_cluster.clone();
+            v
+        }),
+        ("terminal_confirmation_omission", {
+            let mut v = qualification.clone();
+            v.confirmation.pop();
+            v
+        }),
+        ("terminal_changed_frozen_rule", {
+            let mut v = qualification.clone();
+            v.rule.minimum_raw_margin = 2.0;
+            v
+        }),
+        ("terminal_generic_read_cannot_supply_gold", {
+            let mut v = qualification.clone();
+            v.rule.action = ContextActionClass::Read;
+            v
+        }),
+        ("terminal_changed_policy", {
+            let mut v = qualification.clone();
+            v.task_policy = digest(99);
+            v
+        }),
+    ] {
+        assert!(mutated.validate(&calibration, &analysis).is_err(), "{id}");
+        cases.push(json!({"id":id,"input":mutated,"expected":false}));
+    }
+    Ok(cases)
+}
+#[test]
+fn terminal_contract_refusal_cases_are_independent_native_inputs() -> Result<()> {
+    assert_eq!(refusal_cases()?.len(), 7);
+    Ok(())
+}
+#[test]
+#[ignore = "explicit fresh native terminal contract fixture output required; synthetic only"]
+fn emit_terminal_contract_cases() -> Result<()> {
+    let output = std::path::PathBuf::from(
+        std::env::var_os("AIRK_TERMINAL_CONTRACT_OUTPUT")
+            .ok_or_else(|| anyhow::anyhow!("terminal output path required"))?,
+    );
+    ensure!(!output.exists(), "fresh terminal fixture output required");
+    let (calibration, qualification, analysis) = fixture()?;
+    std::fs::write(
+        output,
+        serde_json::to_vec_pretty(
+            &json!({"schema":"airk.arbiter.context-terminal-contract-cases/1","synthetic_only":true,"human_semantic_gold":false,"release_qualified":false,"calibration":calibration,"qualification":qualification,"analysis":analysis,"cases":refusal_cases()?}),
+        )?,
+    )?;
+    Ok(())
+}

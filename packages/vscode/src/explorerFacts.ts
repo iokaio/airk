@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 import type { EvidenceClass, FactItemView, FactListView, ProvenanceView } from './explorerContracts';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure, type EvidenceReadPort, type NativeTool } from './explorerEvidenceCore';
@@ -164,7 +165,7 @@ export function registerCursor(request: Request, payload: Value, publication: st
 /** Run one fact request and map it. Cursor continuations are rejected once the publication changed. */
 export async function runFacts(session: EvidenceReadPort, handles: FactHandles, project: string, request: Request): Promise<FactListView> {
     try {
-        const result = await session.call(request.tool, request.args, { timeout: 30000, supersede: `facts:${request.tool}` });
+        const result = await session.call(request.tool, request.args, { timeout: READ_TRANSPORT_DEADLINE_MS, supersede: `facts:${request.tool}` });
         return factList(request, result.payload, result.publication, project, handles, result.rawPayload);
     } catch (error) {
         if (error instanceof EvidenceFailure && error.nativeResponse) {
@@ -187,7 +188,7 @@ export async function runFacts(session: EvidenceReadPort, handles: FactHandles, 
 /** Read an exact retained native continuation without interpreting its operation's rows. */
 export async function continueNativePage(session: EvidenceReadPort, handles: FactHandles, project: string, more: string) {
     const handle = handles.cursors.get(more, project);
-    const result = await session.call(handle.tool, { ...handle.args, cursor: handle.cursor }, { timeout: 30000 });
+    const result = await session.call(handle.tool, { ...handle.args, cursor: handle.cursor }, { timeout: READ_TRANSPORT_DEADLINE_MS });
     if (handle.publicationVector && (result.payload.schema !== 'airk.combined-read/1'
         || comparePublicationVector({ authority: project, vector: handle.publicationVector }, { authority: project, vector: result.payload.publication_vector }) !== 'equal')) {
         throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'A selected member publication or query scope changed; run the combined query again instead of continuing.'));

@@ -261,7 +261,10 @@ class ContainerCheckTests(unittest.TestCase):
     def test_modern_whole_smoke_enrolls_http_without_recreating_a_launcher_or_helper(self):
         self.whole_smoke(True)
 
-    def whole_smoke(self, modern):
+    def test_current_split_smoke_names_indexes_without_enrollment_or_credential_files(self):
+        self.whole_smoke(True, split=True)
+
+    def whole_smoke(self, modern, split=False):
         native = NativeCatalog()
         running = False
         volume_removed = False
@@ -294,15 +297,24 @@ class ContainerCheckTests(unittest.TestCase):
             elif args[0] == "exec" and args[2] in ("mkdir", "test"):
                 pass
             elif args[0] == "exec" and args[2:] == ("cat", "/usr/lib/airk/airk-runtime.json"):
-                output = json.dumps({"schema": 2 if modern else 1})
+                output = json.dumps({"schema": 3 if split else 2 if modern else 1})
+            elif args[0] == "exec" and args[2:] == ("cat", "/data/state/control/http-1/endpoint.json"):
+                self.assertTrue(split)
+                output = json.dumps({"schema":1, "url":"https://127.0.0.1:57421/mcp",
+                    "service_instance":"44"*16, "user":"10001", "executable_sha256":"55"*32,
+                    "namespace":native.namespace})
             elif args[0] == "exec" and args[2] == "/data/install/airk-launcher":
                 output = "airk 1.8.12\n"
             elif args[0] == "exec" and args[2] == "python3":
                 path, expected = args[-2:]
                 self.assertEqual(hashlib.sha256(json.dumps(selection_inputs[path],separators=(",",":")).encode()).hexdigest(), expected)
                 del selection_inputs[path]
-            elif args[0] == "exec" and args[2] == "airk":
+            elif args[0] == "exec" and args[2] in ("airk", "airkctl"):
                 command = args[3:]
+                if command[:2] == ("__airk_role", "setup-interim"):
+                    self.assertTrue(split)
+                    self.assertEqual(args[2], "airk")
+                    command = command[2:]
                 if command == ("runtime", "location"):
                     output = json.dumps({"install_dir":"/data/install","user_paths":{"state":"/data/state"}})
                 elif command[:2] == ("runtime", "http-connection"):
@@ -323,12 +335,37 @@ class ContainerCheckTests(unittest.TestCase):
                 elif command[:2] == ("runtime", "inspect"):
                     output = json.dumps({"launcher":"/data/install/airk-launcher","managed_policy":{"lifecycle":"external"},"approval":{"version":"1.8.12"}})
                 elif command == ("--version",) and modern:
-                    output = "airk 1.8.12\n"
+                    output = args[2] + " 1.8.12\n"
                 elif "--service-project" in command:
                     binding = command[command.index("--service-project")+1]
                     self.assertIn(binding, [scope["registration"]["binding"] for scope in native.scopes.values()])
                     self.assertEqual(command[-1], "index")
                     output = json.dumps({"job":{"id":binding}})
+                elif split and "--service-runtime-dir" in command:
+                    self.assertEqual(args[2], "airkctl")
+                    tail = command[command.index("--service-runtime-dir")+2:]
+                    if tail == ("tools", "list", "--json"):
+                        output = json.dumps({"tools":tool_catalog(smoke.clients.TOOLS)})
+                    elif tail[:2] == ("tools", "call"):
+                        index = tail[tail.index("--index")+1]
+                        record = next(scope for scope in native.scopes.values() if scope["index"] == index)
+                        arguments = json.loads(tail[tail.index("--args")+1])
+                        collection = record["registration"]["collection"]
+                        value = {"collection":collection, "read_scope":{"source":"named", "index_ids":[index]},
+                            "publication":{"token":"airk-r1:"+"a"*32+":1:"+"b"*64, "collection":collection}}
+                        if tail[2] == "airk_query_scope":
+                            value.update(schema="airk.query-scope/1",mode="selection",view=arguments["view"])
+                        elif tail[2] == "airk_symbols":
+                            value["items"] = [{"name":"authenticate"}] if collection == "project-a" else []
+                        elif tail[2] == "airk_search":
+                            original = Path(__file__).parents[2] / "examples/workspaces" / collection / "README.md"
+                            value["hits"] = [{"citation":{"path":"README.md", "content_hash":hashlib.sha256(original.read_bytes()).hexdigest()},"text":"authenticate"}] if collection == "project-a" else []
+                        else:
+                            value.update(index_state="available",files=2)
+                        output = json.dumps(envelope(value))
+                    elif tail == ("collections", "remove", "project-b"):
+                        self.assertFalse(check); return subprocess.CompletedProcess(args,2,"","retired writer")
+                    else: self.fail(tail)
                 elif "--combined-session" in command:
                     selected = json.loads(command[command.index("--combined-session")+1])
                     record = next(scope for scope in native.scopes.values() if scope["index"] == selected["index_ids"][0])
@@ -372,7 +409,12 @@ class ContainerCheckTests(unittest.TestCase):
             self.assertTrue(smoke.member_result(cli_tool("airk_symbols",{"response_mode":"full","verification":"off"}),scope))
         def https(name, control, connection, scope, cli_tool, catalog, records):
             self.assertTrue(modern)
-            self.assertEqual(connection["selection"], {"kind": "combined", "selection": scope["selection"]})
+            if split:
+                self.assertNotIn("selection", connection)
+                self.assertEqual(connection["url"], "https://127.0.0.1:57421/mcp")
+                self.assertTrue(scope["open_read"])
+            else:
+                self.assertEqual(connection["selection"], {"kind": "combined", "selection": scope["selection"]})
             mcp(name, control, scope, cli_tool, catalog, records)
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder)/"report.json"
@@ -393,6 +435,9 @@ class ContainerCheckTests(unittest.TestCase):
         self.assertTrue(job_inputs)
         self.assertTrue(all(len(attempts)==1 for attempts in job_inputs.values()), "Python must not repeat completed native observations")
         self.assertTrue(result["records"])
+        if split:
+            self.assertEqual(selection_inputs, {})
+            self.assertFalse(any(record.get("transport") == "native_http_setup_input" for record in result["records"]))
 
     def test_cleanup_accepts_only_missing_owned_container(self):
         name = "airk-scaffold-check-fixture"

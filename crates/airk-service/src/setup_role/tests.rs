@@ -571,7 +571,11 @@ fn only_a_pre_split_extensions_native_airk_blocks_setup() {
 #[test]
 fn the_record_step_creates_missing_data_and_cache_locations() -> anyhow::Result<()> {
     let temporary = tempfile::tempdir()?;
-    let base = temporary.path().canonicalize()?;
+    // Create a fresh native-private fixture parent. Recreated children must
+    // inherit this policy, never the host's unrelated temporary-directory ACL.
+    let owner = temporary.path().join("owner");
+    airk_ipc::endpoint::prepare_root(&owner)?;
+    let base = owner.canonicalize()?;
     let text = |path: PathBuf| path.to_str().unwrap().to_owned();
     let locations = airk_core::install_record::Locations {
         program: text(base.join("program")),

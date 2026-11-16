@@ -52,6 +52,7 @@ fn generic_rule(margin: f32) -> JointRule {
 fn calibration(profile: &Profile, policy: Sha256Digest, margin: f32) -> JointCalibration {
     JointCalibration {
         schema: CALIBRATION_SCHEMA.into(),
+        class_support: None,
         model: profile.model,
         compiler: profile.compiler,
         task_policy: policy,
@@ -598,3 +599,5 @@ fn native_proxy_fit_serialized_asset_binds_complete_model_map_policy_and_abi() -
 }
 
 mod selected;
+
+mod terminal;

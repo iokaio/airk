@@ -752,6 +752,21 @@ impl Plan {
                 };
                 let root = task.root.clone();
                 let bytes = root.as_os_str().len();
+                // Root availability is independent of ignore metadata. In
+                // particular, a missing root must not become a metadata failure
+                // merely because constructing its ignore matcher canonicalizes it.
+                if let Err(error) = watch_directory(&root) {
+                    self.failures.get_mut(&task.project).unwrap()[task.index] =
+                        Some(WatchFailure::RootUnavailable);
+                    let traversal = &mut self.usage.entry(task.project).or_default().traversal;
+                    traversal.incomplete_roots.push(task.index as u16);
+                    traversal.push(UnreadableDirectory {
+                        root: task.index as u16,
+                        path: root.to_string_lossy().into_owned(),
+                        reason: directory_failure(&error).into(),
+                    });
+                    continue;
+                }
                 let ignores = match airk_ingest::source_scope::DirectoryIgnore::with_source_policy(
                     &root,
                     task.policy.as_ref(),
@@ -880,32 +895,8 @@ impl Plan {
                     self.fail(failure);
                     continue;
                 }
-                let safe = (|| -> Result<()> {
-                    let metadata = fs::symlink_metadata(&path)?;
-                    ensure!(
-                        metadata.is_dir() && !metadata.file_type().is_symlink(),
-                        "redirected watch directory"
-                    );
-                    #[cfg(windows)]
-                    {
-                        use std::os::windows::fs::MetadataExt;
-                        ensure!(
-                            metadata.file_attributes() & 0x400 == 0,
-                            "redirected watch directory"
-                        );
-                    }
-                    ensure!(
-                        comparison_path(&path.canonicalize()?) == comparison_path(&path),
-                        "aliased watch directory"
-                    );
-                    Ok(())
-                })();
-                if let Err(error) = safe {
-                    let reason = error
-                        .downcast_ref::<std::io::Error>()
-                        .map(directory_error)
-                        .unwrap_or("redirected");
-                    self.unreadable(path, reason);
+                if let Err(error) = watch_directory(&path) {
+                    self.unreadable(path, directory_failure(&error));
                     continue;
                 }
                 match fs::read_dir(&path) {
@@ -926,6 +917,34 @@ impl Plan {
         }
         Ok(false)
     }
+}
+
+fn watch_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "redirected watch directory"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "redirected watch directory"
+        );
+    }
+    ensure!(
+        comparison_path(&path.canonicalize()?) == comparison_path(path),
+        "aliased watch directory"
+    );
+    Ok(())
+}
+
+fn directory_failure(error: &anyhow::Error) -> &'static str {
+    error
+        .downcast_ref::<std::io::Error>()
+        .map(directory_error)
+        .unwrap_or("redirected")
 }
 
 fn directory_error(error: &std::io::Error) -> &'static str {

@@ -301,6 +301,21 @@ std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         self.assertIn("packages/vscode/src/uiPilotContract.ts", needed)
         self.assertIn("packages/vscode/src/generated/i2.ts", needed)
 
+    def test_budget_metadata_and_native_semantic_fixture_have_exact_container_admission(self):
+        manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
+        rules = (ROOT / ".dockerignore").read_text().splitlines()
+        metadata = "packages/vscode/src/generated/arbiterBudget.ts"
+        fixture = "fixtures/split/arbiter/budget_cases.json"
+        self.assertIn(metadata, relative_frontend_inputs(ROOT))
+        for name in (metadata, fixture):
+            with self.subTest(required=name):
+                self.assertIn(name, manifest["files"])
+                self.assertTrue((ROOT / name).is_file())
+                self.assertFalse(any(name.startswith(tree + "/") for tree in manifest["trees"]))
+                self.assertTrue(context_admitted(name, rules))
+                neighbor = Path(name).with_name("unreviewed-budget-neighbor.txt").as_posix()
+                self.assertFalse(context_admitted(neighbor, rules))
+
     def test_all_external_rust_test_inputs_are_exact_manifest_files(self):
         manifest = json.loads((ROOT / "scripts/container-inputs.json").read_text())
         required = external_rust_inputs(ROOT)

@@ -175,7 +175,10 @@ class ServiceInstallCheckTests(unittest.TestCase):
                 body = {"hits":[{"citation":{"path":"sentinel.txt", "content_hash":smoke.sha256(source / "sentinel.txt")},"text":"Original source proof"}]}
                 envelope = {"content":[{"type":"text","text":json.dumps(body)}],"isError":False}
                 class Client:
-                    def __init__(self, *_):
+                    def __init__(self, endpoint, selected_control, *, scope):
+                        self_outer.assertEqual(selected_control, control)
+                        self_outer.assertEqual(scope, {"index_ids": ["idx_original"]})
+                        self_outer.assertNotIn("credential_file", endpoint)
                         self.responses = {}; self.closed = False; clients.append(self)
                         self.session = "owned-session-" + str(len(clients))
                     def send(self, message):
@@ -239,7 +242,13 @@ class ServiceInstallCheckTests(unittest.TestCase):
                     if action == "start": return {**health,"instance":"f" * 32}
                     raise AssertionError(arguments)
                 reviewed = SimpleNamespace(reviewed_fixture=lambda rpc, *_args, **_kwargs:(project, selected))
-                transport = SimpleNamespace(McpClient=Client, enroll_native=native_transport.enroll_native, validate_native_identity=lambda *_:None, parity_value=lambda value:value)
+                endpoint = {"url": "https://127.0.0.1:57421/mcp", "service_instance": health["instance"]}
+                def validate_endpoint(value, native):
+                    if fault == "authority":
+                        raise ValueError("endpoint identity changed")
+                transport = SimpleNamespace(McpClient=Client, read_endpoint=lambda _:endpoint,
+                    enroll_native=mock.Mock(side_effect=AssertionError("No credential enrollment")),
+                    validate_native_identity=validate_endpoint, parity_value=lambda value:value)
                 reads = SimpleNamespace(metadata_rpc=lambda invoke,method:invoke(json.dumps(method),None), read_retry_delay=lambda _:None)
                 def load(_name,file):
                     return {"check-runtime-upgrade.py":reviewed,"http_fixture.py":transport,"check-service-clients.py":reads}[file]
@@ -254,12 +263,13 @@ class ServiceInstallCheckTests(unittest.TestCase):
                         result = smoke.modern_client_lifecycle(*args, stopped_probe=stopped_probe, cli=cli)
                         self.assertEqual(stopped_checks, [True])
                         self.assertNotEqual(result["instance"],health["instance"])
-                        self.assertEqual(len(enrollments),2)
-                        self.assertNotEqual(enrollments[0]["connection_id"],enrollments[1]["connection_id"])
-                        self.assertEqual(enrollments[0]["selection"],enrollments[1]["selection"])
+                        self.assertEqual(enrollments, [])
+                        transport.enroll_native.assert_not_called()
+                        self.assertEqual(len(clients), 2)
+                        self.assertNotEqual(clients[0].session, clients[1].session)
                         self.assertEqual(sum(arguments[:2] == ("runtime","lifecycle") for arguments,_ in calls),1)
                     elif fault == "authority":
-                        with self.assertRaisesRegex(ValueError, "immutable selection"):
+                        with self.assertRaisesRegex(ValueError, "endpoint identity"):
                             smoke.modern_client_lifecycle(*args)
                     else:
                         with self.assertRaisesRegex(RuntimeError, "authority|replaced|Stop|parity"):
@@ -267,7 +277,10 @@ class ServiceInstallCheckTests(unittest.TestCase):
                 self.assertTrue(all(client.closed for client in clients))
                 if split:
                     self.assertIn((cli, ("service", "rpc")), images)
-                    self.assertIn((main, smoke.INTERIM_SELECTOR), images)
+                    if fault != "instance":
+                        self.assertIn((main, smoke.INTERIM_SELECTOR), images)
+                    else:
+                        self.assertNotIn((main, smoke.INTERIM_SELECTOR), images, "Crossed endpoint refuses before a runtime mutation")
                 self.assertEqual((source / "sentinel.txt").read_bytes(),b"Original source proof\n")
 
     def test_complete_envelope_parity_normalizes_only_documented_timing(self):

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Actual async IO driver entry controls. No service/model/NN or forged role.
-use super::{clipped, drive_control};
+use super::{clipped, drive_control, next_read_budget};
 use anyhow::{Context, Result, ensure};
 use std::{
     io::{Read, Write},
@@ -236,5 +236,91 @@ fn metadata_waits_clip_to_the_original_read_deadline_and_never_start_late() -> R
         refused.is_err_and(|error| error.is::<airk_core::scoped_reads::ScopeReadRefused>()),
         "scope refusal was not preserved"
     );
+    Ok(())
+}
+
+#[test]
+fn next_read_narrows_each_original_budget_without_minting_an_attempt() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        read_attempt::{ReadAttemptBudget, ReadClock},
+    };
+    let sampled = Instant::now();
+    let now_ns = 1_000_000_000;
+    let original = ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([7; 16]),
+        clock: ReadClock::WindowsPerformanceCounter,
+        expires_monotonic_ns: now_ns + 20_000_000_000,
+        remaining_ns: 18_000_000_000,
+        native_retry_expires_monotonic_ns: Some(now_ns + 5_000_000_000),
+    };
+    for (local_ms, caller_ms, host_now, expected_ns) in [
+        (30_000, 5_000, now_ns, 5_000_000_000),
+        (3_000, 30_000, now_ns, 3_000_000_000),
+        (30_000, 30_000, now_ns + 19_000_000_000, 1_000_000_000),
+        (30_000, 30_000, now_ns, 18_000_000_000),
+    ] {
+        let (narrowed, remaining_ms) = next_read_budget(
+            Some(original),
+            caller_ms,
+            sampled + Duration::from_millis(local_ms),
+            sampled,
+            ReadClock::WindowsPerformanceCounter,
+            host_now,
+        )?;
+        assert_eq!(narrowed.request_id, original.request_id);
+        assert_eq!(narrowed.clock, original.clock);
+        assert_eq!(narrowed.schema, original.schema);
+        assert_eq!(narrowed.expires_monotonic_ns, original.expires_monotonic_ns);
+        assert_eq!(
+            narrowed.native_retry_expires_monotonic_ns,
+            original.native_retry_expires_monotonic_ns
+        );
+        assert_eq!(narrowed.remaining_ns, expected_ns);
+        assert_eq!(remaining_ms, expected_ns / 1_000_000);
+    }
+    for (attempt, caller_ms, deadline, clock, host_now) in [
+        (
+            None,
+            30_000,
+            sampled + Duration::from_secs(30),
+            original.clock,
+            now_ns,
+        ),
+        (
+            Some(original),
+            0,
+            sampled + Duration::from_secs(30),
+            original.clock,
+            now_ns,
+        ),
+        (
+            Some(original),
+            120_001,
+            sampled + Duration::from_secs(30),
+            original.clock,
+            now_ns,
+        ),
+        (Some(original), 30_000, sampled, original.clock, now_ns),
+        (
+            Some(original),
+            30_000,
+            sampled + Duration::from_secs(30),
+            original.clock,
+            original.expires_monotonic_ns,
+        ),
+        (
+            Some(original),
+            30_000,
+            sampled + Duration::from_secs(30),
+            ReadClock::UnixMonotonic,
+            now_ns,
+        ),
+    ] {
+        assert!(next_read_budget(attempt, caller_ms, deadline, sampled, clock, host_now).is_err());
+    }
+    // The caller's retained value is not mutated or replaced by projection.
+    assert_eq!(original.remaining_ns, 18_000_000_000);
     Ok(())
 }

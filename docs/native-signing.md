@@ -15,6 +15,28 @@ continues refusing local receipts; local and hosted components cannot mix.
 This produces an unpublished local candidate. Hosted release qualification,
 installation journeys and publication retain their separate gates.
 
+For a local installer from an already tested pair, the local driver also accepts:
+
+```powershell
+python scripts/build-local-service-installer.py --runtime-dir <tested-pair> --admin-inventory <sealed-admin-inventory.json> --iscc <verified-ISCC.exe>
+```
+
+The equivalent PowerShell flags are `-RuntimeDir`, `-AdminInventory` and `-Iscc`.
+This explicit mode runs no Cargo or npm command. It checks the complete canonical
+runtime against this checkout, its static ORT inputs and the sealed Admin
+inventory, then signs fresh copies and runs the existing canonical post-sign
+import, model and metadata checks before assembling the installer. The receipt
+binds the original pair metadata and images; the original pair remains unchanged.
+`--force-build` retains the existing full local build path. Local receipts remain
+local; the hosted standalone packager continues refusing them.
+
+Compiler qualification binds the exact official Inno Setup 6.7.1 payload.
+The installed compiler reports ProductVersion `0.0.0.0`; the authenticated
+official payload has that same value. The execution ledger records the exact
+118-file comparison and all 17 component signature checks. This evidence resolves
+local compiler provenance for those bytes; this mode adds no version override
+and does not alter hosted compiler admission or qualify an untested package.
+
 The public signing identities live in one reviewed file, `scripts/signing-identity.json` (schema `airk-signing-identity/1`): the Windows publisher, identity EKU and Azure Artifact Signing account and profile; the pinned local Artifact Signing client; and the Apple team, Developer ID name, leaf-certificate SHA-256 and the Neo keychain and notary profile names. It holds no secrets. `sign-native.py` loads it, refuses unknown or missing fields, and derives the hosted `AZURE_SIGNING` policy from it unchanged. Tests check that the hosted workflow inputs and the macOS script constants still equal the file.
 
 ## Current split runtime signing contract

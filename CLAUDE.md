@@ -253,7 +253,7 @@ At handoff distinguish findings, reproductions, hypotheses, passes and skipped/u
 
 ## Current work
 
-Active campaign: Arbiter final planning and execution handoff.
+Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:42Z).
 
 | Need | Source |
 |---|---|
@@ -268,12 +268,12 @@ Active campaign: Arbiter final planning and execution handoff.
   this branch and an opening DCO-signed commit containing the pending files and
   agent-instruction cleanup. Commit locally; no push to this new branch, PR,
   merge, publication or deployment is authorized.
-- Current task: prepare the agent instructions and opening commit. The final
-  plan is ready for a later implementation instruction; this task does not
-  start its training, builds, qualification or installation campaign.
+- Current task: implement all steps of docs/arbiter/final-plan.md, authorized
+  by the user on 15 November 2026. Execution T0 is recorded in the ledger;
+  target 24 hours and hard maximum 48 hours apply across sessions.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
-- For later authorized implementation, target 24 hours with a hard 48-hour
+- For this authorized implementation, target 24 hours with a hard 48-hour
   maximum from its recorded execution start. Use only this Windows machine and
   Mac Neo. Deliver a Windows candidate first, then attempt all applicable
   supported-platform gates and report genuine blockers. No paid/cloud compute
@@ -299,8 +299,13 @@ Active campaign: Arbiter final planning and execution handoff.
   contract-first ordering, explicit parallel file ownership, a single Cargo
   owner and primary review before expensive integrated runs. A failing model
   or unavailable host does not stop independent product checks.
-- Isolated build target: artifacts/v190/p10-target. Reuse the warm Windows
-  target; do not routinely clean it or share it concurrently across checkouts.
+- User exception approved during implementation: reviewed in-scope tracked-file
+  content edits may proceed while preserving each existing owner and ACL exactly.
+  This does not authorize writing foreign-owned ignored artifacts, caches or
+  private state, or changing ownership/access policy.
+- Build target for this execution: target/ (human-owned warm checkout target).
+  The designated artifacts/v190/p10-target root is foreign-owned and remains
+  preserved. Do not clean targets or share them across concurrent checkouts.
 - Mac Neo: existing SSH setup, POSIX sh batches, checkout ~/code/airk;
   connection details in ignored artifacts/v190/neo-connection.local.json.
   Verify the host's logged-in user before any batch. Preserve evidence outside

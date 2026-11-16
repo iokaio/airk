@@ -32,3 +32,41 @@ Windows removal resumes the exact original uninstaller and matching DAT with `/A
 A native-owned producer lease spans preparation, file placement, native completion and outer wrapper cleanup. Unix wrappers use `--wrapper-lease-script <absolute current script>` to re-execute the verified wrapper with the exact original request, forwarding `--wrapper-silent` when needed. An inherited descriptor is accepted only through native exact-file/actual-lock proof (`wrapper-lease-held`), never an environment boolean; copying descendants retain it until their actual exit. Windows receives a native duplicated mutex handle for the protected current-user Global kernel object, not a caller PID or handwritten ACL. Inno acquires it with WaitForSingleObject(0), retains it through PATH/seal or tracked uninstaller cleanup and releases/closes it on deinitialization. Native validates the actual launching process ancestry/birth before transfer. Concurrent producers refuse rather than copying over each other; process death does not manufacture successful setup.
 
 Unix original-operation recovery preserves the native UTF-8 scalar for all five roots byte-for-byte, including trailing LF. Shell capture appends a fixed suffix only after native success, removes exactly that suffix and assigns through an explicit five-name POSIX case; it performs no JSON parsing or eval. A native nonzero status, even after partial stdout, propagates before any root assignment. Empty transport values are preserved by capture and remain subject to the native path contract.
+
+## Local candidate reuse of a tested runtime
+
+The local Windows installer driver accepts either its existing explicit
+`--force-build` path or `--runtime-dir` with `--admin-inventory`. The consume path
+uses the canonical complete C7 runtime validator and exact current checkout,
+platform/version, static ORT and Rust-bound Admin closure. Missing metadata or
+proof is refused; no metadata is synthesized and no Cargo/npm command runs.
+The complete verified pair is copied into fresh owned signing input. Its original
+images and metadata hashes are recorded in the local receipt's additive
+`input_runtime` field. Original and copied inputs are revalidated after packaging.
+The signed copies retain their original build profile and pass the same native
+import/model/metadata sealing owner before the ordinary layout and two-pass
+signed uninstaller/outer-installer path. Source, static/Admin and payload drift
+continue refusing success. Local provenance never satisfies hosted publication
+admission. Compiler identity and installed-product qualification retain their
+separate requirements; reuse grants neither.
+
+## Current macOS I4 journey driver
+
+`scripts/check-current-macos-install.py` consumes independently approved genuine
+source/signed matched pairs and notarized DMGs through the existing artifact
+owners. It exercises the actual current silent wrapper, native I4 discovery and
+setup receipts, original-operation reconciliation, service image/user/lifecycle
+observations and keep-data removal. Admission refuses occupied or unknown
+account state and unexpected predecessors; it supplies no reset acknowledgement,
+login/trust consent or alternate identity. The process census matches executable
+basenames after parsing PID/UID/path and scopes blockers to the effective UID,
+matching native Mac `PROC_UID_ONLY`; other-user rows are preserved observations,
+not cleanup authority. Kernel events and reads check the same original deadline
+before and after observation. Only `ESRCH` during exit observation may be resolved
+by one same-PID absence read inside that deadline; other errors remain unknown.
+An interrupted or refused operation retains requests, mounts and diagnostics;
+there is no automatic cleanup/replay and no receipt-only inference of process
+exit. A genuine older complete input set is required for an upgrade claim.
+Successful original-operation wrapper reconciliation is separately labeled and
+does not establish interrupted-recovery acceptance. Mock/pure driver tests do
+not qualify a Mac artifact, installed service, model or platform outcome.

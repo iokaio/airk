@@ -1036,3 +1036,39 @@ fn linked_configuration_files_are_refused() {
     assert!(edit_file(&link, None, false, |_| Ok("{\"x\": 1}\n".into())).is_err());
     assert_eq!(std::fs::read_to_string(&target).expect("read"), "{}\n");
 }
+
+#[test]
+fn canonical_manual_entries_match_native_writer_for_every_supported_client_scope_and_escaping() {
+    use airk_core::agent_manual::{ManualClient, ManualScope};
+    for (agent, client) in [
+        (Agent::Claude, ManualClient::Claude),
+        (Agent::Codex, ManualClient::Codex),
+        (Agent::Copilot, ManualClient::Vscode),
+    ] {
+        for (scope, manual_scope) in [
+            (Scope::Project, ManualScope::Project),
+            (Scope::User, ManualScope::User),
+        ] {
+            for key in ["airk", "airk-\"scope\\x"] {
+                let expected = airk_core::agent_manual::entry(
+                    client,
+                    manual_scope,
+                    "/p/config".into(),
+                    key,
+                    "https://127.0.0.1:57429/mcp".parse().unwrap(),
+                )
+                .unwrap();
+                let written =
+                    connect(agent, scope, None, key, "https://127.0.0.1:57429/mcp").unwrap();
+                // Compare the complete declaration, including every header and field.
+                let manual = recognize::declarations(agent.parser(), &expected.text).unwrap();
+                let actual = recognize::declarations(agent.parser(), &written).unwrap();
+                assert_eq!(manual.len(), 1);
+                assert_eq!(actual.len(), 1);
+                assert_eq!(manual[0].container, actual[0].container);
+                assert_eq!(manual[0].server_key, actual[0].server_key);
+                assert_eq!(manual[0].fields, actual[0].fields);
+            }
+        }
+    }
+}

@@ -131,10 +131,22 @@ def verify_runtime(runtime, approved):
     version = pair.get('version','')
     require(isinstance(version,str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version) is not None, 'runtime_schema')
     modern = tuple(map(int,version.split('.'))) >= (1,8,14)
-    require(type(pair.get('schema')) is int and pair['schema'] == (2 if modern else 1)
-            and install.get('schema') == build.get('schema') == 1, 'runtime_schema')
-    expected_fields = {'schema','version','os','arch','airk_sha256'} | (set() if modern else {'embed_sha256'})
-    require(set(pair) == expected_fields, 'runtime_schema')
+    split = pair.get('schema') == 3
+    builder = None
+    if split:
+        builder = clients().runtime_builder()
+        try:
+            require(builder.split_pair_version(version), 'runtime_schema')
+            builder.split_receipts().validate_pair_metadata(pair)
+            builder.split_receipts().validate_build_receipt(build)
+        except ValueError as error:
+            raise CampaignError('runtime_schema') from error
+        require(install.get('schema') == 1, 'runtime_schema')
+    else:
+        require(type(pair.get('schema')) is int and pair['schema'] == (2 if modern else 1)
+                and install.get('schema') == build.get('schema') == 1, 'runtime_schema')
+        expected_fields = {'schema','version','os','arch','airk_sha256'} | (set() if modern else {'embed_sha256'})
+        require(set(pair) == expected_fields, 'runtime_schema')
     require(build.get('runtime') == pair and install.get('version') == pair.get('version'), 'runtime_receipt_mismatch')
     require(build.get('profile') == 'release', 'release_runtime_required')
     files = install.get('files', {})
@@ -152,16 +164,19 @@ def verify_runtime(runtime, approved):
         forbidden = {'airk-embed'+suffix,'airk-launcher'+suffix,'airk-service'+suffix,'airk-index'+suffix,'airk-source'+suffix,
                      'onnxruntime.dll','libonnxruntime.so','libonnxruntime.dylib'}
         require(not any(PurePosixPath(name).name in forbidden for name in files),'runtime_retired_process_payload')
-    executables = [('airk','airk_sha256')] if modern else [('airk','airk_sha256'),('airk-embed','embed_sha256')]
+    executables = ([('airk','airk_sha256'),('airkctl','airkctl_sha256')] if split else
+                   [('airk','airk_sha256')] if modern else [('airk','airk_sha256'),('airk-embed','embed_sha256')])
     for name, key in executables:
         binary = runtime / f'{stem}{name}{suffix}'
         require(digest(binary) == pair.get(key), 'runtime_pair_mismatch')
-        observed = subprocess.run([str(binary), '--version'], capture_output=True, timeout=30)
+        command = builder.version_command(runtime, binary.relative_to(runtime), version) if split else [str(binary), '--version']
+        observed = subprocess.run(command, capture_output=True, timeout=30)
         require(observed.returncode == 0 and observed.stdout.decode().strip() == f'{name} {pair["version"]}', 'compiled_version_mismatch')
     return {'version': pair['version'], 'install_sha256': approved, 'main_sha256': pair['airk_sha256'],
-            'helper_sha256': None if modern else pair['embed_sha256'], 'profile': build['profile'],
+            'helper_sha256': None if modern else pair['embed_sha256'],
+            'cli_sha256': pair['airkctl_sha256'] if split else None, 'profile': build['profile'],
             'lightweight_basis': None if modern else 'externally_approved_no_default_features_builder',
-            'execution_basis': 'externally_approved_single_main_builder' if modern else 'externally_approved_historical_pair',
+            'execution_basis': 'externally_approved_split_pair_builder' if split else 'externally_approved_single_main_builder' if modern else 'externally_approved_historical_pair',
             'build_receipt_sha256': digest(runtime / 'airk-build.json')}
 
 
@@ -204,6 +219,11 @@ def validate_publication(publication, expected, require_collection=False):
 
 
 def validate_scope(value, expected, name, failed):
+    open_index = expected.get('index_id')
+    if open_index is not None and (not failed or 'read_scope' in value):
+        scope = value.get('read_scope')
+        require(isinstance(scope, dict) and scope.get('source') == 'named'
+                and scope.get('index_ids') == [open_index], 'crossed_response_scope')
     for key, wanted in [('collection', expected['collection']), ('project', expected['binding'])]:
         if key in value:
             require(value[key] == wanted, 'crossed_response_scope')
@@ -230,11 +250,13 @@ def validate_scope(value, expected, name, failed):
     if success:
         require(value.get('collection') == expected['collection'] and publication is not None, 'missing_response_scope')
         if name in ('status', 'diagnostics'):
-            require(value.get('project') == expected['binding'], 'missing_response_scope')
+            if open_index is None:
+                require(value.get('project') == expected['binding'], 'missing_response_scope')
         else:
             require(publication.get('collection') == expected['collection'], 'missing_publication_scope')
     elif name in ('status', 'diagnostics') and not failed:
-        require(value.get('project') == expected['binding'] and publication is None, 'invalid_unavailable_scope')
+        require((open_index is not None or value.get('project') == expected['binding'])
+                and publication is None, 'invalid_unavailable_scope')
 
 
 def safe_observation(envelope, expected=None, name=None):
@@ -363,10 +385,7 @@ class Session:
         f = self.fixture
         try:
             selected = f.scopes[self.project]
-            identity = uuid.uuid4().hex
-            connection = f.enroll_http({'kind': 'scoped', 'selection': selected}, identity, 'unknown',
-                                      deadline=self.deadline)
-            require(connection.get('connection_id') == identity, 'http_connection_identity_changed')
+            endpoint = f.http_endpoint()
             spec = importlib.util.spec_from_file_location('corpus_https_fixture', repository() / 'scripts/http_fixture.py')
             transport = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(transport)
@@ -374,12 +393,9 @@ class Session:
             require(health['instance'] == f.managed_health['instance']
                     and health['runtime_sha256'] == f.managed_health['runtime_sha256']
                     and health['executable_sha256'] == f.managed_health['executable_sha256'], 'http_service_identity_changed')
-            transport.validate_native_identity(connection, health)
-            require(connection['selection']['kind'] == 'scoped', 'http_selection_changed')
-            actual, expected = connection['selection']['selection'].copy(), selected.copy()
-            actual.pop('expected_catalog_revision'); expected.pop('expected_catalog_revision')
-            require(actual == expected, 'http_selection_changed')
-            self.network = transport.McpClient(connection, f.control, timeout=remaining(self.deadline, f.command_timeout))
+            transport.validate_native_identity(endpoint, health)
+            self.network = transport.McpClient(endpoint, f.control, timeout=remaining(self.deadline, f.command_timeout),
+                                              scope={'index_ids': [selected['index_id']]})
             response = self.request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
                 'clientInfo': {'name': 'airk-corpus-benchmark', 'version': '1'}})
             require(isinstance(response.get('serverInfo'), dict), 'initialize_invalid')
@@ -427,7 +443,10 @@ class Session:
         before = time.perf_counter()
         try:
             envelope = self.request('tools/call', {'name': name, 'arguments': arguments or {'response_mode': 'full'}})
-            observed = safe_observation(envelope, self.fixture.projects[self.project], name)
+            expected = self.fixture.projects[self.project]
+            if getattr(self.fixture, 'single_image', False):
+                expected = {**expected, 'index_id': self.fixture.scopes[self.project]['index_id']}
+            observed = safe_observation(envelope, expected, name)
             return envelope, {'elapsed_ms': round((time.perf_counter() - before) * 1000, 3), **observed}
         except Exception as error:
             code = failure_code(error)
@@ -847,7 +866,7 @@ def reopen_campaign(fixture, project, probes, samples, output=None):
         # durable UserStop; ordinary activation must not bypass that fence.
         fixture.managed_stop = None  # Start may succeed before an uncertain reply.
         fixture.managed_health = None
-        restarted = json.loads(fixture.run('runtime', 'start', '--install-dir', fixture.install).stdout)
+        restarted = json.loads(fixture.service_run('runtime', 'start', '--install-dir', fixture.install).stdout)
         health = fixture.rpc('health')['observation']
         require(health['instance'] != previous['instance']
                 and health['runtime_sha256'] == previous['runtime_sha256']
@@ -910,8 +929,8 @@ def run(args, result=None):
     result = result if result is not None else {}
     result.update({'schema': 1, 'runtime': runtime, 'samples': args.samples, 'environment': environment_facts(),
               'completion_basis': 'workflow_only_not_probe_success',
-              'cache_condition': 'fresh_authenticated_HTTPS_session_not_cold_filesystem' if runtime['execution_basis']=='externally_approved_single_main_builder' else 'fresh_process_not_cold_filesystem',
-              'service_route': 'owned_managed_service_HTTPS' if runtime['execution_basis']=='externally_approved_single_main_builder' else 'owned_explicit_service',
+              'cache_condition': 'fresh_authenticated_HTTPS_session_not_cold_filesystem' if runtime['execution_basis'] in ('externally_approved_single_main_builder','externally_approved_split_pair_builder') else 'fresh_process_not_cold_filesystem',
+              'service_route': 'owned_managed_service_HTTPS' if runtime['execution_basis'] in ('externally_approved_single_main_builder','externally_approved_split_pair_builder') else 'owned_explicit_service',
               'policy': {'watch': 'disabled', 'index': 'native_default', 'vector_selection': 'native_default',
                          'semantic': 'bundled_default' if args.semantic else 'not_provisioned',
                          'concurrent_corpora': False},

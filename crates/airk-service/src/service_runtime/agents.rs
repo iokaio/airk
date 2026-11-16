@@ -17,9 +17,14 @@ fn refused(error: &anyhow::Error) -> ControlResponse {
 pub(super) async fn endpoint(control: &Path) -> ControlResponse {
     let read = airk_https::runtime_http_commands::endpoint_at(control.to_path_buf()).await;
     match read.and_then(|value| Ok(serde_json::from_value(value)?)) {
-        Ok(endpoint) => ControlResponse::AgentEndpoint {
-            endpoint: Box::new(endpoint),
-        },
+        Ok(endpoint) => {
+            let endpoint: airk_core::service_http::EndpointDescriptor = endpoint;
+            let manual = airk_core::agent_manual::project_entries(endpoint.url);
+            ControlResponse::AgentEndpoint {
+                endpoint: Box::new(endpoint),
+                manual,
+            }
+        }
         Err(error) => refused(&error),
     }
 }

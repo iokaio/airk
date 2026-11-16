@@ -310,3 +310,10 @@ test('a retained combined catalog opener binds its original known scope before r
         assert.equal(calls,2,'the known original combined catalog source participates in caller binding');
     }finally{client.dispose();}
 });
+
+test('the default evidence deadline admits a full 120-second operation plus delivery without resetting it', async () => {
+    let observed = 0;
+    const f = harness(async (_tool, _args, timeout) => { observed = timeout; return text({ hits: [] }); });
+    try { await f.client.call('airk_search', { query: 'bounded' }); assert.ok(observed > 120000 && observed <= 125000); }
+    finally { f.client.dispose(); }
+});

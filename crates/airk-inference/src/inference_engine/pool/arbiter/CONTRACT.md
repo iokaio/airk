@@ -172,3 +172,81 @@ fixture lease/gate attachment refusal. They run no NN and claim no qualification
 The actual ContextLarge FP32 CPU8 run passed all three all-live numeric controls, but the first measured2048-token/eight-option call took30,585,085us, exceeding the unchanged30,000,000us product bound. It stopped after1/20 measurements, with a naturally settled nonzero test exit and no source drift or forced termination. CPU8 is not a qualified fit. The failed artifact, profile, command and receipts remain immutable.
 
 One new Root-declared ContextLarge hardware candidate requires at least16 physical cores, intra16/inter1, sequential/no-spinning, retaining40GiB reservation and48GiB/1800s job hard limits. This changes the hardware eligibility requirement; it does not relabel the CPU8 result. CompactCPU4/16GiB remains under its original passed identity. No model, precision, token/card shape, numeric1e-3 threshold,20-sample requirement, first-observed-failure stop or original30s deadline changes. Genuine composed service admission and independent semantic/platform gates remain required. No NN is authorized by this preparation.
+
+
+## Additive software-v2 resource/numeric evidence (/2)
+
+D06/D07's Core ResourcePolicy is frozen before scoring:8192 shared/Context,
+512 static Focus, N8 Context,120s/120000000us, twenty warm observations and
+nearest-rank index18. The new qualification/software_v2 owner consumes the
+Core ResourceRunInput with exact source-manifest, profile and file-map pins.
+It retains current target, native binary hash, same-user identity, actual ISA,
+CpuFit and Scorer runtime/provider/thread/physical-core identity. Historical /1
+selectors, formats, limits and fixtures remain unchanged and do not qualify /2.
+
+Separate ignored resource and numeric entrypoints keep missing current numeric
+references from suppressing independent resource measurements. Actual native
+ServiceLease/NativeInferenceOwner custody spans load, all score returns and
+cleanup. Resource input is native-compiled exact8192/eight-all-live Context or
+the authenticated near-cap static512 Focus pair. Load and one warmup are reported
+separately; a known warmup overrun stops before measured admission. Twenty warm
+samples use Core ResourceSeries. Every known duration uses u64 microseconds,
+with actual process-lifetime RSS; every sample is retained before its validation
+can refuse. A first overrun ends the series without further forwards or partial
+quantiles. A native error retains attempted count and no fabricated zero sample;
+known score-return error duration/RSS remains a separate observation.
+
+The numeric template emitter performs no NN work: it serializes actual native
+model inputs for independent reference production. Its missing reference fields
+cannot pass. Current Context reference rows must be17/3,128/8,8192/8; old2048
+rows never satisfy the last row. Focus retains twelve static512 controls. The
+numeric runner checks current model/compiler/policy and separately pinned
+producer/reference-asset identities, finite output/cardinality, full raw-logit
+and normalized-mass diagnostics and the exact fixture argmax. Context exact-FP32
+limits are0.001 versus both references; Focus retains0.25/0.05 publisher and
+0.001/0.00001 same-artifact limits. Native-produced scores are never expected
+references. Missing producer/reference evidence is unavailable, not acceptance.
+
+These primitive observations establish neither human task quality, calibrated
+terminal support, actual composed service allocation/end-to-end latency, load
+fit on another platform, product RAM floors nor release/publication eligibility.
+
+
+## Native original-reference asset metadata decision
+
+The separate ignored software-v2 original-reference emitter performs zero NN
+work. It consumes the current Core ResourceRunInput and a SHA-pinned private
+`airk.private.original-numeric-source-input/1` containing only the selected
+model and opaque Core ResourceFilePin values. Python supplies no Asset DTO,
+role, byte count or logical name. Rust derives a fixed per-model filename set
+and authenticated publisher SHA roster, streams actual regular non-reparse
+files, and refuses missing, duplicate, drifted or cross-model inputs.
+
+The emitted `airk.arbiter.original-numeric-source-assets/1` serializes genuine
+Core Assets for the complete original safetensors checkpoint and tokenizer:
+the first checkpoint file is Model, additional shards ExternalWeights, and
+tokenizer.json Tokenizer. Required publisher config.json and (for Context)
+model.safetensors.index.json remain separately measured original_source_files;
+they are model configuration, not native Compiler, Calibration or Fixture
+assets. Original_reference_files maps native-generated safe logical names to
+actual path, bytes and SHA. All original_source_files must still be frozen and
+sealed by the independent Torch owner. Publisher rights/full-source closure
+remains independent evidence and is not replaced by this neural roster.
+
+The roster binds model, current compiler/resource policy and the original
+pinned request. Its emission grants no reference scores, execution custody,
+qualification, public metadata authority or NN admission. An empty roster in
+the existing numeric template remains unavailable until independently produced
+references and actual original source/custody are supplied. Historical emitters,
+fixtures and Core ResourceRunInput wire bytes remain unchanged.
+
+
+The fixed neural/tokenizer pins derive from retained authenticated publisher
+manifests: Focus research-asset-pins-full.json SHA412bba9ad1c10197ef0d2b67db20690b415194fe3473e3031a35e056509b9710,
+revision e61197ed45024b0ed8a2d74b80b4d909f1255473; Context
+research-asset-pins.json SHA4cac4fc751d996e987bb4701fb90ce8cbd600af06152151b4ea99bed8d6c664c,
+Compact revision70d244cc86ccca08cf5af4e1e306ecf908b1ad5e and Large
+revision1cfa9a7208912126459214e8b04321603b3df60c. Configuration/index SHA256
+pins were independently recomputed after the complete original publisher
+SHA/Git-blob closure check. Output records these provenance identities without
+claiming that the minimal neural roster replaces that complete source audit.

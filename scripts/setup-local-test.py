@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Prepare this checkout's Codex connection from one verified local build.
 
+Current matched pairs use tokenless HTTPS with explicit per-call scope and native
+manual/Connect output; configuration mutations belong to airkctl's safe writer.
+Pre-U110 migrations remain available only for their historical runtime versions.
 Preserve existing collection/storage and tool policies. No agent execution,
 publication, private-state export, or modification of user-level configuration.
 """
@@ -70,9 +73,14 @@ def verify_modern_runtime(runtime, approved):
     actual = {item.relative_to(runtime).as_posix() for item in runtime.rglob('*') if item.is_file()}
     require(actual == set(manifest['files']) | {'airk-install.json'}, 'Unlisted runtime files preserved; approval refused')
     pair = json.loads(read_config(runtime / 'airk-runtime.json'))
-    require(set(pair) == {'schema', 'version', 'os', 'arch', 'airk_sha256'} and pair['schema'] == 2
-            and pair['version'] == manifest['version'] and pair['os'] == manifest['os']
-            and pair['arch'] == manifest['arch'], 'Modern single-image runtime required')
+    if pair.get('schema') == 3:
+        clients = local_module('local_setup_pair_contract', 'check-service-clients.py')
+        require(clients.classify_runtime(runtime)['topology'] == 'split_pair', 'Invalid matched runtime pair')
+    else:
+        require(set(pair) == {'schema', 'version', 'os', 'arch', 'airk_sha256'} and pair['schema'] == 2,
+                'Modern single-image or matched-pair runtime required')
+    require(pair['version'] == manifest['version'] and pair['os'] == manifest['os']
+            and pair['arch'] == manifest['arch'], 'Runtime metadata identity differs')
     require(re.fullmatch(r'\d+\.\d+\.\d+', pair['version']) is not None
             and tuple(map(int, pair['version'].split('.'))) >= (1, 8, 14), 'Modern runtime version required')
     host_os = {'win32': 'windows', 'darwin': 'macos', 'linux': 'linux'}.get(sys.platform)
@@ -81,6 +89,9 @@ def verify_modern_runtime(runtime, approved):
     suffix = '.exe' if pair['os'] == 'windows' else ''
     main = ('AIRK.app/Contents/MacOS/' if pair['os'] == 'macos' else '') + 'airk' + suffix
     require(manifest['files'].get(main) == pair['airk_sha256'], 'Modern main executable identity differs')
+    if pair['schema'] == 3:
+        ctl = ('AIRK.app/Contents/MacOS/' if pair['os'] == 'macos' else '') + 'airkctl' + suffix
+        require(manifest['files'].get(ctl) == pair['airkctl_sha256'], 'Matched airkctl executable identity differs')
     forbidden = {'airk-embed'+suffix, 'airk-launcher'+suffix, 'airk-service'+suffix, 'airk-index'+suffix, 'airk-source'+suffix,
                  'onnxruntime.dll', 'libonnxruntime.so', 'libonnxruntime.dylib'}
     require(not any(Path(name).name in forbidden for name in manifest['files']), 'Modern payload contains an obsolete runtime role')
@@ -339,10 +350,10 @@ def prepare_http_config(before, root, canonical, known_tools=None, recognized_en
     return source.encode('utf-8'), name, updated
 
 
-def https_smoke(connection, control, version, root, collection=None):
+def https_smoke(connection, control, version, root, collection=None, *, scope=None):
     """Generic real TLS/MCP verification; this does not execute the Codex client."""
     http = local_module('local_setup_http', 'http_fixture.py')
-    client = http.McpClient(connection, control)
+    client = http.McpClient(connection, control, 125, scope=scope)
     sequence = 0
     def request(method, params):
         nonlocal sequence
@@ -392,9 +403,9 @@ def https_smoke(connection, control, version, root, collection=None):
         client.close()
 
 
-def setup_http(runtime, approved, install, connection_id, root, *, selection_file=None,
+def setup_http_legacy(runtime, approved, install, connection_id, root, *, selection_file=None,
                registration_file=None, data_dir=None, report=None, retire_legacy_launchers=False):
-    """Opt-in modern mode: no indexing, registration, grants, or global settings."""
+    """Historical pre-U110 migration; retains its original credential/lineage checks."""
     root = root.resolve(strict=True)
     require(root != Path.home().resolve(), 'User-level Codex configuration must not be modified')
     require(re.fullmatch(r'[a-f0-9]{32}', connection_id or '') is not None, 'Explicit stable connection ID required')
@@ -506,6 +517,125 @@ def setup_http(runtime, approved, install, connection_id, root, *, selection_fil
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(receipt, indent=2)+'\n', encoding='utf-8')
     return receipt
+
+
+
+def native_outcome(binary, arguments):
+    """Keep a native command's complete structured outcome, including uncertainty."""
+    try:
+        result = subprocess.run([str(binary), *map(str, arguments)], capture_output=True,
+                                text=True, encoding='utf-8', timeout=125, **process_options())
+    except subprocess.TimeoutExpired as error:
+        def partial(value):
+            raw = value if isinstance(value, bytes) else (value or '').encode('utf-8')
+            return {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+        return {'exit_code': None, 'transport_outcome': 'uncertain', 'timeout_seconds': error.timeout,
+                'partial_stdout': partial(error.stdout), 'partial_stderr': partial(error.stderr)}
+    raw = result.stdout if result.returncode == 0 else result.stderr
+    try:
+        if len(raw.encode()) > LIMIT or 'airk1.' in raw:
+            raise ValueError('invalid native response')
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError('invalid native response')
+    except ValueError:
+        # A completed process with unreadable output does not prove whether its
+        # admitted edit committed. Keep a typed transport outcome; never retry.
+        return {'exit_code': result.returncode, 'transport_outcome': 'uncertain',
+                'response_failure': 'invalid_native_response', 'response_bytes': len(raw.encode()),
+                'response_sha256': hashlib.sha256(raw.encode()).hexdigest()}
+    return {'exit_code': result.returncode, 'result': value}
+
+
+def tokenless_setup(runtime, approved, control, root, *, scope, apply_config=False, report=None):
+    """U110 setup uses native manual/Connect owners; Python never edits configuration.
+
+    Explicit index/set scope and explicit existing workspace defaults are separate
+    choices. This helper creates no index, default, enrollment, grant or token.
+    """
+    root = root.resolve(strict=True)
+    require(control.is_absolute(), 'Explicit absolute control directory required')
+    control = control.resolve(strict=True)
+    if report is not None:
+        report = report.resolve()
+        require(report.is_relative_to(root / 'artifacts' / 'local'), 'Setup evidence must remain under checkout artifacts/local')
+        regular(report)
+        require(not report.exists(), 'Setup report already exists; nothing changed')
+    require(root != Path.home().resolve(), 'User-level Codex configuration must not be modified')
+    _binary, version, execution = verify_modern_runtime(runtime, approved)
+    pair = json.loads(read_config(runtime / 'airk-runtime.json'))
+    require(pair['schema'] == 3 and tuple(map(int, version.split('.'))) >= (1, 8, 206),
+            'Tokenless setup requires a current matched airk/airkctl pair')
+    suffix = '.exe' if pair['os'] == 'windows' else ''
+    relative = ('AIRK.app/Contents/MacOS/' if pair['os'] == 'macos' else '') + 'airkctl' + suffix
+    cli = runtime.resolve(strict=True) / relative
+    require(cli.is_file() and hashlib.sha256(cli.read_bytes()).hexdigest() == pair['airkctl_sha256'],
+            'Matched airkctl identity differs')
+    http = local_module('local_setup_open_http', 'http_fixture.py')
+    scope = http.scope_value(**scope)
+    require(scope, 'Explicit index, index-set, or existing workspace-default scope required')
+    prefix = ['--output', 'json', '--service-runtime-dir', control]
+    endpoint_view = native_json(cli, [*prefix, 'agents', 'endpoint'])
+    endpoint = {key: value for key, value in endpoint_view.items() if key != 'manual'}
+    require(endpoint == http.read_endpoint(control) and endpoint['executable_sha256'] == execution,
+            'Native endpoint differs from the approved running image or persisted endpoint')
+    manual = native_json(cli, [*prefix, 'agents', 'manual', '--client', 'codex', '--project', root])
+    require(manual.get('client') == 'codex' and manual.get('scope') == 'project'
+            and manual.get('format') == 'toml' and Path(manual.get('file', '')) == root / '.codex' / 'config.toml'
+            and isinstance(manual.get('text'), str), 'Native manual entry target differs')
+    config = root / '.codex' / 'config.toml'
+    before = read_config(config)
+    verification = https_smoke(endpoint, control, version, root, scope=scope)
+    require(read_config(config) == before, 'Configuration changed during verification; no edit requested')
+    outcome = None
+    status = 'manual_configuration_ready'
+    if apply_config:
+        outcome = native_outcome(cli, [*prefix, 'agents', 'connect', '--client', 'codex', '--project', root])
+        if outcome.get('transport_outcome') == 'uncertain':
+            status = 'configuration_outcome_unknown'
+        elif outcome['exit_code'] == 0:
+            status = 'configuration_saved'
+        else:
+            reason = outcome['result'].get('native', {}).get('reason')
+            status = {'automatic_policy': 'manual_configuration_required',
+                      'conflict_retained': 'configuration_conflict_retained',
+                      'outcome_unknown': 'configuration_outcome_unknown'}.get(reason, 'native_setup_failed')
+    else:
+        require(read_config(config) == before, 'Read-only manual setup changed configuration')
+    receipt = {'schema': 'airk-local-agent-setup/3', 'client': 'codex', 'config': str(config),
+               'selected_runtime_sha256': approved, 'endpoint': endpoint, 'read_scope': scope,
+               'manual': manual, 'native_edit': outcome, 'status': status, 'indexed': False,
+               'configuration_preimage_sha256': hashlib.sha256(before or b'').hexdigest(),
+               'client_environment_loaded': False, 'verification': verification,
+               'limitations': ['The actual Codex client was not executed; AIRK CA trust must be configured in that client.',
+                               'Manual text uses the current port; regenerate after a service port change.',
+                               'No legacy cleanup is inferred or requested by tokenless setup.']}
+    if report is not None:
+        report = report.resolve()
+        require(report.is_relative_to(root / 'artifacts' / 'local'), 'Setup evidence must remain under checkout artifacts/local')
+        regular(report)
+        report.parent.mkdir(parents=True, exist_ok=True)
+        with report.open('x', encoding='utf-8') as destination:
+            destination.write(json.dumps(receipt, indent=2) + '\n')
+    return receipt
+
+
+def setup_http(runtime, approved, install, connection_id, root, *, selection_file=None,
+               registration_file=None, data_dir=None, report=None, retire_legacy_launchers=False,
+               control=None, scope=None, apply_config=False):
+    """Dispatch current tokenless setup separately from historical migration evidence."""
+    pair = json.loads(read_config(runtime / 'airk-runtime.json'))
+    if pair.get('schema') == 3 and tuple(map(int, pair['version'].split('.'))) >= (1, 8, 206):
+        require(control is not None, 'Current tokenless setup requires explicit --control-dir')
+        require(not any((connection_id, selection_file, registration_file, data_dir, retire_legacy_launchers)),
+                'Current tokenless setup takes explicit read scope, not legacy connection/migration options')
+        return tokenless_setup(runtime, approved, control, root, scope=scope or {},
+                               apply_config=apply_config, report=report)
+    require(control is None and scope is None and not apply_config, 'Tokenless options require a current matched pair')
+    require(install is not None and connection_id, 'Historical HTTP setup requires an explicit installation and stable connection ID')
+    return setup_http_legacy(runtime, approved, install, connection_id, root,
+        selection_file=selection_file, registration_file=registration_file, data_dir=data_dir,
+        report=report, retire_legacy_launchers=retire_legacy_launchers)
 
 
 def require(condition, message):
@@ -925,10 +1055,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--build-record', type=Path, help='Historical pre-1.8.14 standalone setup only')
-    mode.add_argument('--runtime-dir', type=Path, help='Explicit verified modern single-image distribution')
+    mode.add_argument('--runtime-dir', type=Path, help='Explicit verified runtime distribution (current matched pair or historical single image)')
     parser.add_argument('--approved-sha256', help='Externally approved exact airk-install.json SHA-256')
     parser.add_argument('--install-dir', type=Path, help='Already owned managed installation of that exact distribution')
-    parser.add_argument('--connection-id', help='Stable native connection ID; reuse the same ID on uncertain setup outcomes')
+    parser.add_argument('--connection-id', help='Historical pre-U110 migration only: stable native connection ID')
+    parser.add_argument('--control-dir', type=Path, help='Current tokenless mode: explicit existing service control directory')
+    parser.add_argument('--index', action='append', dest='index_ids', help='Current mode: exact Index id/name; repeat for a union')
+    parser.add_argument('--index-set', action='append', dest='index_set_ids', help='Current mode: exact Index set id/name')
+    parser.add_argument('--workspace-default', action='store_true', help='Use the root folder existing default instead of named indexes/sets; creates no default')
+    parser.add_argument('--apply-config', action='store_true', help='Request native safe Connect; otherwise print canonical manual setup without editing')
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument('--selection-file', type=Path, help='Owner-private native-reviewed scoped/combined HttpSelection JSON')
     selection.add_argument('--registration-file', type=Path, help='Owner-private original imported legacy registration JSON')
@@ -942,16 +1077,24 @@ def main():
     args = parser.parse_args()
     try:
         if args.runtime_dir:
-            require(args.approved_sha256 and args.install_dir and args.connection_id, 'Modern mode requires explicit runtime approval, installation and stable connection ID')
+            require(args.approved_sha256, 'Modern mode requires explicit runtime approval')
+            require(not args.workspace_default or not (args.index_ids or args.index_set_ids),
+                    'Choose named indexes/sets or the existing workspace default')
+            read_scope = ({'workspace': str(args.root.resolve())} if args.workspace_default else
+                          {key: value for key, value in (('index_ids', args.index_ids), ('index_set_ids', args.index_set_ids)) if value})
             require(args.new_data_dir is None, 'Modern mode preserves native storage; --new-data-dir is historical only')
             receipt = setup_http(args.runtime_dir, args.approved_sha256, args.install_dir, args.connection_id,
                                  args.root, selection_file=args.selection_file, registration_file=args.registration_file,
-                                 data_dir=args.data_dir, report=args.report, retire_legacy_launchers=args.retire_legacy_launchers)
+                                 data_dir=args.data_dir, report=args.report, retire_legacy_launchers=args.retire_legacy_launchers,
+                                 control=args.control_dir, scope=read_scope or None, apply_config=args.apply_config)
             print(json.dumps(receipt, indent=2))
-            if not receipt['legacy_launcher_cleanup']['complete'] or not receipt.get('superseded_runtime_cleanup',{}).get('complete'):
+            if receipt.get('schema') == 'airk-local-agent-setup/3':
+                if receipt['status'] not in ('manual_configuration_ready', 'configuration_saved'):
+                    parser.exit(1, 'Native setup did not save configuration; use the retained typed outcome and manual entry.\n')
+            elif not receipt['legacy_launcher_cleanup']['complete'] or not receipt.get('superseded_runtime_cleanup',{}).get('complete'):
                 parser.exit(1, 'HTTPS configuration saved; obsolete executable cleanup remains pending or blocked. See the retained cleanup results.\n')
         else:
-            require(not any((args.approved_sha256, args.install_dir, args.connection_id, args.selection_file, args.registration_file, args.report, args.retire_legacy_launchers)),
+            require(not any((args.approved_sha256, args.install_dir, args.connection_id, args.selection_file, args.registration_file, args.report, args.retire_legacy_launchers, args.control_dir, args.index_ids, args.index_set_ids, args.workspace_default, args.apply_config)),
                     'HTTP options require --runtime-dir')
             setup(args.build_record, args.root, args.data_dir, args.skip_index, args.new_data_dir)
     except (RuntimeError, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:

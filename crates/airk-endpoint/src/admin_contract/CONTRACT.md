@@ -186,3 +186,14 @@ ArbiterContextAction, ArbiterFocusApplication and ArbiterFocusRank are forbidden
 over HTTP. No stage control grants native source scope, model qualification or
 permission to download assets on an ordinary read. Existing outcome custody,
 unknown/nonreplayable effects and dispatch/liveness rechecks remain mandatory.
+
+## Final-plan D04 manual setup projection
+
+The existing read-only `agents.endpoint` operation retains the complete native
+`AgentEndpoint` result, including Core-generated `manual` entries beside the
+checked descriptor. Each entry carries client, scope, file, format and exact
+mergeable text. Paths are project-relative until a folder is selected; the
+browser must display the native path/text and never generate JSON or TOML.
+`AgentManualEntry` and `AgentConfigRefusal` are additional shared Core roots in
+the generated I3 schema. This changes no operation, admission, persisted
+endpoint digest or source authority.

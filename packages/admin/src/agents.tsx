@@ -9,8 +9,9 @@
 // helper appears here. Every read keeps its complete native result in a
 // collapsed JSON block.
 import { Fragment, type ComponentChildren, type JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { body, OPS } from './operations';
+import type { AgentManualEntry } from '../../contracts-gen/i3';
 import { Outcome, Panel, Text, visible, type CallState, useCall } from './render';
 
 // ---------------------------------------------------------------------------
@@ -106,25 +107,24 @@ function Complete(props: { state: CallState; label?: string }): JSX.Element | nu
   );
 }
 
-function copyText(text: string): void {
-  void navigator.clipboard?.writeText(text);
-}
-
 function CopyButton(props: { text: string; label?: string }): JSX.Element {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      class="small"
-      onClick={() => {
-        copyText(props.text);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      }}
-    >
-      {copied ? 'Copied' : (props.label ?? 'Copy')}
-    </button>
-  );
+  const [message, setMessage] = useState(''), [pending, setPending] = useState(false);
+  const current = useRef(props.text); current.current = props.text;
+  useEffect(() => { setMessage(''); setPending(false); }, [props.text]);
+  const copy = async (): Promise<void> => {
+    const text = props.text;
+    setMessage(''); setPending(true);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable. Select and copy the entry below.');
+      await navigator.clipboard.writeText(text);
+      if (current.current === text) setMessage('Copied');
+    } catch {
+      if (current.current === text) setMessage('Copy failed. Select and copy the entry below.');
+    } finally { if (current.current === text) setPending(false); }
+  };
+  return <span class="au-copy"><button type="button" class="small" disabled={pending} onClick={() => void copy()}>
+    {pending ? 'Copying...' : message === 'Copied' ? 'Copied' : (props.label ?? 'Copy')}
+  </button>{message && message !== 'Copied' ? <span role="alert"> {message}</span> : null}</span>;
 }
 
 /** A one-line command with Copy. */
@@ -168,36 +168,18 @@ function Badge(props: { tone: 'ok' | 'warn' | 'bad' | 'neutral'; children: Compo
 }
 
 // ---------------------------------------------------------------------------
-// Snippet text (U110). Shapes mirror what `airkctl agents connect` writes
-// (crates/airkctl/src/agents/config): the endpoint URL and the response-mode
-// header only. The endpoint needs no credential, so no Authorization header,
-// header helper or connection id appears in any snippet.
-
+// Native manual entries preserve Rust's escaping and exact bytes.
 const MODE_HEADER = 'X-AIRK-Response-Mode';
 const CA_PLACEHOLDER = '<path to the AIRK CA certificate file>';
 
-export function claudeJson(url: string): string {
-  return JSON.stringify({ mcpServers: { airk: { type: 'http', url, headers: { [MODE_HEADER]: 'terse' } } } }, null, 2);
-}
-
-export function vscodeJson(url: string): string {
-  return JSON.stringify({ servers: { airk: { type: 'http', url, headers: { [MODE_HEADER]: 'terse' } } } }, null, 2);
-}
-
-/** TOML basic strings accept JSON string escapes for these values. */
-function tomlString(value: string): string {
-  return JSON.stringify(value);
-}
-
-export function codexToml(url: string): string {
-  return [
-    '[mcp_servers.airk]',
-    `url = ${tomlString(url)}`,
-    '',
-    '[mcp_servers.airk.http_headers]',
-    `"${MODE_HEADER}" = "terse"`,
-    '',
-  ].join('\n');
+export function manualEntriesOf(state: CallState): AgentManualEntry[] {
+  const manual = okResult(state)?.manual;
+  return Array.isArray(manual) ? manual.filter((entry): entry is AgentManualEntry => {
+    const value = obj(entry);
+    return !!value && ['claude', 'codex', 'vscode'].includes(String(value.client))
+      && ['project', 'user'].includes(String(value.scope)) && ['json', 'toml'].includes(String(value.format))
+      && typeof value.file === 'string' && typeof value.text === 'string';
+  }) : [];
 }
 
 function isWindowsPlatform(platform: string | undefined): boolean {
@@ -428,10 +410,12 @@ const CLIENTS: { id: Client; label: string }[] = [
   { id: 'other', label: 'Other MCP clients' },
 ];
 
-function ManualCard(props: { url: string | undefined; ca: string | undefined; platform: string | undefined }): JSX.Element {
+export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: string | undefined; ca: string | undefined; platform: string | undefined }): JSX.Element {
   const [client, setClient] = useState<Client>('claude');
   const url = props.url ?? 'https://127.0.0.1:<port>/mcp';
   const windows = isWindowsPlatform(props.platform);
+  const manual = props.entries.find(entry => entry.client === client);
+  const snippet = manual ? <Snippet caption={manual.file} text={manual.text} /> : <p role="status">The service has not reported a manual entry for this agent. Refresh the endpoint, or run <code>airkctl agents manual --client {client} --project &lt;folder&gt;</code>.</p>;
   const trustCommand =
     props.ca !== undefined
       ? `airkctl service trust install --expected-ca-sha256 ${props.ca}`
@@ -454,7 +438,7 @@ function ManualCard(props: { url: string | undefined; ca: string | undefined; pl
             Add this to <code>.mcp.json</code> in your project folder (or merge the <code>airk</code> entry into an
             existing <code>mcpServers</code>).
           </p>
-          <Snippet caption=".mcp.json" text={claudeJson(url)} />
+          {snippet}
           <h4>Trust</h4>
           <p>Start Claude Code with the AIRK CA certificate added to Node's trusted roots:</p>
           <Cmd text={setEnvCommand('NODE_EXTRA_CA_CERTS', CA_PLACEHOLDER, windows)} />
@@ -468,7 +452,7 @@ function ManualCard(props: { url: string | undefined; ca: string | undefined; pl
           <p>
             Add this to <code>~/.codex/config.toml</code> (or the project's <code>.codex/config.toml</code>).
           </p>
-          <Snippet caption="config.toml" text={codexToml(url)} />
+          {snippet}
           <h4>Trust</h4>
           <p>Start Codex with the AIRK CA certificate:</p>
           <Cmd text={setEnvCommand('CODEX_CA_CERTIFICATE', CA_PLACEHOLDER, windows)} />
@@ -482,7 +466,7 @@ function ManualCard(props: { url: string | undefined; ca: string | undefined; pl
           <p>
             Add this to <code>.vscode/mcp.json</code> (or your user <code>mcp.json</code>).
           </p>
-          <Snippet caption=".vscode/mcp.json" text={vscodeJson(url)} />
+          {snippet}
           <h4>Trust</h4>
           <p>
             VS Code uses the operating system's store. On Windows and macOS, install the AIRK issuer for your
@@ -533,11 +517,12 @@ function ManualCard(props: { url: string | undefined; ca: string | undefined; pl
   }
 
   return (
-    <Panel title="Configure an agent by hand">
+    <Panel title="Set up manually">
       <p>
-        These snippets use your live endpoint and the entry shape <code>airkctl agents connect</code> writes, so{' '}
+        The service supplies these complete entries for the current endpoint. Merge the AIRK entry into any existing file, preserving other settings, so{' '}
         <code>airkctl agents list</code> recognizes them by their URL.
       </p>
+      <p class="muted">If the service changes port, copy a fresh entry here or run <code>airkctl agents endpoint</code>.</p>
       <div class="au-tabs" role="tablist" aria-label="Agent">
         {CLIENTS.map((c) => (
           <button
@@ -581,7 +566,7 @@ export function Agents(): JSX.Element {
     <>
       <ConnectCard />
       <EndpointCard endpoint={endpoint} trust={trust} onReload={reload} />
-      <ManualCard url={e?.url} ca={e?.ca_sha256 ?? t?.ca_sha256} platform={t?.platform} />
+      <ManualCard entries={manualEntriesOf(endpoint)} url={e?.url} ca={e?.ca_sha256 ?? t?.ca_sha256} platform={t?.platform} />
     </>
   );
 }

@@ -55,7 +55,7 @@ test('A7 actual Workbench answer uses original bounded request and keeps complet
         await f.state.message({ type: 'answer', question: 'Find the ownership fence' }); await f.state.saveQueue;
         const request = f.created[0].requests.find(entry => entry.tool === 'airk_answer');
         assert.deepEqual(request?.args, { schema: 'airk.arbiter.context.request/2', question: 'Find the ownership fence',
-            budget: { calls: 8, rounds: 3, fanout: 8, input_tokens: 2048, candidates: 32, max_bytes: 262144, deadline_ms: 30000 } });
+            budget: { calls: 8, rounds: 3, fanout: 8, input_tokens: 8192, candidates: 32, max_bytes: 262144, deadline_ms: 120000 } });
         const turn = f.state.session!.turns.at(-1)!; assert.deepEqual(turn.envelope, native);
         const exported = JSON.parse(renderExport(f.state.session!, 'json', turn.id));
         assert.deepEqual(exported.turns[0].envelope, native);

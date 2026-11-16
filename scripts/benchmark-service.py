@@ -46,15 +46,13 @@ def immutable(value):
     return value
 
 
-def enroll(fixture, name):
-    selected = {"kind": "scoped", "selection": fixture.scopes[name]}
-    identity = uuid.uuid4().hex  # Each independently initialized client owns a credential.
-    connection = fixture.enroll_http(selected, identity, "unknown")
-    assert connection["connection_id"] == identity and immutable(connection["selection"]) == immutable(selected)
+def endpoint_context(fixture, name):
+    """One checked tokenless endpoint and explicit per-call index; no enrollment."""
+    endpoint = fixture.http_endpoint()
     health = fixture.rpc("health")["observation"]
-    http_fixture.validate_native_identity(connection, health)
+    http_fixture.validate_native_identity(endpoint, health)
     assert health["instance"] == fixture.managed_health["instance"]
-    return connection
+    return {"endpoint": endpoint, "scope": http_fixture.scope_value(index_ids=[fixture.scopes[name]["index_id"]])}
 
 
 class HttpSession:
@@ -63,7 +61,8 @@ class HttpSession:
     # establishment bounded without serializing the 64 clients' actual reads.
     handshake_slots = threading.BoundedSemaphore(16)
     def __init__(self, connection, control, observer=None):
-        self.network = http_fixture.McpClient(connection, control)
+        self.network = http_fixture.McpClient(connection["endpoint"] if "scope" in connection else connection, control,
+            **({"scope": connection["scope"]} if "scope" in connection else {}))
         self.sequence = 0
         self.closed = False
         self.uncertain = False
@@ -86,7 +85,7 @@ class HttpSession:
         # MCP sessions outlive individual TCP connections. Native HTTP stops
         # waiting for a new header after 15 s; source/vector jobs and sequential
         # cohort warmup can exceed that interval. Start each NEW exchange on
-        # fresh TCP, keeping the original credential, session and TLS checks.
+        # fresh TCP, keeping the original MCP session and TLS checks.
         # This is never an exception-triggered replay of a submitted request.
         fresh_tcp = self.sequence != 0
         self.sequence += 1
@@ -435,14 +434,14 @@ def campaign(runtime, project_count, client_count, rounds, semantic=False, evide
         semantic_setup = prepare_semantic(fixture, names, pipeline, journal=journal) if semantic else None
         before = semantic_setup["after"] if semantic else retained_snapshot(fixture, journal, "prepared_native", include_processes=True)
         journal.note("prepared", semantic_setup=semantic_setup, native=before)
-        sessions, initialize_ms, enrollment_ms = [], [], []
+        sessions, initialize_ms, endpoint_discovery_ms = [], [], []
         connections = []
         if fixture.single_image:
             for index in range(client_count):
                 started = time.perf_counter()
-                connections.append(enroll(fixture, names[index % project_count]))
-                enrollment_ms.append((time.perf_counter() - started) * 1000)
-            assert len({info["connection_id"] for info in connections}) == client_count
+                connections.append(endpoint_context(fixture, names[index % project_count]))
+                endpoint_discovery_ms.append((time.perf_counter() - started) * 1000)
+            assert len(connections) == client_count  # Distinct MCP sessions are checked after initialization.
         def initialize(index):
             started = time.perf_counter()
             name = names[index % project_count]
@@ -630,9 +629,9 @@ def campaign(runtime, project_count, client_count, rounds, semantic=False, evide
                     mcp = session.request("tools/call", {"name": "search", "arguments": arguments})
                     api = session.network.api_read("search", arguments)
                     def cli_read(until):
-                        result = fixture.run(*fixture.arguments(name), "tools", "call", "search", "--args", json.dumps(arguments), check=False, timeout=clients.remaining(until, 90))
-                        assert result.returncode in (0, 1)
-                        return json.loads(result.stdout)
+                        code, envelope = fixture.open_call(name, "search", arguments, deadline=until)
+                        assert code in (0, 1)
+                        return envelope
                     cli = cli_read(time.monotonic()+90)
                     for transport, envelope in (("mcp", mcp), ("json_api", api), ("native_cli", cli)):
                         if envelope.get("isError"):
@@ -683,8 +682,8 @@ def campaign(runtime, project_count, client_count, rounds, semantic=False, evide
                 "transport": "https" if fixture.single_image else "historical_stdio",
                 "simultaneously_initialized_sessions": len(sessions), "session_identity_sha256": session_ids,
                 "initialization_concurrency": initialization_concurrency,
-                "per_connection_credential_count": len(connections) if fixture.single_image else None,
-                "enrollment": latency(enrollment_ms), "initialize": latency(initialize_ms),
+                "per_connection_credential_count": 0 if fixture.single_image else None,
+                "endpoint_discovery": latency(endpoint_discovery_ms), "initialize": latency(initialize_ms),
                 ("first_concurrent_query_after_semantic_warmup" if semantic else "first_query_after_fixture_setup"): first_query, "idle": idle, "during": during,
                 "native_observations": {"before": before, "connected": connected, "settled": final, "after_client_close": after_close},
                 "model_load_delta_idle_connections": connected["embedding_status"]["loads"]-before["embedding_status"]["loads"],
@@ -696,7 +695,7 @@ def campaign(runtime, project_count, client_count, rounds, semantic=False, evide
                                     "unrepresented_projects": [name for number, name in enumerate(names) if not any(project == number for _, project in sessions)] if fixture.single_image else names},
                 "all_owned_client_sessions_closed": all(session.closed for session, _ in sessions) if fixture.single_image else True,
                 "all_owned_client_sessions_deleted": all(session.delete_completed for session, _ in sessions) if fixture.single_image else None,
-                "tcp_policy": "New TCP before each new MCP request and DELETE; original credential/MCP session retained; no exchange replay; TLS handshake cost included." if fixture.single_image else None,
+                "tcp_policy": "New TCP before each new MCP request and DELETE; original MCP session retained; no exchange replay; TLS handshake cost included." if fixture.single_image else None,
                 "max_concurrent_handshakes": 16 if fixture.single_image else None,
                 "source_bytes_preserved": True,
                 **({"semantic": {"mode":"explicit_vector","setup":semantic_setup,"warmup":semantic_warmup,
@@ -722,7 +721,7 @@ def main():
               "logical_cpus": os.cpu_count(), "machine": platform.machine(),
               "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
               "limitations": "Single host; lexical original fixtures; uncontrolled OS caches (first query is not a cold filesystem or cold service); health includes CLI startup; typed read rejections counted separately without mutation retries; during-wave jobs may finish before all samples; native observed_rss_bytes is the native aggregate telemetry only, not measured private physical memory; CPU not measured; process scans cannot certify unobserved global processes; no commercial client UI qualification.",
-              "tcp_policy": "Fresh TCP before each new MCP request/DELETE; original credential and MCP session retained; no submitted exchange replay; TLS handshake included in latency.",
+              "tcp_policy": "Fresh TCP before each new MCP request/DELETE; original MCP session retained; no submitted exchange replay; TLS handshake included in latency.",
               "max_concurrent_handshakes": 16,
               "selection": {"client_counts": args.clients, "project_counts": args.projects,
                             "excluded_client_counts": [value for value in (1, 10, 64) if value not in args.clients],

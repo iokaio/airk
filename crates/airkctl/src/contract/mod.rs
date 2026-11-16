@@ -64,7 +64,9 @@ pub const MAX_INVOKE_ARG_BYTES: usize = 32 * 1024;
 pub const MAX_RESPONSE_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_INVOKE_STDERR_BYTES: usize = 64 * 1024;
 pub const MAX_IN_FLIGHT: usize = 8;
-pub const MAX_INVOKE_DEADLINE_MS: u64 = 120_000;
+/// Session transport envelope: the 120000 ms operation plus 5000 ms for delivery.
+/// One original receipt-time deadline; native operation budgets are never reset.
+pub const MAX_INVOKE_DEADLINE_MS: u64 = 125_000;
 /// Event buffer per session, kept separate from reply budgets. Overflow drops
 /// the buffer and emits one `resync`; it never reports a gap as history.
 pub const MAX_BUFFERED_EVENTS: usize = 256;

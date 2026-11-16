@@ -8,8 +8,9 @@
 // `airkctl agents endpoint` and the defaults from `airkctl scope defaults`; the
 // complete native reports are kept in the collapsed Details. Native text is
 // rendered as escaped Preact text.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentClient } from '../explorerContracts';
+import type { AgentManualEntry, AgentConfigRefusal } from '../generated/i2';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
 import { CompleteNativeResponse } from './components';
@@ -35,12 +36,12 @@ export interface ScopeItemView { kind: 'index' | 'set'; id: string; name?: strin
 interface FailureView { code: string; message: string }
 interface StoredDefault { folder: string; index_ids: string[]; index_set_ids: string[]; applied_unix_ms: number; items: ScopeItemView[] }
 export interface AgentsReadView {
-    folder?: string; folders?: string[]; entries?: AgentEntryView[]; report?: unknown;
+    folder?: string; folders?: string[]; entries?: AgentEntryView[]; report?: unknown; manual?: AgentManualEntry[]; manualErrors?: FailureView[];
     endpoint?: { url: string; state?: string } | null; endpointReport?: unknown; endpointError?: FailureView;
     workspaceDefaults?: { folder: string; stored: StoredDefault | null }[]; defaultsReport?: unknown; defaultsError?: FailureView;
     windowScope?: { items: ScopeItemView[] } | null; followError?: FailureView;
 }
-interface ConnectView { status?: string; client?: AgentClient; file?: string; url?: string; changed?: boolean; scope?: ScopeItemView[] | null; defaultError?: FailureView }
+interface ConnectView { refusal?: AgentConfigRefusal; manual?: AgentManualEntry; status?: string; client?: AgentClient; file?: string; url?: string; changed?: boolean; scope?: ScopeItemView[] | null; defaultError?: FailureView }
 
 const label = (client: AgentClient) => AGENT_CHOICES.find(choice => choice.client === client)?.label ?? client;
 const readable = (props: ScreenProps) => props.state.trusted && props.state.nativeExecutionEnabled !== false && (props.state.connection === 'ready' || props.state.connection === 'degraded');
@@ -58,19 +59,28 @@ export function AgentsScreen(props: ScreenProps) {
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [view, setView] = useState<AgentsReadView>();
     const [connected, setConnected] = useState<{ client: AgentClient; value: ConnectView }>();
     const [copied, setCopied] = useState('');
+    const [manualOpen, setManualOpen] = useState(false);
+    const ownerKey = JSON.stringify([props.state.workspaceFolders, props.state.trusted, props.state.nativeExecutionEnabled]);
+    const owner = useRef(ownerKey); owner.current = ownerKey;
     const scope = props.state.searchScope;
     const disabled = busy || !readable(props);
     const run = async (work: () => Promise<void>) => {
         if (busy) { return; }
-        setBusy(true); setError('');
+        const ticket = owner.current; setBusy(true); setError('');
         try { await work(); }
-        catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-        finally { setBusy(false); }
+        catch (failure) { if (owner.current === ticket) setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { if (owner.current === ticket) setBusy(false); }
     };
-    const reread = async () => { setView(await request<AgentsReadView>('agents.read', {})); };
+    const reread = async () => { const ticket = owner.current; const next = await request<AgentsReadView>('agents.read', {}); if (owner.current === ticket) setView(next); };
     const read = () => run(reread);
-    useEffect(() => { if (readable(props)) { void read(); } }, [readable(props)]);
-    const connect = () => run(async () => { setConnected({ client, value: await request<ConnectView>('agents.connect', { client }) }); await reread(); });
+    useEffect(() => {
+        setView(undefined); setConnected(undefined); setManualOpen(false); setError('');
+        const ticket = owner.current;
+        if (!readable(props)) { setBusy(false); return; }
+        setBusy(true); void reread().catch(failure => { if (owner.current === ticket) setError(failure instanceof Error ? failure.message : String(failure)); })
+            .finally(() => { if (owner.current === ticket) setBusy(false); });
+    }, [readable(props), ownerKey]);
+    const connect = () => run(async () => { const ticket = owner.current; const value = await request<ConnectView>('agents.connect', { client }); if (owner.current !== ticket) return; setConnected({ client, value }); if (value.refusal) setManualOpen(true); await reread(); });
     const remove = (target: AgentClient) => run(async () => { await request('agents.disconnect', { client: target }); setConnected(undefined); await reread(); });
     const copy = (url: string) => { setCopied(''); void request('clipboard.write', { text: url }).then(() => setCopied('Copied'), failure => setCopied(failure instanceof Error ? failure.message : String(failure))); };
     const entries = view?.entries ?? [];
@@ -78,6 +88,12 @@ export function AgentsScreen(props: ScreenProps) {
     const result = connected?.value;
     const endpoint = view?.endpoint;
     const defaults = view?.workspaceDefaults ?? [];
+    const manual = result?.manual?.client === client ? result.manual : view?.manual?.find(entry => entry.client === client);
+    const refusal = result?.refusal;
+    const refusalText = refusal?.reason === 'automatic_policy' ? 'AIRK cannot safely edit this file and retain a recovery copy. Other accounts may be able to change the folder, or a file safety check failed. Merge the entry below into the named file, preserving your other settings.'
+        : refusal?.reason === 'conflict_retained' ? 'The file changed while AIRK was preparing the edit. Review the current file and merge this entry manually.'
+        : refusal?.reason === 'outcome_unknown' ? 'The edit outcome is unknown. Inspect the named file before changing it again. The complete original outcome is in Details.' : '';
+
     return <section class="manage-agents">
         <article class="card">
             <div class="section-head"><h2>Connect a coding agent</h2></div>
@@ -91,7 +107,7 @@ export function AgentsScreen(props: ScreenProps) {
                 ? mine.map((entry, at) => <span key={`${entry.file}:${entry.serverKey}`}>{at ? '; ' : ''}<strong>{statusText(entry.status)}</strong> (<code class="path">{entry.file}</code>)</span>)
                 : 'not connected'}
                 {mine.length > 0 && <> <button type="button" class="ghost" disabled={disabled} onClick={() => { void remove(client); }}>Remove</button></>}</p>}
-            {result && connected && <div role="status">
+            {result && connected && result.status !== 'refused' && <div role="status">
                 <p>{label(connected.client)} connected{result.file ? <> in <code class="path">{result.file}</code></> : ''}.{result.changed === false ? ' Its entry was already up to date.' : ''}</p>
                 {result.changed !== false && <p class="muted">{AGENT_CHOICES.find(choice => choice.client === connected.client)?.reconnect}</p>}
                 {result.defaultError && <p class="callout" role="alert">This window's search scope was not stored as the workspace default ({result.defaultError.code}): {result.defaultError.message}</p>}
@@ -99,6 +115,16 @@ export function AgentsScreen(props: ScreenProps) {
             {busy && <p role="status">Working…</p>}
             {error && <Notice condition noticeKey={noticeKey('agents-error', error)} role="alert"><p>{error}</p></Notice>}
         </article>
+        <details class="card agent-manual" open={manualOpen} onToggle={event => setManualOpen(event.currentTarget.open)}>
+            <summary>Set up manually</summary>
+            {refusal && <p role="alert">{refusalText}</p>}
+            {manual ? <><p>Merge this entry into <code class="path">{manual.file}</code>. Keep any other servers and settings in that file.</p>
+                <button type="button" class="ghost" onClick={() => copy(manual.text)}>Copy complete entry</button>
+                {copied && <span role="status"> {copied}</span>}<pre>{manual.text}</pre></>
+                : <p role="status">{busy ? 'Reading the manual entry...' : 'No native manual entry is available. Refresh the Agents view or run airkctl agents manual --client <agent> --project <folder>.'}</p>}
+            {view?.manualErrors?.map((failure, at) => <p key={at} role="status">{failure.message}</p>)}
+            <p class="muted">If the service changes port, copy a fresh entry here or run <code>airkctl agents endpoint</code>.</p>
+        </details>
         <article class="card">
             <p class="agent-endpoint" role="status">{endpoint
                 ? <>{endpoint.state && endpoint.state !== 'ready' ? `Endpoint ${endpoint.state}` : 'Ready: agents can connect'} · <code>{endpoint.url}</code>{' '}
@@ -125,6 +151,7 @@ export function AgentsScreen(props: ScreenProps) {
             {view?.report !== undefined && <CompleteNativeResponse value={view.report as Record<string, unknown>} />}
             {view?.endpointReport !== undefined && <CompleteNativeResponse value={view.endpointReport as Record<string, unknown>} />}
             {view?.defaultsReport !== undefined && <CompleteNativeResponse value={view.defaultsReport as Record<string, unknown>} />}
+            {refusal && <pre>{refusal.detail}</pre>}
             {result && <CompleteNativeResponse value={result as Record<string, unknown>} />}
         </details>
     </section>;

@@ -824,10 +824,137 @@ class ModernActualTlsSmokeTests(unittest.TestCase):
                 self.assertEqual(read['params']['arguments']['verification'], 'require')
                 self.assertEqual(calls[-1]['method'], 'DELETE')
                 self.assertEqual((root / 'README.md').read_bytes(), content)
+                # The current helper path uses the bare native endpoint + CA,
+                # with an explicit scope on every read and no credential file.
+                control = root / 'control'; (control / 'http-1').mkdir(parents=True)
+                (control / 'http-1' / 'ca.pem').write_bytes((fixture.root / 'ca.pem').read_bytes())
+                calls.clear()
+                result = setup.https_smoke(info['endpoint'], control, '1.8.14', root, 'original',
+                                           scope={'index_ids': ['idx_fixture']})
+                scoped = [call for call in calls if call.get('method') == 'tools/call']
+                self.assertEqual(len(scoped), 3)
+                self.assertTrue(all(call['params']['arguments']['index_ids'] == ['idx_fixture'] for call in scoped))
+                self.assertFalse(any('credential' in path.name for path in (control / 'http-1').iterdir()))
+                self.assertEqual(result['status'], 'passed')
             finally:
                 server.shutdown(); server.server_close(); thread.join(timeout=5)
                 self.assertFalse(thread.is_alive())
 
+
+
+class TokenlessSetupTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.runtime = self.root / 'runtime'
+        self.runtime.mkdir()
+        self.control = self.root / 'control'
+        self.control.mkdir()
+        self.config = self.root / '.codex' / 'config.toml'
+        self.config.parent.mkdir()
+        self.config.write_bytes(b'# keep every unrelated byte\n[mcp_servers.other]\nurl = "https://example.invalid/mcp"\n')
+        suffix = '.exe' if os.name == 'nt' else ''
+        prefix = 'AIRK.app/Contents/MacOS/' if sys.platform == 'darwin' else ''
+        self.cli = self.runtime / (prefix + 'airkctl' + suffix)
+        self.cli.parent.mkdir(parents=True, exist_ok=True)
+        self.cli.write_bytes(b'fictional matched CLI')
+        operating_system = {'win32': 'windows', 'darwin': 'macos', 'linux': 'linux'}[sys.platform]
+        self.pair = {'schema': 3, 'version': '1.8.207', 'os': operating_system,
+                     'airkctl_sha256': hashlib.sha256(self.cli.read_bytes()).hexdigest()}
+        (self.runtime / 'airk-runtime.json').write_text(json.dumps(self.pair))
+        self.endpoint = {'schema': 1, 'url': 'https://127.0.0.1:57422/mcp', 'executable_sha256': 'a' * 64}
+        # Text is an opaque native fixture output, not a Python config builder.
+        self.manual = {'client': 'codex', 'scope': 'project', 'file': str(self.config), 'format': 'toml',
+                       'text': 'EXACT NATIVE MANUAL TEXT \" \\ \n'}
+        self.calls = []
+
+    def run_current(self, *, outcome=None, **options):
+        before = self.config.read_bytes()
+        def native(_binary, arguments):
+            self.assertEqual(_binary, self.cli)
+            self.calls.append(list(map(str, arguments)))
+            self.assertEqual(arguments[:4], ['--output', 'json', '--service-runtime-dir', self.control])
+            if arguments[4:] == ['agents', 'endpoint']:
+                return {**self.endpoint, 'manual': [self.manual]}
+            self.assertEqual(arguments[4:], ['agents', 'manual', '--client', 'codex', '--project', self.root])
+            return self.manual
+        http = mock.Mock()
+        http.read_endpoint.return_value = self.endpoint
+        http.scope_value.side_effect = lambda **value: value
+        with mock.patch.object(setup, 'verify_modern_runtime', return_value=(self.runtime / 'airk', '1.8.207', 'a' * 64)), \
+                mock.patch.object(setup, 'local_module', return_value=http), \
+                mock.patch.object(setup, 'native_json', side_effect=native), \
+                mock.patch.object(setup, 'native_outcome', return_value=outcome) as edit, \
+                mock.patch.object(setup, 'write_config', side_effect=AssertionError('Current setup must not use the Python writer')), \
+                mock.patch.object(setup, 'https_smoke', return_value={'status': 'passed', 'codex_client_execution': 'not_run'}) as smoke:
+            result = setup.tokenless_setup(self.runtime, 'f' * 64, self.control, self.root,
+                scope={'index_ids': ['idx_fixture']}, **options)
+        self.assertEqual(self.config.read_bytes(), before)
+        smoke.assert_called_once_with(self.endpoint, self.control, '1.8.207', self.root, scope={'index_ids': ['idx_fixture']})
+        self.assertEqual(result['manual'], self.manual)
+        self.assertEqual(result['read_scope'], {'index_ids': ['idx_fixture']})
+        return result, edit
+
+    def test_manual_current_setup_preserves_configuration_and_creates_no_credentials(self):
+        result, edit = self.run_current()
+        edit.assert_not_called()
+        self.assertEqual(result['status'], 'manual_configuration_ready')
+        self.assertEqual(result['manual']['text'], self.manual['text'])
+        self.assertFalse(result['indexed'])
+        self.assertFalse(result['client_environment_loaded'])
+        self.assertEqual(list(self.control.iterdir()), [])
+        self.assertFalse(any('http-connection' in argument for call in self.calls for argument in call))
+
+    def test_safe_connect_refusal_and_uncertain_outcome_are_retained_without_python_retry(self):
+        for reason, status in (('automatic_policy', 'manual_configuration_required'),
+                               ('conflict_retained', 'configuration_conflict_retained'),
+                               ('outcome_unknown', 'configuration_outcome_unknown')):
+            outcome = {'exit_code': 4, 'result': {'code': 'native_fixture',
+                       'native': {'reason': reason, 'detail': 'complete native details', 'manual': self.manual}}}
+            with self.subTest(reason=reason):
+                result, edit = self.run_current(outcome=outcome, apply_config=True)
+                self.assertEqual(result['status'], status)
+                self.assertEqual(result['native_edit'], outcome)
+                self.assertEqual(edit.call_count, 1)
+                self.assertEqual(edit.call_args.args[1][-6:], ['agents', 'connect', '--client', 'codex', '--project', self.root])
+
+    def test_submitted_native_timeout_retains_uncertainty_and_never_replays_connect(self):
+        error = subprocess.TimeoutExpired(['native-connect'], 125, output=b'partial output', stderr=b'partial error')
+        with mock.patch.object(setup.subprocess, 'run', side_effect=error) as run:
+            result = setup.native_outcome(self.cli, ['agents', 'connect'])
+        run.assert_called_once()
+        self.assertEqual(result['transport_outcome'], 'uncertain')
+        self.assertIsNone(result['exit_code'])
+        self.assertEqual(result['partial_stdout'], {'bytes': 14, 'sha256': hashlib.sha256(b'partial output').hexdigest()})
+        receipt, edit = self.run_current(outcome=result, apply_config=True)
+        self.assertEqual(receipt['status'], 'configuration_outcome_unknown')
+        self.assertEqual(receipt['native_edit'], result)
+        edit.assert_called_once()
+
+    def test_unreadable_completed_native_output_is_uncertain_even_after_zero_exit(self):
+        completed = subprocess.CompletedProcess(['native-connect'], 0, 'partial JSON {', '')
+        with mock.patch.object(setup.subprocess, 'run', return_value=completed) as run:
+            outcome = setup.native_outcome(self.cli, ['agents', 'connect'])
+        run.assert_called_once()
+        self.assertEqual(outcome['exit_code'], 0)
+        self.assertEqual(outcome['transport_outcome'], 'uncertain')
+        self.assertEqual(outcome['response_failure'], 'invalid_native_response')
+        receipt, edit = self.run_current(outcome=outcome, apply_config=True)
+        self.assertEqual(receipt['status'], 'configuration_outcome_unknown')
+        edit.assert_called_once()
+
+    def test_current_dispatch_rejects_legacy_authority_flags_before_any_native_mutation(self):
+        for options in ({'connection_id': 'a' * 32}, {'selection_file': self.root / 'selection.json'},
+                        {'registration_file': self.root / 'registration.json'}, {'retire_legacy_launchers': True}):
+            arguments = dict(runtime=self.runtime, approved='f' * 64, install=self.root / 'install',
+                             connection_id=None, root=self.root, control=self.control,
+                             scope={'index_ids': ['idx_fixture']})
+            arguments.update(options)
+            with self.subTest(options=options), mock.patch.object(setup, 'tokenless_setup') as current, \
+                    self.assertRaisesRegex(ValueError, 'not legacy connection'):
+                setup.setup_http(**arguments)
+            current.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

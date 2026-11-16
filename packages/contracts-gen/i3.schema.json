@@ -84,6 +84,74 @@
         }
       ]
     },
+    "AgentConfigRefusal": {
+      "additionalProperties": false,
+      "description": "A presentation projection of the native writer outcome, never retry authority.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "manual": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentManualEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/AgentConfigRefusalReason"
+        }
+      },
+      "required": [
+        "reason",
+        "detail",
+        "file"
+      ],
+      "type": "object"
+    },
+    "AgentConfigRefusalReason": {
+      "enum": [
+        "automatic_policy",
+        "conflict_retained",
+        "outcome_unknown"
+      ],
+      "type": "string"
+    },
+    "AgentManualEntry": {
+      "additionalProperties": false,
+      "description": "Exact text to merge into the named configuration file; never replace unrelated entries.",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ManualClient"
+        },
+        "file": {
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/ManualFormat"
+        },
+        "scope": {
+          "$ref": "#/$defs/ManualScope"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "client",
+        "scope",
+        "file",
+        "format",
+        "text"
+      ],
+      "type": "object"
+    },
     "Authorization": {
       "oneOf": [
         {
@@ -329,6 +397,28 @@
           "type": "string"
         }
       ]
+    },
+    "ManualClient": {
+      "enum": [
+        "claude",
+        "codex",
+        "vscode"
+      ],
+      "type": "string"
+    },
+    "ManualFormat": {
+      "enum": [
+        "json",
+        "toml"
+      ],
+      "type": "string"
+    },
+    "ManualScope": {
+      "enum": [
+        "project",
+        "user"
+      ],
+      "type": "string"
     },
     "MutationPreparation": {
       "additionalProperties": false,
@@ -679,7 +769,9 @@
     "MutationPreparation",
     "PreparedMutationCall",
     "RecoverMutationCall",
-    "AcknowledgedMutationCall"
+    "AcknowledgedMutationCall",
+    "AgentManualEntry",
+    "AgentConfigRefusal"
   ],
   "title": "airk admin I3 contract"
 }

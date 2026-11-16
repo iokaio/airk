@@ -37,6 +37,11 @@ multithread runtime through its blocking boundary. Outside-runtime and
 current-thread callers use local or joined scoped IO drivers; they do not add
 resident processes, permanent per-session runtimes or detached work. All callback
 requests preserve their original authority, attempt and absolute deadline.
+Legacy next-read callbacks also require the supplied original attempt and narrow
+its remaining allowance against both clocks and the caller's remaining budget;
+they never mint a new request ID, absolute expiry or settings-retry window.
+Missing or expired original attempts refuse optional dispatch while canonical
+reads retain their existing original authority and fallback rules.
 
 Project owners, cleanup owners and the source watcher run on service threads.
 Each project owner has its own runtime, lock and execution scope. The

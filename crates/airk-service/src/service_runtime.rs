@@ -1839,6 +1839,11 @@ async fn serve_owned(
             _ = connections.join_next(), if !connections.is_empty() => {},
         }
     }
+    #[cfg(feature = "local-inference")]
+    let arbiter_shutdown = state
+        .arbiter
+        .as_ref()
+        .map(|owner| owner.begin_shutdown(Instant::now() + Duration::from_secs(30)));
     state
         .draining
         .store(true, std::sync::atomic::Ordering::Release);
@@ -1881,6 +1886,12 @@ async fn serve_owned(
             .await;
         }
     }
+    #[cfg(feature = "local-inference")]
+    if let (Some(owner), Some(shutdown)) = (&state.arbiter, arbiter_shutdown) {
+        // Original shared cutoff includes ingress/connection waits. Queue
+        // acceptance and dropping State/runtime never prove native settlement.
+        owner.shutdown(shutdown).await?;
+    }
     let accepted = state
         .lifecycle
         .lock()
@@ -1909,6 +1920,9 @@ mod registry_retry_tests;
 
 #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
 mod evaluation_fixture_tests;
+
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod public_arbiter_journey_tests;
 #[cfg(test)]
 mod response_delivery_tests;
 #[cfg(test)]

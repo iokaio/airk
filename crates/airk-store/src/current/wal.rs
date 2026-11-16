@@ -181,3 +181,6 @@ pub(super) fn version(directory: &Path) -> u32 {
         database::DATABASE_VERSION
     }
 }
+
+#[cfg(test)]
+mod refusal_tests;

@@ -436,3 +436,23 @@ no URL, signed query, token, body or local path is recorded. Existing dropped-lo
 telemetry remains authoritative; retention is not infallible. Pure tests may
 explicitly omit the sink and make no durable-diagnostics claim. No new log kind,
 record schema, file format, writer thread or logging framework is introduced.
+
+
+## Historical and current private Answer request templates
+
+The original native_goal_context_template and actual_private_arbiter_fixture
+selectors retain an explicit historical2048-token/30000ms request, independent
+of Budget::default. Their emitted native request/response-option bytes remain
+the historical control; a current default never relabels that population.
+
+The separately named native_software_v2_context_template test and
+actual_private_arbiter_fixture_software_v2 selector use the literal current
+8192-token/120000ms budget, checked against Core ResourcePolicy before startup.
+Both templates serialize the complete native ContextRequestV2 plus canonical
+MCP ResponseArgs (Full/include_status) and decode through native AnswerArgs.
+The current emitter has its own explicit output environment variable and a
+fresh no-clobber artifact destination. Python never constructs or rewrites the
+budget/response-option contract. The selected Rust fixture startup passes its
+complete template into the unchanged owner/lease/custody path; only question
+substitution and actual separately admitted tool selectors belong to consumers.
+No profile, asset-parent, source authority, restart or cleanup boundary is relaxed.

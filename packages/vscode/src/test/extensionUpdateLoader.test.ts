@@ -73,6 +73,30 @@ test('update inventory captures exact source bytes and refuses an incomplete rep
     } finally { await f.close(); }
 });
 
+test('the exact generated native budget module loads from its captured inventory', async () => {
+    const f = await diskFixture();
+    try {
+        f.files['out/generated/arbiterBudget.js'] = 'exports.DEFAULT_CONTEXT_BUDGET={input_tokens:8192};';
+        f.files['out/serviceExtension.js'] = "const native=require('./generated/arbiterBudget');exports.activate=async()=>({getServerDefinitions:async()=>[native.DEFAULT_CONTEXT_BUDGET.input_tokens],whenReady:async()=>{}});";
+        await f.write(); const captured = await readUpdatePayload(f.root);
+        assert.equal(captured.files.get('out/generated/arbiterBudget.js')!.toString(), f.files['out/generated/arbiterBudget.js']);
+        assert.deepEqual(await (await loadUpdateModule(captured, vscode as any).activate(context(f.root))).getServerDefinitions(), [8192]);
+        delete f.files['out/generated/arbiterBudget.js']; await f.write();
+        const missing = await readUpdatePayload(f.root);
+        assert.throws(() => loadUpdateModule(missing, vscode as any), /not captured/);
+    } finally { await f.close(); }
+});
+
+test('the native budget path exception never admits arbitrary generated files or aliases', async () => {
+    for (const name of ['out/generated/other.js', 'out/generated/arbiterbudget.js', 'out/generated/arbiterBudget.json', 'out/generated/arbiterBudget.js/other.js', 'out/generated/../arbiterBudget.js']) {
+        const f = await diskFixture();
+        try {
+            f.files[name] = 'exports.unreviewed=true;'; await f.write();
+            await assert.rejects(readUpdatePayload(f.root), /Invalid AIRK update inventory entry/, name);
+        } finally { await f.close(); }
+    }
+});
+
 test('Windows path aliases keep the sealed interface active during an in-flight action', {skip:process.platform!=='win32'}, async () => {
     const f=await diskFixture(), events:string[]=[];
     const alias=f.root.toUpperCase();assert.notEqual(alias,f.root);
