@@ -72,6 +72,18 @@ pre-split installer flow described in the rest of this page
   `/ACKNOWLEDGE-RESET` (required when an earlier installation will be
   removed) and `/TRUST` (otherwise trust is skipped). Locations must be
   printable ASCII.
+- **Recovering from a failed install (from 1.8.204).** A later installer no
+  longer needs hand edits after an earlier setup failed or was interrupted.
+  It takes over an earlier setup that recorded a failure or whose operation
+  expired; the earlier record is kept under the install pointer folder's
+  `setup-history\superseded\`. It replaces a login task left without ownership
+  records only when that task runs this installation's own `airk.exe` as its
+  login role. It renames AIRK data, state, logs, cache or program folders that
+  no installation owns to `<folder>.previous-<date>` instead of refusing them;
+  nothing is deleted, and old indexes are not reused. The review page lists
+  each of these before anything changes. Folders that do not look like
+  AIRK's are still refused. Details: setup_role CONTRACT, "Recovery from
+  failed or abandoned installs".
 - **Local build** `pwsh -NoProfile -File scripts/build-local-service-installer.ps1 -ForceBuild`
   (U37). `scripts/sign-native.py` has no local signing adapter yet (U70), so
   the build stops unless `-Unsigned` is passed; an unsigned installer is a
