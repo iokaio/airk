@@ -1836,8 +1836,26 @@ impl Setup {
             .iter()
             .filter(|found| !matches!(found.plan, Ok((false, _))))
             .collect();
+        if let Some(installed) = &self.existing {
+            let action = match self.operation.kind {
+                airk_core::install_record::OperationKind::Purge => {
+                    "removes it and deletes its indexes"
+                }
+                kind if plan::removes(kind) => "removes it and keeps its indexes",
+                _ if installed.record.version == VERSION => {
+                    "repairs it and keeps its indexes and settings"
+                }
+                _ => "updates it and keeps its indexes and settings",
+            };
+            text.push_str(&format!(
+                "AIRK Service {} is installed in {}. This setup {action}.\r\n",
+                installed.record.version, installed.record.locations.program,
+            ));
+        }
         if removed.is_empty() {
-            text.push_str("No earlier AIRK installation was found.\r\n");
+            if self.existing.is_none() {
+                text.push_str("No earlier AIRK installation was found.\r\n");
+            }
         } else {
             text.push_str("Setup will stop and remove these earlier AIRK installations, including their indexes. Indexes must be rebuilt afterwards; no source file is read, changed or deleted; coding agents must be reconnected:\r\n");
             for found in &removed {
