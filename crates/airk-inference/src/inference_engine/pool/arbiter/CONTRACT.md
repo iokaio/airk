@@ -343,3 +343,15 @@ while synchronous serialization is in flight and retain all emitted bytes.
 No profiled execution is authorized by source preparation. Ordinary Scorer::open
 keeps its original builder and performs no optimized serialization. Tiny graphs
 contain no learned/external weights and retain their separately bounded save.
+
+
+Software-v2 private file reads reserve the actual observed file length exactly
+before the existing bounded Take/read_to_end, matching production Store
+PinnedAssets::read. They do not preallocate the caller's maximum or accept
+geometric Vec growth as required model memory. File/reparse/size checks,
+maximum-plus-one overflow/extra-byte detection, exact Asset length and SHA checks
+remain. Allocation failure refuses normally. Historical /1 readers and model
+math/weights/inputs/CPU/deadline/memory budgets remain unchanged. This removes
+qualification-reader allocation slack only; it does not establish native model
+fit. Original failed runs remain failures and new source/image measurements are
+required before a new diagnostic attempt.

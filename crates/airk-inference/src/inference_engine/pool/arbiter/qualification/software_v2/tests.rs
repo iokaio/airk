@@ -244,3 +244,52 @@ fn software_v2_original_source_hash_drift_refuses_before_metadata_emission() -> 
     assert!(super::original_sources::measure_source(&pin).is_err());
     Ok(())
 }
+
+#[test]
+fn software_v2_asset_reader_has_exact_capacity_and_preserves_complete_excess_and_eof_checks()
+-> Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("synthetic-asset.bin");
+    let expected = vec![0x5a; (12 << 20) + 19];
+    std::fs::write(&path, &expected)?;
+    let actual = small(&path, 32 << 20)?;
+    assert_eq!(actual, expected);
+    assert_eq!(
+        actual.capacity(),
+        expected.len(),
+        "actual length reservation must avoid geometric slack/caller maximum allocation"
+    );
+    let asset = Asset {
+        name: "synthetic-asset.bin".into(),
+        role: AssetRole::ExternalWeights,
+        bytes: expected.len() as u64,
+        sha256: sha(&expected),
+    };
+    let files = Files(BTreeMap::from([(
+        asset.name.clone(),
+        path.to_str().context("synthetic path")?.into(),
+    )]));
+    assert_eq!(files.read_asset(&asset)?, expected);
+    assert!(small(&path, asset.bytes - 1).is_err());
+    std::fs::write(&path, &expected[..expected.len() - 1])?;
+    assert!(
+        files.read_asset(&asset).is_err(),
+        "short EOF remains refused by exact Asset length"
+    );
+    let mut excess = expected.clone();
+    excess.push(0);
+    std::fs::write(&path, &excess)?;
+    assert!(
+        files.read_asset(&asset).is_err(),
+        "excess bytes remain refused before read"
+    );
+    std::fs::write(&path, [])?;
+    let empty = small(&path, 32 << 20)?;
+    assert!(empty.is_empty());
+    assert_eq!(empty.capacity(), 0);
+    assert!(
+        small(&path, u64::MAX).is_err(),
+        "overflow bound remains refused"
+    );
+    Ok(())
+}

@@ -6025,3 +6025,128 @@ separate parallel review. Genuine image capture, runtime rebuild and Neo bridge
 follow this milestone. Documentation exact-text attempts failed before writing;
 the scoped Section10 update is included in the same unpublished local milestone.
 No user206 change, push, PR, publication or deployment.
+
+
+### 2026-11-16 — R3 Windows candidate acceptance and bounded Compact diagnosis
+
+Critical-path work now has an actual signed client/model pass. R3 is clean
+c547e654/tree b83e6757, C7 a8d7983b/1941 files. Runtime build passes127.986s;
+unsigned preflight passes139.120s and signed preflight144.210s. The actual signed
+StopComplete, matching request and subsequent service-health refusal are
+observed; service_clean_exit=null is retained, not recast as parent-HANDLEexit0.
+Receipts: exec-20261116T052942Z/windows-runtime-debug-r3-{build,preflight-r1}
+and windows-packaging-candidate-r3-plan/postsign/signed-client-preflight-r3.
+R3 VSIX SHA5053a93364b123b87bee006df7314d4abc3e03b3c2ea8a77d7f33885b46c1c56
+is delivered locally; signed EXE2a0fb09c/ZIP7ec178e7 full-byte/legal checks pass
+and fresh delivery copies are being finalized. Actual installed206 stays intact.
+
+Actual native tiny CPU GQA17/8192 passes1.410s/2.576s, errors5.96e-8/1.19e-7,
+three allocated output shapes, natural0/empty Job/no drift. Native /2 graph
+metadata emission passes7.483s; emitted full compiler template is byte-identical
+to the original (7d4a546d). These establish kernel/input readiness, not model
+qualification. Full Compact profiled8192 attempt is refused during load33.636s:
+peak Job commit17,335,033,856B exceeds original16GiB, RSS remains below16GiB;
+no scoring Started/Returned is observed. Original120s load/score/360s outer limits
+are unchanged; actual PID forced77/empty Job/no drift. Failure is retained at
+actual-composed-service-r2/compact-native-profiled-execution-r1/execution.json
+SHA92e4f76a391b61b010fcbf80c44c7fdd8ef783f187df580e972d9f039f9ee834.
+
+A separately owned no-model allocation probe passes19.138s. Actual6,882,271,232B
+weights produce Vec capacity8,589,934,592 with the private growing read versus
+6,882,271,232 with production-style exact reservation:1,707,663,360B avoidable
+slack. This does not retroactively prove the failed run's exact Vec allocation.
+Contract-first private-reader-only fix reserves observed length and retains all
+bounded-read/length/hash guards. Scoped Clippy passes35.987s and18/18 controls
+pass (95skipped); genuine four-lib CargoJSON capture passes9.593s. Native group
+is a469d6e1, dirty only in three reviewed private qualification files, not clean
+c547. New inference image44f78843158918949c756403037e67266285e8c949e851fb04d05c2cadbd3a91
+is preserved under current-orchestration/capacity-native-preservation-r1 with
+human source/destination owners. New same-image tiny/full diagnostics are being
+rebound; original caps, FP32 references and compiled inputs remain unchanged.
+
+Windows whole-workspace image capture fails94.128s with ort_sys/airk_mcp rlib
+format resolution errors. Read-only archive and metadata checks prove both
+physical archives exist and are structurally valid; exact compiler selection
+cause is unknown. Scoped four-library capture passes. A controlled incremental0
+diagnostic remains pending; no Windows clean/delete/trust workaround is used.
+
+Neo c547 batch: scoped Admin Clippy passes120.027s; exact TLS1/1 passes168.439s.
+Workspace stops214selected/213passed/one same-build predecessor-shutdown failure,
+legacy_launcher_process_observation_incomplete with one unobserved process.
+Original PID/errno are absent, so cause remains unknown. No source folders move.
+Owned processes settle naturally; target cleanup passes1.085s/15.4GiB removed,
+target absent. Failed fixture cleanup is unproved and doctests did not run.
+Evidence: neo-platform-monitor-c547e654-r2/final-monitor-milestone-r1.json
+SHAf2459a72cf7b4038d49f56bc22d53de90ea835d930cd9f0ed04fb157264bd3ad.
+A conservative fresh-BSD-state observer proposal remains unapplied pending
+review and the short model source freeze. No full workspace/platform/I4 pass.
+
+No new data-intake/replay branch or training admission is started. The next
+critical-path self-check/report remains20:35UTC/13:35Denver.
+
+
+### 2026-11-16 — Bounded model R2 refusal; Mac correction ready for native qualification
+
+The new a469/Inference44f788 synthetic17/8192 controls pass1.044s/2.653s;
+actual profiler CPU3outputs and optimized-byte equality are independently
+reviewed by Root (tiny Root review9354e42f). Operational repair launched the
+actual controls once through verified human shell; Root's later duplicate-output
+preflight refuses before mutation/child. No successful run is rerun or erased.
+Full changed-input CompactR2 plan09a6196c runs once under unchanged caps and
+fails32.0256065s during unfinished load: RSS17,275,822,080B and Jobcommit
+17,288,364,032B exceed16GiB. Only LoadStarted is recorded; no load return or
+scoring start/return. PID30284 forced77, Jobempty, watchclosed, all1707seals
+unchanged. The exact-capacity reader repair removes proved allocation slack but
+does not resolve model fit. No further unchanged NN attempt; a bounded source
+allocation diagnosis proceeds while independent platform work continues.
+Receipt: actual-composed-service-r2/compact-native-profiled-execution-r2/execution.json.
+
+Mac observer R2 is independently reviewed and applied contract-first. It retains
+valid bounded first-NUL path interpretation, captures immediate errno, and excuses
+path0/ESRCH only with a fresh native BSD absence observation or exact-byte/PID/
+same-effective-UID zombie observation. Active/reused/foreign/unknown states refuse;
+all misses remain counted and first bounded native facts occupy the existing
+Audit.failure string. No signal authority or serialized field changes. Pinned
+libc supplies the ABI; actual Mac API qualification remains pending. Original
+failed PID/errno cause remains unknown. Source owner/ACL stay unchanged.
+Windows scoped Installer Clippy passes25.297s;10/10 crosshost/Windows controls
+pass33.201s whole/.114s tests,438skipped. Native groupd0186707. Format,
+version1.8.207, whitespace and repository check3509public files pass.
+The exact original Mac CLI replacement test and full platform gates are next.
+
+R3 delivery files are complete under artifacts/arbiter-1.8.207/windows-candidate-r3:
+installer/publish EXE2a0fb09c; native/publish ZIP7ec178e7; publish VSIX5053a933.
+All846 native members and eleven legal companions are checked. Root independently
+reopens all seven EXE/ZIP companion hashes and verifies the copied installer's
+valid Ioka LLC signature/timestamp. Copy proof374c4dd1 is retained under
+windows-packaging-candidate-r3-plan/delivery-copy-proof.json. Actual206 is
+preserved; no install, push, PR, publication or deployment. README/Marketplace/
+release text now distinguishes this candidate acceptance from remaining model,
+platform and installed qualification; the documentation index remains current.
+An exact-text release-doc attempt failed after completing the two README edits;
+no later mutation ran. Newline-aware validation corrects the release paragraph
+before committing. The failed operation is not a passing validation receipt.
+
+
+The bounded follow-up allocation diagnosis finds a material probe difference:
+Scorer::open_profiled sets optimized_model_path; ordinary Scorer::open does not.
+Pinned ORT1.30 InferenceSession uses saving_model to retain Graph initializers
+through kernel creation/prepacking; normal mode removes them during conversion.
+All254 Compact external initializers total6,882,271,232B, none at least2GiB, so
+the ordinary file-in-memory/TensorProto path applies. Verified buffer, copied
+TensorProto data and initialized/packed tensors can coexist in save mode.
+This source-proven difference can add a full weight copy; it does not establish
+the actual R2 peak's detailed allocation or final serialization phase (no
+optimized file existed). R2 proves profiled-save failure, not ordinary production
+load failure. A minimal test-support profiling-only/no-save seam is proposed;
+original numerical, memory, CPU, input and time gates stay unchanged.
+
+Actual signed R3 UI replay passes90.237s: Workbench16fullcomparisons/twoAnswer
+routes, Admin8fullcomparisons/24navigation/12titles/icons andwide/narrow. Both
+signed native images record actual matching StopComplete plus original retained
+HANDLEexit0; EdgeBrowser.close/natural0/profileRemoved/clipboardrestored. All4585
+pins unchanged. Ten complete200responses of48issued support their comparisons;
+38missingterminalobservations add no parity coverage. Final scoped process
+census finds0native/browser/Node descendants, no forcedcleanup. Evidence:
+ui-native-r3-cards/observed-review.json SHA27aaa374d24005e034eaa63fde1bbf78a05021e6e9faf440658c787678a255d6.
+The injected Workbench host is real native I2 coverage, not installed editor DOM.

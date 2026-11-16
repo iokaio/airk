@@ -53,10 +53,15 @@ fn small(path: &Path, maximum: u64) -> Result<Vec<u8>> {
             "resource reparse point refused"
         );
     }
+    let limit = maximum.checked_add(1).context("file bound overflow")?;
+    let length = usize::try_from(metadata.len()).context("native resource length overflow")?;
     let mut bytes = Vec::new();
-    File::open(path)?
-        .take(maximum.checked_add(1).context("file bound overflow")?)
-        .read_to_end(&mut bytes)?;
+    // Match production PinnedAssets::read: reserve the actual authenticated
+    // metadata length, not geometric growth and not the larger caller ceiling.
+    bytes
+        .try_reserve_exact(length)
+        .context("native resource allocation unavailable")?;
+    File::open(path)?.take(limit).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() as u64 <= maximum,
         "native resource file grew beyond bound"

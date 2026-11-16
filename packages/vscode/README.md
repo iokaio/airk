@@ -42,7 +42,7 @@ shows that state with **Install AIRK Service**, **Start** or **Check again**;
 (`airkctl admin open`) for index setup, sources, index sets, storage, agents
 and the service.
 
-**Current source version: 1.8.207 (15 November 2026).** The service and extension are separate products with synchronized source versions. The [Arbiter final implementation campaign](https://github.com/iokaio/airk/blob/main/docs/arbiter/final-plan.md) is in progress. The source navigation now has a flat rail for Overview, Search, Indexes, Activity, Agents, Service, Code, Documents, Evidence, Review, Strategies and Help; Workbench remains a separate workspace. These source changes still need sealed-asset, package and installed checks.
+**Current source version: 1.8.207 (15 November 2026).** The service and extension are separate products with synchronized source versions. The [Arbiter final implementation campaign](https://github.com/iokaio/airk/blob/main/docs/arbiter/final-plan.md) is in progress. The source navigation now has a flat rail for Overview, Search, Indexes, Activity, Agents, Service, Code, Documents, Evidence, Review, Strategies and Help; Workbench remains a separate workspace. The sealed Windows R3 assets, packages and signed client/model preflight pass under their recorded candidate identity; installed checks remain open.
 
 Editor management reaches the native Admin owner through its verified `airkctl session`; credentials stay native-held. Browser Admin retains its HTTPS sign-in and anti-forgery protections. Original request/recovery identities survive uncertain results within their owning live session; a disconnect or ended session does not authorize automatic replay. Complete native results remain available alongside structured views.
 
