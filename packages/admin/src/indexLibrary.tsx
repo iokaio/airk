@@ -27,6 +27,7 @@ import {
   type SourceMutationSelection,
 } from './operations';
 import { browse, FolderPicker, joinPath } from './folderPicker';
+import { dataLocationOf, dataRootChoice } from './dataRootDefault';
 import { ProgressPanel } from './progress';
 import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
 import { concurrencyNote, setSizeAfterAdd } from './scopeConcurrency';
@@ -777,35 +778,61 @@ function SetupIndex(props: {
   const extra = parseAdditional(additional);
   const extraValid = extra.every((entry) => entry !== null);
   const collectionValid = /^[A-Za-z0-9._-]{1,128}$/.test(collection) && collection !== '.' && collection !== '..';
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  // The installation's data location, from the native starting list. A
+  // failed or early lookup (before the session is ready) is retried when the
+  // catalog loads, from Try again, and by Review itself.
+  const lookupDataBase = async (): Promise<string | null> => {
+    const starts = await browse(null, false, null);
+    if (!('listing' in starts)) {
+      setLookupError(starts.error);
+      return null;
+    }
+    const found = dataLocationOf(starts.listing);
+    if (found === null) {
+      setLookupError('the service listed no data location');
+      return null;
+    }
+    setLookupError(null);
+    setDataBase(found);
+    return found;
+  };
   useEffect(() => {
-    void (async () => {
-      const starts = await browse(null, false, null);
-      if ('listing' in starts) {
-        const data = starts.listing.entries.find((entry) => entry.airk_location === 'data');
-        if (data !== undefined) setDataBase(data.path);
-      }
-    })();
-  }, []);
+    if (dataBase === null) void lookupDataBase();
+  }, [props.revision, props.seq]);
   // Until the user types or picks one, the data root follows the collection.
   useEffect(() => {
     if (!dataTouched && dataBase !== null) setDataRoot(collectionValid ? joinPath(dataBase, collection) : '');
   }, [dataBase, collection, dataTouched]);
+  const choice = dataRootChoice({
+    typed: dataTouched ? dataRoot : '',
+    dataBase,
+    lookupError,
+    collection,
+    collectionValid,
+  });
   const ready =
     props.revision !== null &&
     name.trim() !== '' &&
     primary.trim() !== '' &&
-    dataRoot.trim() !== '' &&
     collectionValid &&
     extraValid;
-  const review = (): void => {
+  const review = async (): Promise<void> => {
     if (!ready || props.revision === null) return;
+    let root = 'root' in choice ? choice.root : null;
+    if (root === null) {
+      // The default was not known yet: look the data location up now.
+      const base = await lookupDataBase();
+      if (base === null) return;
+      root = joinPath(base, collection);
+    }
     void runDraft(
       OPS.catalogIndexSetupDraft,
       body.indexSetupDraft({
         expected_catalog_revision: props.revision,
         name: name.trim(),
         primary_root: primary.trim(),
-        data_root: dataRoot.trim(),
+        data_root: root,
         collection,
         additional_roots: extra.filter((entry): entry is { alias: string; path: string } => entry !== null),
         setup_watch: watch,
@@ -820,7 +847,7 @@ function SetupIndex(props: {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          review();
+          void review();
         }}
       >
         <div class="row">
@@ -860,7 +887,8 @@ function SetupIndex(props: {
             value={dataRoot}
             onInput={(value) => {
               setDataRoot(value);
-              setDataTouched(true);
+              // Clearing the field returns to the default.
+              setDataTouched(value.trim() !== '');
             }}
           />
           <button type="button" class="secondary" onClick={() => setPicking('data')}>
@@ -868,6 +896,20 @@ function SetupIndex(props: {
           </button>
         </div>
         <p class="muted">{DATA_ROOT_HINT}</p>
+        {'pending' in choice ? (
+          <p class="muted">
+            The default is a folder named "{collection}" in the installation's data location; it is looked up when you
+            review.
+          </p>
+        ) : null}
+        {'missing' in choice && collectionValid ? (
+          <p class="error">
+            {choice.missing}{' '}
+            <button type="button" class="secondary" onClick={() => void lookupDataBase()}>
+              Try again
+            </button>
+          </p>
+        ) : null}
         <label class="field wide">
           Additional roots (one ALIAS=PATH per line, optional)
           <textarea
