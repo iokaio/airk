@@ -4835,3 +4835,42 @@ scheduler, not a real registered task.
 |---|---|---|---|
 | `artifacts/local-service-installer/20261115-172022/airk-service-1.8.204-x86_64-pc-windows-msvc-installer.exe` | `2e7c60e67317fbba1054dc2b1c5c07a97119f883d885d4a1da92850f828d4da0` | 75,414,352 | Authenticode valid, Ioka LLC |
 | `artifacts/local-vsix/20261115-173533/vsix/publish/airk-1.8.204.vsix` | `daa348001fba5aa65779a1beef8d279caccdb4af90b6b4718c1b1ed52cb23a4e` | 1,700,301 | none |
+
+### 2026-11-16 — U110 tokenless agent MCP and the 1.8.206 candidate
+
+**Decision (user, 15 Nov):** U110 in `docs/split/split-plan.md`: `/mcp` and `/api/v1` take no token
+(HTTPS with the AIRK CA, Host and `Origin` checks stay); scope is a per-call tool parameter
+(`index_ids`, `index_set_ids`, `workspace`; else `scope_required`); the Explorer's applied scope is a
+persisted workspace default (`airkctl scope default|defaults`); MCP roots fill `workspace`;
+`list_indexes` → `list_scopes`; results report `read_scope` (item 7: outside every digest; not on a
+receipt-bound multi-index body). Commits `db26edae` (U110, Explorer theming of the embedded
+management panel, session bound 128) and `9771df28` (bump, regenerated Help, CLI reference,
+UI-pilot fixtures, Explorer catalog, sealed Admin assets).
+
+Validation (Windows, target `artifacts/v190/p10-target`, incremental on): Clippy `-D warnings` on
+airk-core/kernel/mcp/https/service/airkctl/airk-cli with and without `--all-features`; Nextest
+core+mcp+https+airkctl `--all-features` 859 run, 828 pass (31 fail: 26 known airkctl environment,
+1 known arbiter, 3 Help/CLI-reference drift then regenerated and passing, 1 UI-pilot version
+fixture then regenerated) `artifacts/v190/u110-unit-r1.log`; kernel+service scope filters 77/77
+`u110-service-r1.log`; airk-cli HTTPS suites 149 run, 139 pass `u110-cli-r1.log`, rerun of the
+failures after fixes `u110-cli-r2.log`/`r3.log`: remaining `default_terse_https…` (open path repeats
+unchanged freshness), `capabilities_plans…` 2-member (open plan `combined_read_unavailable`) and
+`installed_log_binding…` (not U110 code); extension 1126/1128 (2 skipped); Admin 250/252 (2
+skipped); Python harnesses 411 OK (4 skipped); check-repo (AGENTS hash step skipped, intentional
+divergence) 3425 files; `release-version.py check --expected 1.8.206`. Two `airk-mcp` arbiter
+failures reproduce on unmodified `98c368f4` (pre-existing). A HEAD worktree build into the shared
+target poisoned test artifacts (path-independent metadata); touching changed files forced rebuilds.
+
+**1.8.206 candidate** (commit `9771df28`; `build-local-installers.ps1 -ForceBuild` with the
+`ort130-x64-owned-r5` aggregate env and `bundled-model-v3`, 844 s):
+
+| File | SHA-256 | Bytes | Signing |
+|---|---|---|---|
+| `artifacts/local-service-installer/20261115-211404/airk-service-1.8.206-x86_64-pc-windows-msvc-installer.exe` | `f96b04c8f1ad63788dfcfa258ae4ea8f146ce0f5639a352997f09645a5f9c11d` | 75,728,880 | Authenticode valid, Ioka LLC |
+| `artifacts/local-vsix/20261115-212744/vsix/publish/airk-1.8.206.vsix` | `e7af654a1fb4ddceb8312be4624c4b04d76530c63bfc589c3981c30333f71d94` | 1,703,070 | none |
+
+The VSIX receipt says `dirty: true` only because another session created the untracked
+`docs/arbiter/weights-v2-plan.md` during the build. Not run: `check-service-clients.py` against a
+matched pair, the raw example qualification, installed journeys, real Claude Code/Codex/VS Code
+connections (no token, roots fill), macOS/Linux. Follow-ups: known-issues §11.
+
