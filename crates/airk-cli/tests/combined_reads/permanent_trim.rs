@@ -188,6 +188,39 @@ fn policy_parity(label: &str, left: &Value, right: &Value) -> Result<()> {
     assert_parity(label, &body(left)?, &body(right)?)
 }
 
+/// U110: an MCP read names its indexes per call and no Project. Drop the
+/// combined-session selectors so the session's named scope applies.
+fn open_arguments(args: &Value) -> Value {
+    let mut args = args.clone();
+    if let Some(fields) = args.as_object_mut() {
+        fields.remove("project_ids");
+        fields.remove("index_ids");
+    }
+    args
+}
+
+/// U110: one tokenless MCP read of the session's named scope, compared in
+/// full with the same open read through the pipe (one service path).
+async fn open_mcp_parity(
+    f: &Fixture,
+    label: &str,
+    mcp: &mut McpSession,
+    id: u64,
+    tool: &str,
+    args: &Value,
+) -> Result<Value> {
+    let args = open_arguments(args);
+    let wire = mcp.call(id, tool, args.clone())?;
+    ensure!(
+        wire.get("error").is_none(),
+        "{label}: MCP RPC failed: {wire}"
+    );
+    let piped = mcp.pipe(f, tool, &args).await?;
+    forbid_trimmed_bytes(&piped)?;
+    policy_parity(label, &piped, &wire["result"])?;
+    Ok(wire)
+}
+
 async fn wait_policy(f: &Fixture) -> Result<airk_core::catalog_policy::PolicySnapshot> {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
@@ -601,12 +634,9 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
         );
         forbid_trimmed_bytes(&reply)?;
     }
-    // native read: old MCP session must not deliver its cached pre-trim evidence.
+    // U110: the open MCP session holds no grant; after the trim its next read
+    // of the same index must not deliver the trimmed pre-trim evidence.
     if let Ok(reply) = old_mcp.call(40, "airk_search", query.clone()) {
-        assert_eq!(
-            reply["result"]["isError"], true,
-            "old MCP grant survived trim: {reply}"
-        );
         forbid_trimmed_bytes(&reply)?;
     }
     backend.close();
@@ -633,11 +663,15 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
         &native,
         &f.cli("airk_read_file", &allowed_args).await?,
     )?;
-    policy_parity(
+    open_mcp_parity(
+        &f,
         "trim allowed MCP",
-        &native,
-        &mcp.call(50, "airk_read_file", allowed_args)?["result"],
-    )?;
+        &mut mcp,
+        50,
+        "airk_read_file",
+        &allowed_args,
+    )
+    .await?;
     let report_args = json!({"path":"api/types.rs","start_line":1,"end_line":2,"max_bytes":4096,"verification":"report","response_mode":"full"});
     let report = native_read(backend.as_ref(), "airk_read_file", &report_args).await?;
     let report_body = body(&report)?;
@@ -659,11 +693,15 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
         &report,
         &f.cli("airk_read_file", &report_args).await?,
     )?;
-    policy_parity(
+    open_mcp_parity(
+        &f,
         "trim verified MCP",
-        &report,
-        &mcp.call(51, "airk_read_file", report_args)?["result"],
-    )?;
+        &mut mcp,
+        51,
+        "airk_read_file",
+        &report_args,
+    )
+    .await?;
 
     let pin_method = |path: &Path| ControlMethod::NativeRead {
         project: registration.binding,
@@ -782,10 +820,11 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
         forbid_trimmed_bytes(&native)?;
         let cli = f.cli(tool, &args).await?;
         forbid_trimmed_bytes(&cli)?;
-        let mcp = mcp.call(100 + offset as u64 * 8, tool, args)?;
+        let label = format!("trim {tool} open pipe/MCP");
+        let mcp =
+            open_mcp_parity(&f, &label, &mut mcp, 100 + offset as u64 * 8, tool, &args).await?;
         forbid_trimmed_bytes(&mcp["result"])?;
         policy_parity(&format!("trim {tool} CLI"), &native, &cli)?;
-        policy_parity(&format!("trim {tool} MCP"), &native, &mcp["result"])?;
     }
     backend.close();
     backend.shutdown().await?;
@@ -850,9 +889,20 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     assert_eq!(member["source_policy"]["removal_pending"], false);
     let cli_status = f.cli("airk_status", &status_args).await?;
     let mut status_mcp = McpSession::start(&f)?;
-    let mcp_status = status_mcp.call(900, "airk_status", status_args)?;
     policy_parity("unblocked status CLI", &status, &cli_status)?;
-    policy_parity("unblocked status MCP", &status, &mcp_status["result"])?;
+    let mcp_status = open_mcp_parity(
+        &f,
+        "unblocked status open pipe/MCP",
+        &mut status_mcp,
+        900,
+        "airk_status",
+        &status_args,
+    )
+    .await?;
+    ensure!(
+        mcp_status["result"]["isError"] != true,
+        "unblocked MCP status failed: {mcp_status}"
+    );
     drop(status_mcp);
     backend.close();
     backend.shutdown().await?;
@@ -1203,11 +1253,16 @@ async fn permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector() ->
         &f.cli("airk_search", &query).await?,
     )?;
     let mut mcp = McpSession::start(&f)?;
-    policy_parity(
-        "trim shared vector MCP",
-        &after,
-        &mcp.call(20, "airk_search", query)?["result"],
-    )?;
+    let wire = open_mcp_parity(
+        &f,
+        "trim shared vector open pipe/MCP",
+        &mut mcp,
+        20,
+        "airk_search",
+        &query,
+    )
+    .await?;
+    forbid_trimmed_bytes(&wire["result"])?;
     backend.close();
     backend.shutdown().await?;
     drop(mcp);

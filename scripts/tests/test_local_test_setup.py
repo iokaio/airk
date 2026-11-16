@@ -780,7 +780,8 @@ class ModernActualTlsSmokeTests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(data)
                 def do_POST(self):
-                    if self.headers.get('Authorization') != 'Bearer '+(fixture.root / 'credential.token').read_text():
+                    # U110: the shared HTTPS client never sends a credential.
+                    if self.headers.get('Authorization') is not None:
                         self.respond(403); return
                     value = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                     calls.append(value)

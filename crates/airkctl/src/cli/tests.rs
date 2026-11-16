@@ -356,8 +356,7 @@ fn open_agent_arguments_are_checked_before_the_service() {
     assert_eq!(run_line(&too_many).0, 2);
     let connection = "1c".repeat(16);
     for invalid in [
-        // `connect` needs --connection-id or --open, never both.
-        &["agents", "connect", "--client", "codex"][..],
+        // U110: `connect` needs neither --connection-id nor --open, but never both.
         &[
             "agents",
             "connect",
@@ -366,7 +365,7 @@ fn open_agent_arguments_are_checked_before_the_service() {
             "--open",
             "--connection-id",
             &connection,
-        ],
+        ][..],
         &[
             "agents",
             "default",
@@ -397,6 +396,44 @@ fn open_agent_arguments_are_checked_before_the_service() {
     ] {
         assert_eq!(run_line(invalid).0, 2, "{invalid:?}");
     }
+}
+
+/// U110: the extension's `connectArgv` and `scopeDefaultArgv` shapes parse;
+/// connect names no connection.
+#[test]
+fn u110_connect_and_scope_default_arguments_parse() {
+    for args in [
+        &[
+            "airkctl",
+            "agents",
+            "connect",
+            "--client",
+            "codex",
+            "--project",
+            "/work/app",
+        ][..],
+        &[
+            "airkctl", "agents", "connect", "--client", "vscode", "--open",
+        ],
+        &[
+            "airkctl",
+            "scope",
+            "default",
+            "--workspace",
+            "/work/app",
+            "--workspace",
+            "/work/docs",
+            "--index",
+            "docs",
+            "--set",
+            "prj_34343434343434343434343434343434",
+        ],
+        &["airkctl", "scope", "default", "--workspace", "/work/app"],
+        &["airkctl", "scope", "defaults"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+    }
+    assert!(Cli::try_parse_from(["airkctl", "scope", "default"]).is_err());
 }
 
 #[test]

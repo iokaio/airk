@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! U105/U106: the scope of an open agent read and the `list_indexes` body,
+//! U105/U106: the scope of an open agent read and the `list_scopes` body,
 //! decided purely over catalog observations (`docs/split/open-agent-access.md`
 //! §5-§6, contracts §2.9). The service gathers a [`CatalogListing`] at one
 //! catalog revision; these functions never read storage, a clock or the
@@ -26,13 +26,13 @@ use std::collections::BTreeSet;
 
 /// The open list tool's public name (served by the service, offered in an
 /// open connection's catalog only with agent choice on).
-pub const LIST_INDEXES: &str = "list_indexes";
+pub const LIST_SCOPES: &str = "list_scopes";
 
 /// The refusal of a scope that resolved to no index (an empty index set).
 pub const SCOPE_UNAVAILABLE: &str = "scoped_read_unavailable";
 
 /// The catalog at one revision, as the service read it. `sources` may be
-/// empty when only resolution (not `list_indexes`) needs the listing.
+/// empty when only resolution (not `list_scopes`) needs the listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogListing {
     pub namespace: Incarnation,
@@ -103,7 +103,7 @@ pub fn requested<'a>(
     }
 }
 
-/// Whether `list_indexes` is served: always for the local owner, only with
+/// Whether `list_scopes` is served: always for the local owner, only with
 /// agent choice on for a connection.
 pub fn list_allowed(connection: Option<&OpenConnectionState>) -> Result<(), &'static str> {
     match connection {
@@ -330,7 +330,7 @@ pub fn validate_defaults(
     Ok(())
 }
 
-/// The catalog readiness `list_indexes` reports for an index: its source
+/// The catalog readiness `list_scopes` reports for an index: its source
 /// import and enabled sources only. It is not publication, policy-removal or
 /// semantic readiness (`status` reports those); an index without a saved
 /// policy reads through the metadata-only path and is not pending.
@@ -431,7 +431,7 @@ fn resume(revision: CatalogRevision, text: &str) -> Result<usize, &'static str> 
     }
 }
 
-/// One `list_indexes` page: every live index (id order), then every index
+/// One `list_scopes` page: every live index (id order), then every index
 /// set (id order), from the cursor's offset while the encoded body stays
 /// within `max_bytes`. A page always carries at least one remaining entry;
 /// `next_cursor` is present while entries remain and is bound to the

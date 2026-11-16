@@ -72,13 +72,63 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
         "blocked CLI unexpectedly succeeded: {cli:?}"
     );
     let cli: Value = serde_json::from_slice(&cli.stdout)?;
-    // native read: one deliberate negative wire observation of the exact read.
-    let wire = mcp.request(
+    // U110: the tokenless MCP session reads the same index whole as a
+    // one-index open read (no combined member wrapper). One deliberate
+    // negative observation each through MCP and the pipe's open read of the
+    // same scope: the same complete refusal, never a replay loop.
+    let open = super::changes_verification::open_arguments(&arguments)?;
+    let wire = mcp.transport.request_until(
         2,
         "tools/call",
-        json!({"name":"read_file","arguments":arguments}),
+        json!({"name":"read_file","arguments":open}),
+        Instant::now() + Duration::from_secs(20),
     )?;
-    for (route, envelope) in [("native", &native), ("CLI", &cli), ("MCP", &wire["result"])] {
+    let mut piped_arguments = open
+        .as_object()
+        .context("object arguments required")?
+        .clone();
+    piped_arguments.remove("index_ids");
+    let piped = tokio::time::timeout(
+        Duration::from_secs(20),
+        airk_cli::service_runtime::request(
+            &f.control,
+            ControlMethod::ToolsCall {
+                tool: "read_file".into(),
+                arguments: piped_arguments,
+                selection: http::Scope::indexes([f.indexes[0]]).open_selection(),
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Unknown,
+                read_attempt: None,
+            },
+        ),
+    )
+    .await??;
+    let ControlResponse::ToolResult { result: piped } = piped else {
+        anyhow::bail!(
+            "busy open pipe read gave no result: {}",
+            serde_json::to_string(&piped)?
+        );
+    };
+    ensure!(wire.get("error").is_none(), "busy MCP RPC error: {wire}");
+    let open_mcp = &wire["result"];
+    for (route, envelope) in [("open MCP", open_mcp), ("open pipe", &piped)] {
+        assert_eq!(
+            envelope["isError"], true,
+            "{route}: busy open read: {envelope}"
+        );
+    }
+    // The same exact retry basis, as far as the one-index read reports one.
+    assert_eq!(
+        read_retry::classify(open_mcp),
+        read_retry::classify(&piped),
+        "busy open read retry basis differs: MCP={open_mcp}; pipe={piped}"
+    );
+    assert_parity(
+        "busy one-index open read MCP vs pipe",
+        &body(&piped)?,
+        &body(open_mcp)?,
+    )?;
+    for (route, envelope) in [("native", &native), ("CLI", &cli)] {
         assert_eq!(envelope["isError"], true, "{route}: {envelope}");
         let canonical = body(envelope)?;
         let untouched = canonical.clone();

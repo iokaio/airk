@@ -107,9 +107,8 @@ async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result
         serde_json::to_string(&worker)?
     );
     f.assert_sources_unchanged()?;
-    // Physical removal can advance the catalog again after CatalogApplied.
-    // Capture a fresh delivery ticket only after that exact cleanup is terminal.
-    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 3002)?;
+    // U110: no credential is re-checked; `healthy_deletion_read` opens a fresh
+    // TCP/TLS connection (same MCP session) after this catalog commit.
     ensure!(
         healthy_deletion_read(&f, &mut healthy, 3).await? == baseline,
         "deleting one index changed the healthy index publication"
@@ -203,9 +202,8 @@ async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result
     );
     drop(registry);
     f.assert_sources_unchanged()?;
-    // Observe the completed setup's source/registration state before reconnecting;
-    // the original credential and immutable healthy selection are unchanged.
-    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 4003)?;
+    // Observe the completed setup's source/registration state; the healthy
+    // session's named scope is unchanged.
     ensure!(
         healthy_deletion_read(&f, &mut healthy, 4).await? == baseline,
         "fresh overlapping-source setup changed the independent healthy index"
@@ -219,14 +217,22 @@ async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result
 async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Result<Value> {
     let query = deletion_query();
     let cli = f.cli("airk_search", &query).await?;
+    // U110: the local session holds no grant, but a catalog commit (retirement,
+    // setup, cleanup) still closes the gateway's open TCP/TLS connections.
+    // Each independent read opens a fresh pinned connection on the same MCP
+    // session; a failed read is never replayed.
+    mcp.transport.fresh_tcp()?;
     let wire = mcp.call(id, "airk_search", query)?;
     ensure!(
         cli["isError"] != true && wire["result"]["isError"] != true,
         "healthy selected member refused: CLI={cli}; MCP={wire}"
     );
+    // U110: the MCP read names its index per call; it compares with the same
+    // open read through the pipe. The CLI reads the reviewed grant.
+    let piped = mcp.pipe(f, "airk_search", &deletion_query()).await?;
     policy_parity(
-        "healthy index across unrelated source loss",
-        &cli,
+        "healthy index across unrelated source loss (open pipe/MCP)",
+        &piped,
         &wire["result"],
     )?;
     let result = body(&cli)?;
@@ -259,106 +265,6 @@ async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Re
     )
 }
 
-/// Catalog commits fence the old socket's native delivery ticket, including
-/// sanitized error writes. Explicitly open a fresh transport with the SAME
-/// credential and selector; never catch/replay an uncertain evidence request.
-fn reconnect_healthy_after_catalog_commit(
-    f: &Fixture,
-    mcp: &mut McpSession,
-    id: u64,
-) -> Result<()> {
-    let before = mcp.transport.connection.clone();
-    let credential = Path::new(&before.credential_file);
-    let token_digest = airk_cli::runtime_pair::digest_file(credential)?;
-    let old = mcp.request(id, "ping", json!({}));
-    require_catalog_fenced_socket(old)?;
-    let mut fresh = McpSession {
-        transport: mcp.transport.reconnect(&f.control)?,
-        negotiated_protocol: String::new(),
-    };
-    let initialized = fresh.request(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
-    ensure!(
-        initialized.get("error").is_none(),
-        "explicit reconnect initialization failed: {initialized}"
-    );
-    fresh.negotiated_protocol = initialized["result"]["protocolVersion"]
-        .as_str()
-        .context("actual reconnected MCP protocol")?
-        .to_owned();
-    fresh
-        .transport
-        .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    ensure!(
-        fresh.transport.connection == before,
-        "reconnect changed frozen scope or credential references"
-    );
-    ensure!(
-        airk_cli::runtime_pair::digest_file(credential)? == token_digest,
-        "reconnect rotated the existing credential"
-    );
-    *mcp = fresh;
-    Ok(())
-}
-
-/// Only a closed transport proves the raw TLS fence. Protocol/JSON errors,
-/// timeouts and arbitrary fixture failures are not accepted as fenced delivery.
-pub(crate) fn require_catalog_fenced_socket(reply: Result<Value>) -> Result<()> {
-    let error = reply
-        .err()
-        .context("pre-commit HTTPS socket emitted post-fence output")?;
-    let closed = error.chain().any(|cause| {
-        cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
-            matches!(
-                error.kind(),
-                std::io::ErrorKind::UnexpectedEof
-                    | std::io::ErrorKind::ConnectionAborted
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::BrokenPipe
-                    | std::io::ErrorKind::NotConnected
-            )
-        }) || cause
-            .downcast_ref::<hyper::Error>()
-            .is_some_and(|error| error.is_closed() || error.is_incomplete_message())
-    });
-    ensure!(
-        closed,
-        "post-catalog socket failed without native transport closure: {error:#}"
-    );
-    Ok(())
-}
-
-#[test]
-fn catalog_socket_fence_does_not_accept_timeouts_protocol_errors_or_scope_responses() {
-    for kind in [
-        std::io::ErrorKind::UnexpectedEof,
-        std::io::ErrorKind::ConnectionAborted,
-        std::io::ErrorKind::ConnectionReset,
-        std::io::ErrorKind::BrokenPipe,
-    ] {
-        assert!(require_catalog_fenced_socket(Err(std::io::Error::from(kind).into())).is_ok());
-    }
-    for kind in [
-        std::io::ErrorKind::TimedOut,
-        std::io::ErrorKind::PermissionDenied,
-        std::io::ErrorKind::InvalidData,
-    ] {
-        assert!(require_catalog_fenced_socket(Err(std::io::Error::from(kind).into())).is_err());
-    }
-    assert!(require_catalog_fenced_socket(Err(anyhow::anyhow!("invalid JSON"))).is_err());
-    assert!(
-        require_catalog_fenced_socket(Ok(json!({"error":{"code":"combined_scope_expired"}})))
-            .is_err()
-    );
-    assert!(
-        require_catalog_fenced_socket(Err(http::HttpRefused {
-            status: 403,
-            body: json!({"schema":"airk.local-api-error/1","error":{"code":"native_grant_refused"}})
-        }
-        .into()))
-        .is_err()
-    );
-}
-
 // Missing storage is a failed member under Report, not an RPC or whole-union
 // failure. Explicit Require still refuses while retaining that same complete A
 // outcome. Exercise all three actual read paths without replaying a mutation.
@@ -374,14 +280,29 @@ async fn missing_storage_reads(f: &Fixture, mcp: &mut McpSession, first_id: u64)
         backend.shutdown().await?;
         let native = native?;
         let cli = f.cli("airk_search", &args).await?;
-        let wire = mcp.call(first_id + offset as u64, "airk_search", args)?;
+        // U110: an open MCP read names its one index and no Project. A
+        // one-index open read takes the single-index backend, which has no
+        // member availability: combined selectors would be refused
+        // `invalid_combined_selection`. Report/Require stays asserted on the
+        // native and CLI combined reads; MCP compares in full with the same
+        // open read through the pipe.
+        let mut open_args = args.clone();
+        let fields = open_args.as_object_mut().context("object arguments")?;
+        fields.remove("project_ids");
+        fields.remove("member_availability");
+        let wire = mcp.call(first_id + offset as u64, "airk_search", open_args.clone())?;
         ensure!(
             wire.get("error").is_none() && wire["result"].is_object(),
-            "missing storage produced an RPC failure instead of a member result: {wire}"
+            "missing storage produced an RPC failure instead of a tool result: {wire}"
+        );
+        let piped = mcp.pipe(f, "airk_search", &open_args).await?;
+        ensure!(
+            wire["result"]["isError"] == true && piped["isError"] == true,
+            "missing storage open read invented evidence: MCP={wire}; pipe={piped}"
         );
         policy_parity("missing storage native/CLI", &native, &cli)?;
-        policy_parity("missing storage native/MCP", &native, &wire["result"])?;
-        for reply in [&native, &cli, &wire["result"]] {
+        policy_parity("missing storage open pipe/MCP", &piped, &wire["result"])?;
+        for reply in [&native, &cli] {
             ensure!(
                 reply.get("isError").is_none_or(Value::is_boolean)
                     && (reply["isError"] == true) == required,
@@ -533,7 +454,7 @@ async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<
         f.session = healthy_session.clone();
         // Missing-storage probes can exceed the native header-idle deadline.
         // Open a fresh pinned TLS connection before this independent read while
-        // retaining the same MCP session and credential. No failed read is replayed.
+        // retaining the same MCP session. No failed read is replayed.
         healthy.transport.fresh_tcp()?;
         ensure!(
             healthy_deletion_read(&f, &mut healthy, 60).await? == baseline,
@@ -551,7 +472,6 @@ async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<
     );
     let retirement = policy_draft(&f, 144, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
-    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 7000)?;
     let evidence_method = ControlMethod::CatalogIndexRetirementEvidence {
         index_id: f.indexes[2],
     };
@@ -707,16 +627,21 @@ async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_ret
     let mut affected = McpSession::start(&f)?;
     let args = json!({"prefix":"api/","limit":16,"max_bytes":8192,"response_mode":"full"});
     let cli = f.cli("airk_list_files", &args).await?;
-    let wire = affected.call(102, "airk_list_files", args)?;
+    let wire = affected.call(102, "airk_list_files", args.clone())?;
     ensure!(
         cli["isError"] != true && wire["result"]["isError"] != true,
         "surviving A index refused after ordinary reconciliation: {cli}; {wire}"
     );
+    let piped = affected.pipe(&f, "airk_list_files", &args).await?;
     policy_parity(
-        "removed-file native retained inventory",
-        &cli,
+        "removed-file native retained inventory (open pipe/MCP)",
+        &piped,
         &wire["result"],
     )?;
+    ensure!(
+        !serde_json::to_string(&body(&wire["result"])?)?.contains("api/policy.md"),
+        "reconciled MCP file inventory still contains removed path"
+    );
     ensure!(
         !serde_json::to_string(&body(&cli)?)?.contains("api/policy.md"),
         "reconciled file inventory still contains removed path"
@@ -746,7 +671,6 @@ async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_ret
     f.session = affected_session;
     let retirement = policy_draft(&f, 153, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
-    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 10500)?;
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         if ServiceRegistry::open_saved(&f.control)?
@@ -840,7 +764,6 @@ async fn post_p14_missing_collection_settles_ordinary_credit_without_poisoning_h
     );
     let retirement = policy_draft(&f, 162, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
-    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 11200)?;
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         let registry = ServiceRegistry::open_saved(&f.control)?;
@@ -1445,12 +1368,22 @@ async fn union_read(
     backend.shutdown().await?;
     let native = native?;
     let cli = f.cli("airk_search", &args).await?;
-    let wire = mcp.call(id, "airk_search", args)?;
+    // U110: the MCP read names the union's two indexes (read whole), not the
+    // Project; it compares with the same open read through the pipe.
+    let mut open_args = args.clone();
+    open_args
+        .as_object_mut()
+        .context("object arguments")?
+        .remove("project_ids");
+    // A fresh pinned connection per independent read (same MCP session).
+    mcp.transport.fresh_tcp()?;
+    let wire = mcp.call(id, "airk_search", open_args.clone())?;
     ensure!(
         wire.get("error").is_none() && wire["result"].is_object(),
         "union MCP transport failed: {wire}"
     );
-    for response in [&native, &cli, &wire["result"]] {
+    let piped = mcp.pipe(f, "airk_search", &open_args).await?;
+    for response in [&native, &cli, &wire["result"], &piped] {
         ensure!(
             response.get("isError").is_none_or(Value::is_boolean),
             "malformed union transport error flag: {response}"
@@ -1458,11 +1391,11 @@ async fn union_read(
     }
     ensure!(
         native.get("isError") == cli.get("isError")
-            && cli.get("isError") == wire["result"].get("isError"),
-        "union error flags differ: native={native};CLI={cli};MCP={wire}"
+            && piped.get("isError") == wire["result"].get("isError"),
+        "union error flags differ: native={native};CLI={cli};pipe={piped};MCP={wire}"
     );
     policy_parity("default union native/CLI", &native, &cli)?;
-    policy_parity("default union native/MCP", &native, &wire["result"])?;
+    policy_parity("default union open pipe/MCP", &piped, &wire["result"])?;
     let value = body(&native)?;
     let members = value["members"]
         .as_array()
@@ -1560,7 +1493,9 @@ async fn deleted_default_union_case(data_lost: bool) -> Result<()> {
     let frozen_session = serde_json::to_value(&f.session)?;
     let b_source = Path::new(&f.registrations[1].root).join("api/policy.md");
     let b_bytes = fs::read(&b_source)?;
-    let mut mcp = McpSession::start(&f)?;
+    // U110: the default union's two indexes, named on every MCP read.
+    let union_scope = http::Scope::indexes([f.indexes[1], f.indexes[2]]);
+    let mut mcp = McpSession::start_scope(&f, union_scope.clone())?;
     let before = union_read(&f, &mut mcp, 200, "off", false).await?;
     ensure!(
         before["is_error"] == false,
@@ -1582,7 +1517,7 @@ async fn deleted_default_union_case(data_lost: bool) -> Result<()> {
         stop_deletion_service(&f, &mut service).await?;
     }
     service = Some(f.start().await?);
-    let mut mcp = McpSession::start(&f)?;
+    let mut mcp = McpSession::start_scope(&f, union_scope)?;
     union_loss_observations(&f, &mut mcp, &expected_b, data_lost, 220).await?;
     ensure!(
         serde_json::to_value(&f.session)? == frozen_session && f.session.index_ids.is_none(),
@@ -1600,8 +1535,8 @@ async fn deleted_default_union_case(data_lost: bool) -> Result<()> {
         ServiceRegistry::open_saved(&f.control)?.is_registered(f.registrations[2].binding)?,
         "source absence implicitly retired A"
     );
-    retire_default_union_and_review_same_project(&mut f, &mut mcp, &expected_b).await?;
     drop(mcp);
+    retire_default_union_and_review_same_project(&mut f, &expected_b).await?;
     stop_deletion_service(&f, &mut service).await?;
     Ok(())
 }
@@ -1639,7 +1574,6 @@ fn retired_union_refusal(reply: &Value, session: &CombinedConnectRequest) -> Res
 
 async fn retire_default_union_and_review_same_project(
     f: &mut Fixture,
-    old_mcp: &mut McpSession,
     expected_b: &Value,
 ) -> Result<()> {
     use airk_core::catalog_management::{CatalogEntity, CatalogItem};
@@ -1706,19 +1640,6 @@ async fn retire_default_union_and_review_same_project(
         .call("airk_search".into(), args.as_object().unwrap().clone())
         .await?;
     retired_union_refusal(&native, &old_session)?;
-    // The original socket's catalog delivery ticket is now fenced. Native and
-    // fresh CLI paths above/below retain their complete terminal scope refusal;
-    // HTTP must emit no old-generation evidence (even a sanitized error cannot
-    // cross that raw TLS fence). Do not replay the read on a new authority.
-    let wire = old_mcp.request(
-        240,
-        "tools/call",
-        json!({"name":"airk_search","arguments":args.clone()}),
-    );
-    ensure!(
-        wire.is_err(),
-        "retired HTTP generation emitted a post-fence result: {wire:?}"
-    );
     old_native.close();
     old_native.shutdown().await?;
     // A fresh CLI cannot even construct the old scoped backend. Its documented
@@ -1834,13 +1755,15 @@ async fn retire_default_union_and_review_same_project(
     backend.shutdown().await?;
     let native = native?;
     let cli = f.cli("airk_search", &args).await?;
-    let mut fresh = McpSession::start(f)?;
-    let wire = fresh.call(241, "airk_search", args)?;
+    // U110: MCP names the surviving index B per call (read whole).
+    let mut fresh = McpSession::start_scope(f, http::Scope::indexes([f.indexes[1]]))?;
+    let wire = fresh.call(241, "airk_search", args.clone())?;
+    let piped = fresh.pipe(f, "airk_search", &args).await?;
     ensure!(
         wire.get("error").is_none() && wire["result"].is_object(),
         "fresh default MCP transport failed: {wire}"
     );
-    for value in [&native, &cli, &wire["result"]] {
+    for value in [&native, &cli, &wire["result"], &piped] {
         ensure!(
             value
                 .get("isError")
@@ -1854,8 +1777,8 @@ async fn retire_default_union_and_review_same_project(
         &cli,
     )?;
     policy_parity(
-        "fresh same-default Project native/MCP after A cleanup",
-        &native,
+        "fresh open pipe/MCP of B after A cleanup",
+        &piped,
         &wire["result"],
     )?;
     let value = body(&native)?;

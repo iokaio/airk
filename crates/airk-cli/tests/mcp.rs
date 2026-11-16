@@ -34,6 +34,67 @@ fn cli_call(
         }
     }
 }
+/// U110: `airkctl tools call <tool> --index <id>`, the open read of the
+/// fixture's one index: the service path every tokenless HTTPS MCP read
+/// takes, so complete MCP results compare with it directly. Reads through
+/// the reviewed scoped session (`cli_call`) carry that session's own scope
+/// observation and compare with the other scoped CLI forms.
+fn open_command(
+    root: &std::path::Path,
+    data: &std::path::Path,
+    collection: &str,
+    tool: &str,
+    args: &Value,
+) -> common::ctl::Ctl {
+    let service = common::http_fixture(root, data, collection);
+    let mut command = common::ctl::Ctl::new();
+    command
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .args(["tools", "call", tool])
+        .args(service.open_scope().cli_arguments())
+        .args(["--args".to_owned(), args.to_string()])
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .env("AIRK_USAGE_MODE", "disabled");
+    command
+}
+/// The complete envelope of one open `tools call` (a tool error exits 1).
+fn open_call(
+    root: &std::path::Path,
+    data: &std::path::Path,
+    collection: &str,
+    tool: &str,
+    args: &Value,
+) -> anyhow::Result<Value> {
+    let output = common::read_retry::output(&mut open_command(root, data, collection, tool, args))?;
+    anyhow::ensure!(
+        output.status.success() || output.status.code() == Some(1),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+/// The JSON body of a scoped `tools call` through the reviewed session.
+fn scoped_tool_payload(
+    root: &std::path::Path,
+    data: &std::path::Path,
+    collection: &str,
+    tool: &str,
+    args: &Value,
+) -> anyhow::Result<Value> {
+    let envelope = cli_call(
+        root,
+        data,
+        collection,
+        &["tools", "call", tool, "--args", &args.to_string()],
+    )?;
+    Ok(serde_json::from_str(
+        envelope["content"][0]["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing native JSON: {envelope}"))?,
+    )?)
+}
 fn native_payload(envelope: &Value) -> anyhow::Result<Value> {
     anyhow::ensure!(
         envelope["isError"] != true,
@@ -103,6 +164,85 @@ fn assert_query_scope_metadata_tool(tools: &[Value], name: &str, transport_proje
     }
 }
 
+/// U110: the tokenless local agent session's `tools/list`: the public
+/// catalog without `projects`, plus `list_scopes`. Independently listed.
+fn assert_local_mcp_catalog_names(tools: &[Value]) {
+    let expected = [
+        "answer",
+        "capabilities",
+        "changes",
+        "code_facts",
+        "context",
+        "diagnostics",
+        "document_facts",
+        "draft_plan",
+        "draft_search",
+        "draft_strategy",
+        "file_info",
+        "get_handoff",
+        "get_template",
+        "help",
+        "imports",
+        "list_files",
+        "list_scopes",
+        "list_templates",
+        "outline",
+        "parse",
+        "proposal_status",
+        "query_scope",
+        "read_file",
+        "references",
+        "relationships",
+        "search",
+        "status",
+        "suggest_view",
+        "symbols",
+        "validate_draft",
+    ];
+    let mut actual = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("public tool name"))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected, "complete local agent session catalog");
+}
+/// U110: the local session's `query_scope` is the canonical query-scope
+/// schema plus exactly the per-call scope (`index_ids`, `index_set_ids`,
+/// `workspace`) and the open read's `limit_per_index`; no project binding.
+fn assert_local_query_scope_tool(tools: &[Value]) {
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "query_scope")
+        .expect("query scope metadata tool");
+    let canonical = airk_mcp::open::local_catalog()
+        .into_iter()
+        .find(|tool| tool.name == "query_scope")
+        .expect("local query scope metadata tool");
+    assert_eq!(
+        tool["inputSchema"],
+        serde_json::to_value(canonical).unwrap()["inputSchema"]
+    );
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+    let mut schema = tool["inputSchema"].clone();
+    let properties = schema["properties"].as_object_mut().unwrap();
+    for added in ["index_ids", "index_set_ids", "workspace", "limit_per_index"] {
+        assert!(
+            properties.remove(added).is_some(),
+            "local query_scope lacks {added}"
+        );
+    }
+    let mut expected_schema = airk_core::combined_reads::query_scope::schema();
+    expected_schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(schema, expected_schema);
+    for field in ["project", "project_ids", "verification", "response_mode"] {
+        assert!(
+            tool["inputSchema"]["properties"].get(field).is_none(),
+            "discovery must not advertise {field}"
+        );
+    }
+}
+
 impl Session {
     fn start(root: &std::path::Path, state: &std::path::Path) -> anyhow::Result<Self> {
         // Existing rich-payload parity and publication tests explicitly use Full.
@@ -114,10 +254,10 @@ impl Session {
         mode: Option<&str>,
     ) -> anyhow::Result<Self> {
         let service = common::http_fixture(root, state, "project-a");
+        // U110: tokenless HTTPS; every read names the fixture's one index.
         let transport = common::http::HttpMcpSession::start_with_mode(
             &service.control,
-            service.http_selection(),
-            airk_core::usage::ClientFamily::Unknown,
+            service.open_scope(),
             mode,
         )?;
         Ok(Self {
@@ -335,19 +475,34 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         stable(envelope);
         Ok(())
     }
-    let mut expected_envelope = mcp["result"].clone();
-    normalize_envelope(&mut expected_envelope)?;
-    for mut actual in [alias.clone(), tools.clone()] {
+    // U110: HTTPS MCP is an open read of the fixture's index; it compares
+    // with the open `tools call`. The scoped convenience form compares with
+    // the scoped `tools call` of the same session.
+    let open = open_call(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_file_info",
+        &args,
+    )?;
+    for (mut actual, reference, label) in [
+        (open.clone(), mcp["result"].clone(), "open tools/HTTP"),
+        (alias.clone(), tools.clone(), "convenience/tools"),
+    ] {
+        let mut expected_envelope = reference;
+        normalize_envelope(&mut expected_envelope)?;
         normalize_envelope(&mut actual)?;
         assert_eq!(
             actual, expected_envelope,
-            "convenience/tools/HTTP must retain the complete envelope"
+            "{label} must retain the complete envelope"
         );
     }
-    let mut expected = native.clone();
-    stable(&mut expected);
-    for mut actual in [native_payload(&alias)?, payload(&tools)?] {
+    for (mut actual, mut expected) in [
+        (payload(&open)?, native.clone()),
+        (native_payload(&alias)?, payload(&tools)?),
+    ] {
         stable(&mut actual);
+        stable(&mut expected);
         assert_eq!(actual, expected);
     }
     let default_args = json!({"path":"policy.md","response_mode":"full"});
@@ -359,6 +514,15 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         8
     );
     stable(&mut default_expected);
+    let mut default_open = payload(&open_call(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_file_info",
+        &default_args,
+    )?)?;
+    stable(&mut default_open);
+    assert_eq!(default_open, default_expected);
     let mut default_cli = cli_call(
         root.path(),
         state.path(),
@@ -366,7 +530,15 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         &["info", "policy.md"],
     )?;
     stable(&mut default_cli);
-    assert_eq!(default_cli, default_expected);
+    let mut default_scoped = scoped_tool_payload(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_file_info",
+        &default_args,
+    )?;
+    stable(&mut default_scoped);
+    assert_eq!(default_cli, default_scoped);
     // Disable watching before the fixture edit, so this checks the returned old
     // evidence rather than racing a background publication of the new bytes.
     fs::write(root.path().join("policy.md"), "changed saved bytes\n")?;
@@ -400,20 +572,34 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         "requirements_unmet"
     );
     stable(&mut expected_plan);
-    let output = common::read_retry::output(
-        common::scoped_command(root.path(), state.path(), "project-a").args([
-            "tools",
-            "call",
-            "airk_parse",
-            "--args",
-            &serde_json::to_string(&required_plan)?,
-        ]),
-    )?;
+    let output = common::read_retry::output(&mut open_command(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_parse",
+        &required_plan,
+    ))?;
     assert!(!output.status.success());
     let output: Value = serde_json::from_slice(&output.stdout)?;
     let mut actual_plan = payload(&output)?;
     stable(&mut actual_plan);
     assert_eq!(actual_plan, expected_plan);
+    // The open `tools call` and HTTPS MCP return the same complete failure.
+    let open_failure = open_call(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_file_info",
+        &require,
+    )?;
+    assert_eq!(open_failure["isError"], true);
+    let mut open_failure = payload(&open_failure)?;
+    let mut mcp_failure = expected_failure.clone();
+    stable(&mut open_failure);
+    stable(&mut mcp_failure);
+    assert_eq!(open_failure, mcp_failure);
+    // The scoped convenience form and scoped `tools call` agree with each other.
+    let mut scoped_failure: Option<Value> = None;
     for invocation in [
         vec![
             "info",
@@ -445,10 +631,13 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         let reply: Value = serde_json::from_slice(&output.stdout)?;
         assert_eq!(reply["isError"], true);
         let mut actual = payload(&reply)?;
-        let mut expected = expected_failure.clone();
         stable(&mut actual);
-        stable(&mut expected);
-        assert_eq!(actual, expected);
+        assert_eq!(actual["error"]["code"], "verification_required_unmet");
+        assert_eq!(actual["publication"], native["publication"]);
+        match &scoped_failure {
+            Some(expected) => assert_eq!(&actual, expected),
+            None => scoped_failure = Some(actual),
+        }
     }
     let shell = common::scoped_command(root.path(), state.path(), "project-a")
         .args(["tools", "shell"])
@@ -480,17 +669,12 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         let wire = session.read_retry(9000 + ordinal as u64, "capabilities", args.clone())?;
         anyhow::ensure!(wire["result"]["isError"] != true, "capabilities: {wire}");
         let mut native = payload(&wire["result"])?;
-        let tools = cli_call(
+        let tools = open_call(
             root.path(),
             state.path(),
             "project-a",
-            &[
-                "tools",
-                "call",
-                "airk_capabilities",
-                "--args",
-                &serde_json::to_string(&args)?,
-            ],
+            "airk_capabilities",
+            &args,
         )?;
         let mut cli = payload(&tools)?;
         if mode == "terse" {
@@ -697,7 +881,16 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             ],
         )?;
         let tool: Value = serde_json::from_str(tool_reply["content"][0]["text"].as_str().unwrap())?;
-        for actual in [&cli, &tool] {
+        // U110: HTTPS MCP compares with the open `tools call` (one service
+        // path); the scoped convenience form with the scoped `tools call`.
+        let open = native_payload(&open_call(
+            root.path(),
+            state.path(),
+            "project-a",
+            "airk_parse",
+            &request,
+        )?)?;
+        for (actual, mcp) in [(&open, &mcp), (&cli, &tool)] {
             assert_eq!(actual["status"], "complete", "{actual}");
             assert_eq!(actual["plan"], mcp["plan"]);
             assert_eq!(actual["evidence"], mcp["evidence"]);
@@ -741,7 +934,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 "project-a",
                 &["symbol", "QueueClient", "--reply-detail", detail],
             )?;
-            compare_native(alias, mcp["steps"][0]["result"].clone())?;
+            compare_native(alias, tool["steps"][0]["result"].clone())?;
         }
     }
     for (offset, (detail, full)) in [
@@ -768,21 +961,17 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                     .any(|v| v["reason"] == "truncated")
             );
         }
-        let tool = cli_call(
+        let open = native_payload(&open_call(
             root.path(),
             state.path(),
             "project-a",
-            &[
-                "tools",
-                "call",
-                "airk_search",
-                "--args",
-                &serde_json::to_string(&args)?,
-            ],
-        )?;
-        let tool: Value = serde_json::from_str(tool["content"][0]["text"].as_str().unwrap())?;
-        compare_native(mcp.clone(), tool)?;
+            "airk_search",
+            &args,
+        )?)?;
+        compare_native(mcp.clone(), open)?;
         if !full {
+            let tool =
+                scoped_tool_payload(root.path(), state.path(), "project-a", "airk_search", &args)?;
             let alias = cli_call(
                 root.path(),
                 state.path(),
@@ -796,7 +985,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                     detail,
                 ],
             )?;
-            compare_native(mcp.clone(), alias)?;
+            compare_native(tool, alias)?;
         }
     }
     assert_eq!(
@@ -826,19 +1015,13 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 .iter()
                 .any(|v| v["reason"] == reason)
         );
-        let cli = cli_call(
+        let mut cli = native_payload(&open_call(
             root.path(),
             state.path(),
             "project-a",
-            &[
-                "tools",
-                "call",
-                tool,
-                "--args",
-                &serde_json::to_string(&args)?,
-            ],
-        )?;
-        let mut cli: Value = serde_json::from_str(cli["content"][0]["text"].as_str().unwrap())?;
+            tool,
+            &args,
+        )?)?;
         stable(&mut mcp);
         stable(&mut cli);
         assert_eq!(mcp, cli);
@@ -852,7 +1035,15 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         status_plan_with_retry(|| decode(session.call(5, "parse", status_request.clone())?))?;
     let nested = &parsed["steps"][0]["result"];
     assert_eq!(parsed["steps"][0]["status"], "complete", "{parsed}");
-    for field in direct.as_object().unwrap().keys() {
+    // U110 (contracts §2.11): `scope` reports how the outer read's scope was
+    // chosen; it belongs to the open read result, not to a plan step's result.
+    assert_eq!(direct["read_scope"]["source"], "named", "{direct}");
+    for field in direct
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|field| *field != "read_scope")
+    {
         assert!(
             nested.get(field).is_some(),
             "Workbench status lost MCP field {field}: {nested}"
@@ -995,8 +1186,14 @@ fn default_terse_https_supports_full_and_requested_status_without_changing_revis
     // native selector; the canonical CLI helper retains the identical refusal.
     let invalid_help = json!({"topic":"workbench","detail":"full"});
     let refused = session.call(200, "help", invalid_help.clone())?;
-    let mut command = common::scoped_command(root.path(), state.path(), "project-a");
-    command.args(["tools", "call", "help", "--args", &invalid_help.to_string()]);
+    // U110: the open `tools call` answers help as the local agent session does.
+    let command = open_command(
+        root.path(),
+        state.path(),
+        "project-a",
+        "help",
+        &invalid_help,
+    );
     let output = common::read_retry::once_until(
         &command,
         std::time::Instant::now() + Duration::from_secs(60),
@@ -1250,8 +1447,8 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))?;
     let catalog = session.receive(2)?;
     let tools = catalog["result"]["tools"].as_array().unwrap();
-    common::assert_unified_mcp_catalog_names(tools);
-    assert_query_scope_metadata_tool(tools, "query_scope", true);
+    assert_local_mcp_catalog_names(tools);
+    assert_local_query_scope_tool(tools);
     session.wait_source_idle()?;
     for (id, command, option, tool, field, key) in [
         (
@@ -1271,20 +1468,36 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             document_key,
         ),
     ] {
-        let mut expected = cli(&[command, option, key, "--compact", "false", "--limit", "10"])?;
-        let result =
-            session.read_retry(id, tool, json!({(field):key,"compact":false,"limit":10}))?;
+        let arguments = json!({(field):key,"compact":false,"limit":10});
+        // The scoped convenience form and the scoped `tools call` agree.
+        let mut convenience = cli(&[command, option, key, "--compact", "false", "--limit", "10"])?;
+        let mut scoped =
+            scoped_tool_payload(root.path(), state.path(), "project-a", tool, &arguments)?;
+        // U110: HTTPS MCP and the open `tools call` take one service path.
+        let mut expected = native_payload(&open_call(
+            root.path(),
+            state.path(),
+            "project-a",
+            tool,
+            &arguments,
+        )?)?;
+        let result = session.read_retry(id, tool, arguments.clone())?;
         assert_ne!(result["result"]["isError"], true, "{result}");
         let mut actual: Value = serde_json::from_str(
             result["result"]["content"][0]["text"]
                 .as_str()
                 .expect("tool payload"),
         )?;
-        common::read_retry::normalize_dated_readiness_pair(&mut expected, &mut actual, 2)?;
-        for response in [&mut expected, &mut actual] {
-            common::read_retry::evidence_for_comparison(response)?;
+        for (left, right) in [
+            (&mut expected, &mut actual),
+            (&mut convenience, &mut scoped),
+        ] {
+            common::read_retry::normalize_dated_readiness_pair(left, right, 2)?;
+            for response in [&mut *left, &mut *right] {
+                common::read_retry::evidence_for_comparison(response)?;
+            }
+            assert_eq!(left, right);
         }
-        assert_eq!(actual, expected);
         assert!(!actual["items"].as_array().unwrap().is_empty());
         assert!(
             !run(&[command, option, key, "--name", "original"])?
@@ -1333,22 +1546,47 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
         )?)
     };
     session.wait_source_idle()?;
-    let mut expected = cli(&["changes", "--path", "aurora.py"])?;
-    let mut actual = payload(session.read_retry(
-        2,
+    let changes = json!({"selectors":[{"kind":"path","path":"aurora.py"}]});
+    // The scoped convenience form and the scoped `tools call` agree; HTTPS
+    // MCP and the open `tools call` (one service path, U110) agree.
+    let mut convenience = cli(&["changes", "--path", "aurora.py"])?;
+    let mut scoped = scoped_tool_payload(
+        root.path(),
+        state.path(),
+        "project-a",
         "airk_changes",
-        json!({"selectors":[{"kind":"path","path":"aurora.py"}]}),
-    )?)?;
-    common::read_retry::normalize_dated_readiness_pair(&mut expected, &mut actual, 1)?;
-    for value in [&mut expected, &mut actual] {
-        assert!(
-            value.get("freshness").is_some(),
-            "changes omitted freshness"
-        );
-        common::read_retry::evidence_for_comparison(value)?;
+        &changes,
+    )?;
+    let mut expected = payload(json!({"result": open_call(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_changes",
+        &changes,
+    )?}))?;
+    let mut actual = payload(session.read_retry(2, "airk_changes", changes.clone())?)?;
+    for (left, right) in [
+        (&mut expected, &mut actual),
+        (&mut convenience, &mut scoped),
+    ] {
+        common::read_retry::normalize_dated_readiness_pair(left, right, 1)?;
+        for value in [&mut *left, &mut *right] {
+            assert!(
+                value.get("freshness").is_some(),
+                "changes omitted freshness"
+            );
+            common::read_retry::evidence_for_comparison(value)?;
+        }
+        assert_eq!(left, right);
     }
-    assert_eq!(actual, expected);
-    let info = cli(&["info", "aurora.py"])?;
+    // The validator of the open read's own evidence.
+    let info = native_payload(&open_call(
+        root.path(),
+        state.path(),
+        "project-a",
+        "airk_file_info",
+        &json!({"path":"aurora.py"}),
+    )?)?;
     let validator = info["read"]["validator"].as_str().expect("validator");
     let unchanged = payload(session.read_retry(
         3,
@@ -1407,8 +1645,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     let old_generation = baseline["generation"].as_u64().expect("generation");
     let old_publication = baseline["publication"].clone();
     assert!(old_publication["token"].is_string());
-    let expected_scope = baseline["scope_observation"].clone();
-    assert!(expected_scope.is_object());
+    assert!(baseline["scope_observation"].is_object());
     let mut agents = [
         Session::start(root.path(), state.path())?,
         Session::start(root.path(), state.path())?,
@@ -1434,6 +1671,9 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     };
     // Queries do not acquire or wait for the collection's exclusive writer lock.
     // Activate the native worker first; startup recovery has its own writer gate.
+    // U110: both tokenless sessions name the same index, so they observe one
+    // open scope; every later read keeps it across the publication.
+    let mut expected_scope = Value::Null;
     for agent in &mut agents {
         let ready = evidence(agent.read_retry(
             90,
@@ -1442,7 +1682,13 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
         )?)?;
         assert_eq!(ready["hits"][0]["text"], old_text);
         assert_eq!(ready["publication"], old_publication);
+        assert!(ready["scope_observation"].is_object(), "{ready}");
+        if expected_scope.is_null() {
+            expected_scope = ready["scope_observation"].clone();
+        }
+        assert_eq!(ready["scope_observation"], expected_scope);
     }
+    let expected_scope = expected_scope;
     let collection = airk_store::service::collection::Collection::existing(
         std::path::Path::new(&_service.project.data_root),
         &_service.project.root,
@@ -1605,184 +1851,6 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
 }
 
 #[test]
-fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references()
--> anyhow::Result<()> {
-    fn catalog_authority(service: &common::Service) -> anyhow::Result<Value> {
-        use airk_core::{
-            catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
-            service::{ControlMethod, ControlResponse},
-        };
-        let mut snapshot = serde_json::Map::new();
-        for kind in [
-            CatalogKind::Projects,
-            CatalogKind::Indexes,
-            CatalogKind::Memberships,
-            CatalogKind::Contexts,
-            CatalogKind::Grants,
-        ] {
-            let mut after = None;
-            let mut revision = None;
-            let mut items = Vec::new();
-            loop {
-                let response = service.request(ControlMethod::CatalogPage {
-                    request: CatalogPageRequest {
-                        kind,
-                        index_id: None,
-                        project_id: None,
-                        after,
-                        expected_catalog_revision: revision,
-                        limit: 32,
-                        max_bytes: MAX_PAGE_BYTES,
-                    },
-                });
-                let ControlResponse::CatalogPage { page, .. } = response else {
-                    anyhow::bail!(
-                        "canonical setup authority snapshot failed: {}",
-                        serde_json::to_string(&response)?
-                    );
-                };
-                revision = Some(page.revision);
-                items.extend(page.items);
-                match page.continuation {
-                    Some(cursor) => after = Some(cursor),
-                    None => break,
-                }
-            }
-            snapshot.insert(
-                serde_json::to_value(kind)?.as_str().unwrap().into(),
-                serde_json::to_value(items)?,
-            );
-        }
-        Ok(Value::Object(snapshot))
-    }
-    let root = tempfile::tempdir()?;
-    let state = tempfile::tempdir()?;
-    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
-    fs::write(root.path().join("a.txt"), "fixture")?;
-    for client in ["claude", "codex", "vscode"] {
-        // `setup` is the pre-split command under test (no airkctl equivalent).
-        let output = common::read_retry::output(
-            common::legacy_airk_scoped_command(root.path(), state.path(), "project-a")
-                .args(["setup", "--client", client]),
-        )?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        );
-        let value: Value = serde_json::from_slice(&output.stdout)?;
-        let connection: airk_core::service_http::HttpConnectionInfo =
-            serde_json::from_value(value["connection"].clone())?;
-        connection.validate()?;
-        assert_eq!(
-            connection.selection.namespace(),
-            service.http_selection().namespace()
-        );
-        assert_eq!(
-            value["environment"]["token_source_file"],
-            connection.credential_file
-        );
-        assert_eq!(
-            value["environment"]["additional_ca_file"],
-            connection.ca_certificate_file
-        );
-        assert_eq!(value["environment"]["preserve_existing_trust"], true);
-        let configuration = value["configuration"].as_str().unwrap();
-        assert!(configuration.contains(&connection.endpoint.url.to_string()));
-        assert!(
-            !configuration.contains("airk1."),
-            "configuration must contain references only"
-        );
-        assert!(!configuration.contains("airk-launcher"));
-        if client == "vscode" {
-            let configured: Value = serde_json::from_str(configuration)?;
-            assert_eq!(configured["servers"]["airk"]["type"], "http");
-            assert_eq!(configured["inputs"][0]["command"], "airk.httpCredential");
-            assert_eq!(
-                configured["inputs"][0]["args"]["connection_id"],
-                serde_json::to_value(connection.connection_id)?
-            );
-        }
-        let unreviewed_id = airk_kernel::service_broker::new_instance_id()?;
-        let binding = airk_cli::http_endpoint::installation_binding(
-            &service.control,
-            service.http_selection().namespace(),
-        )?;
-        let ownership = |id| -> anyhow::Result<airk_cli::http_endpoint::ConnectionOwnership> {
-            let now: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis()
-                .try_into()?;
-            airk_cli::http_endpoint::CredentialStore::read_existing(
-                &service.control.join("http-1"),
-                binding.clone(),
-            )?
-            .ownership(id, now)
-        };
-        assert!(matches!(
-            ownership(unreviewed_id)?,
-            airk_cli::http_endpoint::ConnectionOwnership::NotOwned
-        ));
-        assert!(matches!(
-            ownership(connection.connection_id)?,
-            airk_cli::http_endpoint::ConnectionOwnership::Active
-        ));
-        let authority_before = catalog_authority(&service)?;
-        let unreviewed = common::legacy_airk_command(root.path(), state.path(), "project-a")
-            .args(["setup", "--client", client])
-            .args(["--connection-id", &unreviewed_id.to_string()])
-            .output()?;
-        assert!(
-            !unreviewed.status.success(),
-            "setup inferred authority without a reviewed selector"
-        );
-        let expected = if client == "vscode" {
-            "Error: guided standalone setup supports Claude Code and Codex; the VS Code adapter requires its extension"
-        } else {
-            "Error: interactive setup needs a terminal; supply an explicit scope and --yes"
-        };
-        let stderr = String::from_utf8_lossy(&unreviewed.stderr);
-        assert_eq!(
-            stderr.lines().last(),
-            Some(expected),
-            "unreviewed setup response for {client}: stdout={} stderr={stderr}",
-            String::from_utf8_lossy(&unreviewed.stdout)
-        );
-        assert_eq!(
-            catalog_authority(&service)?,
-            authority_before,
-            "unreviewed {client} setup changed saved scope or grant authority"
-        );
-        assert!(
-            matches!(
-                ownership(unreviewed_id)?,
-                airk_cli::http_endpoint::ConnectionOwnership::NotOwned
-            ),
-            "unreviewed {client} setup created its requested connection"
-        );
-        assert!(
-            matches!(
-                ownership(connection.connection_id)?,
-                airk_cli::http_endpoint::ConnectionOwnership::Active
-            ),
-            "unreviewed {client} setup changed the reviewed connection's authority"
-        );
-    }
-    for client in ["cursor", "opencode", "opencode-v2", "copilot-cli", "kilo"] {
-        let output = common::legacy_airk_scoped_command(root.path(), state.path(), "project-a")
-            .args(["setup", "--client", client])
-            .output()?;
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("http_client_compatibility_unverified")
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Result<()> {
     fn stable(value: &mut Value) {
         match value {
@@ -1852,20 +1920,27 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         catalog["tools"],
         serde_json::to_value(airk_mcp::unified::tools())?
     );
-    assert_eq!(
-        catalog["tools"], listed["result"]["tools"],
-        "CLI and actual MCP must retain complete public tool definitions"
-    );
     assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "query_scope", true);
-    common::assert_unified_mcp_catalog_names(tools);
+    // U110: every tokenless HTTPS MCP session is the local agent session,
+    // whose catalog is the public one without `projects` (replaced by
+    // `list_scopes`) and whose reads take the per-call scope.
+    assert_eq!(
+        listed["result"]["tools"],
+        serde_json::to_value(airk_mcp::open::local_catalog())?,
+        "actual MCP must retain the complete local agent session catalog"
+    );
+    assert_local_mcp_catalog_names(tools);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_query_scope_metadata_tool(tools, "query_scope", true);
+    assert_local_query_scope_tool(tools);
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"].as_str().unwrap();
-        assert!(names.contains(name), "missing public evidence tool {name}");
+        assert!(
+            name == "projects" || names.contains(name),
+            "missing public evidence tool {name}"
+        );
     }
     let drafts = [
         "draft_search",
@@ -1945,12 +2020,8 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         let mut direct: Value = if name == "airk_status" {
             common::published_status(root.path(), state.path(), "project-a")?
         } else {
-            let envelope = cli_call(
-                root.path(),
-                state.path(),
-                "project-a",
-                &["tools", "call", name, "--args", &args.to_string()],
-            )?;
+            // U110: the open `tools call`, the service path HTTPS MCP takes.
+            let envelope = open_call(root.path(), state.path(), "project-a", name, &args)?;
             serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?
         };
         if name != "airk_status" {
@@ -2039,16 +2110,33 @@ mod current_recovery;
 #[test]
 fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> anyhow::Result<()> {
     fn hint(reply: &Value, expected_scope: &Value) -> anyhow::Result<Value> {
+        open_hint(reply, expected_scope, None)
+    }
+    /// U110: an open read also reports how its scope was named (`scope`);
+    /// when `open_scope` is given that exact report is required, then the
+    /// remaining hint is the same complete retry contract.
+    fn open_hint(
+        reply: &Value,
+        expected_scope: &Value,
+        open_scope: Option<&Value>,
+    ) -> anyhow::Result<Value> {
         anyhow::ensure!(reply.is_object() && reply["isError"] == true, "{reply}");
         let blocks = reply["content"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("{reply}"))?;
         anyhow::ensure!(blocks.len() == 1 && blocks[0]["type"] == "text", "{reply}");
-        let value: Value = serde_json::from_str(
+        let mut value: Value = serde_json::from_str(
             blocks[0]["text"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("{reply}"))?,
         )?;
+        if let Some(open_scope) = open_scope
+            && let Some(scope) = value
+                .as_object_mut()
+                .and_then(|fields| fields.remove("read_scope"))
+        {
+            anyhow::ensure!(&scope == open_scope, "{reply}");
+        }
         anyhow::ensure!(
             value
                 == json!({"status":"retry","retryable":true,"code":"selection_busy",
@@ -2111,6 +2199,15 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
         warm.get("error").is_none() && warm["result"]["isError"] != true,
         "{warm}"
     );
+    // U110: HTTPS MCP reads the fixture's index through the open path; its
+    // scope observation is the open selection's, which the open `tools call`
+    // shares. The scoped native and CLI reads keep the reviewed session's.
+    let warm = native_payload(&warm["result"])?;
+    let open_observation = warm["scope_observation"].clone();
+    anyhow::ensure!(open_observation.is_object(), "{warm}");
+    let open_scope = warm["read_scope"].clone();
+    anyhow::ensure!(open_scope["source"] == "named", "{warm}");
+    assert_eq!(warm["publication"]["token"], publication);
     let ledger = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -2151,12 +2248,32 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
         );
         let cli: Value = serde_json::from_slice(&output.stdout)?;
         hint(&cli, &expected_scope)?;
+        assert_eq!(native, cli, "complete native/CLI refusal differs");
+        // native read: the open `tools call`, once, under the held lock.
+        let open_read = open_command(
+            root.path(),
+            data.path(),
+            "project-a",
+            "airk_diagnostics",
+            &args,
+        );
+        let output = common::read_retry::once_until(
+            &open_read,
+            std::time::Instant::now() + Duration::from_secs(60),
+        )?;
+        anyhow::ensure!(
+            output.status.code() == Some(1),
+            "stdout={};stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let open: Value = serde_json::from_slice(&output.stdout)?;
+        open_hint(&open, &open_observation, Some(&open_scope))?;
         // native read: single MCP response has the same complete error contract.
         let wire = session.call(id, "airk_diagnostics", args)?;
         anyhow::ensure!(wire.get("error").is_none(), "{wire}");
-        hint(&wire["result"], &expected_scope)?;
-        assert_eq!(native, cli, "complete native/CLI refusal differs");
-        let mut legacy_wire = native.clone();
+        open_hint(&wire["result"], &open_observation, Some(&open_scope))?;
+        let mut legacy_wire = open.clone();
         if let Some(kind) = legacy_wire.as_object_mut().unwrap().remove("resultType") {
             assert_eq!(
                 kind, "complete",
@@ -2165,7 +2282,7 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
         }
         assert_eq!(
             legacy_wire, wire["result"],
-            "complete native/MCP refusal differs"
+            "complete open CLI/MCP refusal differs"
         );
     }
     ledger.unlock()?;

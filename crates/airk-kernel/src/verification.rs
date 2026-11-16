@@ -109,6 +109,9 @@ pub fn selection_digest(value: &Value) -> Result<Sha256Digest> {
             "semantic_readiness",
             "discovery_observation",
             "source_verification",
+            // U110: a delivery annotation added after the read; never an
+            // input (no earlier body carries this key).
+            "read_scope",
         ] {
             fields.remove(key);
         }

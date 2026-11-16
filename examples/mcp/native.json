@@ -2,9 +2,8 @@
   "mcpServers": {
     "airk": {
       "type": "http",
-      "url": "REPLACE_WITH_NATIVE_CONNECTION_ENDPOINT_URL",
+      "url": "REPLACE_WITH_NATIVE_ENDPOINT_URL",
       "headers": {
-        "Authorization": "Bearer ${AIRK_MCP_TOKEN_REPLACE_WITH_NATIVE_CONNECTION_ID}",
         "X-AIRK-Response-Mode": "terse"
       }
     }

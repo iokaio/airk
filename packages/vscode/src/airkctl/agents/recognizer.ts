@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The extension's removal-only recognizer for the no-service case (plan
-//! §6.4, §8.4; U12, U92). It recognizes exactly what `airkctl agents`
+//! §6.4, §8.4; U12, U92, U110). It recognizes exactly what `airkctl agents`
 //! recognizes (crates/airkctl/src/agents/config/recognize.rs) and removes an
 //! entry exactly as `agents remove` does (edit.rs `remove`), and is tested
 //! against the shared cases in fixtures/split/agents/config_cases.json. It
@@ -16,7 +16,7 @@ export interface Declaration { serverKey: string; container: string[]; fields: J
 export interface Target { containerPath: string[]; serverKey: string }
 export type Recognized =
     | { kind: 'stdio'; command: string; root?: string; collection?: string }
-    | { kind: 'https'; id: string; url: string; helper?: string; proven: boolean };
+    | { kind: 'https'; url: string; id?: string; stale: string[][] };
 
 /** Project-relative files, in the native order (locations.rs PROJECT_FILES). */
 export const PROJECT_FILES: readonly (readonly [Agent, readonly string[]])[] = [
@@ -127,15 +127,25 @@ function argument(fields: Json, flag: string): string | undefined {
     const value = fields.args[first + 1];
     return typeof value === 'string' ? value : undefined;
 }
-function header(fields: Json, name: string): string | undefined | null {
-    if (fields.headers === undefined) { return undefined; }
-    if (!isObject(fields.headers)) { return null; }
-    const value = fields.headers[name];
-    if (value === undefined) { return undefined; }
-    return typeof value === 'string' ? value : null;
+/** A legacy AIRK header helper: the U92 `airkctl agents credential` form (any
+ * connection id, placeholders included) or the pre-split `airk runtime http-credential` form. */
+function legacyHelper(command: string): boolean {
+    return Buffer.byteLength(command, 'utf8') <= 4096
+        && ((command.includes('airkctl') && command.includes(HELPER_MIDDLE)) || (command.includes('airk') && command.includes(' runtime http-credential ')));
+}
+/** The members of `fields[table]` named `name`, ASCII case-insensitively as HTTP
+ * header names are; null when `table` is present but not an object (manual review). */
+function headerKeys(fields: Json, table: string, name: string): string[] | null {
+    const headers = fields[table];
+    if (headers === undefined) { return []; }
+    if (!isObject(headers)) { return null; }
+    return Object.keys(headers).filter(key => key.toLowerCase() === name.toLowerCase());
 }
 
-/** Whether `row` is an AIRK entry (recognize.rs `recognize`). */
+/** Whether `row` is an AIRK entry (recognize.rs `recognize`). U110: an HTTPS
+ * entry is AIRK's by its loopback AIRK URL plus an AIRK key or a legacy AIRK
+ * credential marker, in either scope; its legacy credential fields are listed
+ * in `stale`. */
 export function recognize(agent: Agent, scope: Scope, row: Declaration, verified: readonly string[] = [], windows = false): Recognized | undefined {
     const fields = row.fields, keyed = airkKey(row.serverKey);
     const command = stdioCommand(fields);
@@ -151,36 +161,34 @@ export function recognize(agent: Agent, scope: Scope, row: Declaration, verified
         };
     }
     if (typeof fields.url !== 'string' || !httpUrl(fields.url)) { return undefined; }
-    let id: string, helper: string | undefined;
-    switch (parser(agent)) {
-        case 'codex': {
-            if (Object.hasOwn(fields, 'bearer_token_env_var') || typeof fields.http_headers_helper !== 'string') { return undefined; }
-            const found = helperConnection(fields.http_headers_helper);
-            if (!found) { return undefined; }
-            ({ id, executable: helper } = found);
-            break;
-        }
-        case 'claude': {
-            if (Object.hasOwn(fields, 'command') || typeof fields.headersHelper !== 'string') { return undefined; }
-            const found = helperConnection(fields.headersHelper);
-            if (!found) { return undefined; }
-            const authorization = header(fields, 'Authorization');
-            if (authorization === null) { return undefined; }
-            if (authorization !== undefined && envReference(authorization) !== found.id) { return undefined; }
-            ({ id, executable: helper } = found);
-            break;
-        }
-        default: {
-            if (Object.hasOwn(fields, 'command') || Object.hasOwn(fields, 'args')) { return undefined; }
-            const authorization = header(fields, 'Authorization');
-            const reference = typeof authorization === 'string' ? inputReference(authorization) : undefined;
-            if (!reference) { return undefined; }
-            id = reference;
+    const kind = parser(agent);
+    if (kind !== 'codex' && (Object.hasOwn(fields, 'command') || (kind === 'copilot' && Object.hasOwn(fields, 'args')))) { return undefined; }
+    const helperField = kind === 'codex' ? 'http_headers_helper' : 'headersHelper';
+    const tables = kind === 'codex' ? ['http_headers', 'env_http_headers'] : ['headers'];
+    const stale: string[][] = [];
+    let id: string | undefined;
+    // An AIRK credential marker, even with a `<connection-id>` placeholder.
+    let marked = false;
+    if (Object.hasOwn(fields, helperField)) {
+        const helper = fields[helperField];
+        if (typeof helper === 'string') { id = helperConnection(helper)?.id; marked = legacyHelper(helper); }
+        stale.push([helperField]);
+    }
+    if (kind === 'codex' && Object.hasOwn(fields, 'bearer_token_env_var')) { stale.push(['bearer_token_env_var']); }
+    for (const table of tables) {
+        const keys = headerKeys(fields, table, 'Authorization');
+        if (keys === null) { return undefined; }
+        for (const key of keys) {
+            const value = (fields[table] as Json)[key];
+            if (typeof value === 'string') {
+                id ??= envReference(value) ?? inputReference(value);
+                marked ||= value.includes('AIRK_MCP_TOKEN_') || value.includes('airkToken_');
+            }
+            stale.push([table, key]);
         }
     }
-    const proven = helper !== undefined;
-    if (scope === 'project' && !keyed && !proven) { return undefined; }
-    return { kind: 'https', id, url: fields.url, ...(helper ? { helper } : {}), proven };
+    if (!keyed && !marked && id === undefined) { return undefined; }
+    return { kind: 'https', url: fields.url, ...(id !== undefined ? { id } : {}), stale };
 }
 
 function find(rows: Declaration[], target: Target): Declaration | undefined {
@@ -254,7 +262,7 @@ export function remove(agent: Agent, scope: Scope, source: string, target: Targe
         return toml.removeServer(source, target.serverKey);
     }
     const result = jsonc.removeMember(source, target.containerPath, target.serverKey);
-    return recognized.kind === 'https' && agent === 'copilot' ? removeInput(result, recognized.id) : result;
+    return recognized.kind === 'https' && recognized.id !== undefined && agent === 'copilot' ? removeInput(result, recognized.id) : result;
 }
 
 /** A recognized entry the no-service sweep may remove: project entries only

@@ -1200,5 +1200,121 @@ class ServiceClientTests(unittest.TestCase):
             self.assertFalse((data / "collections-1.4/fixture/writer.lock").exists())
 
 
+class TokenlessHttpsTests(unittest.TestCase):
+    """U110: HTTPS reads are tokenless and name their scope; CLI parity takes the open path."""
+
+    def fixture(self, *, split=True):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.control = Path(tempfile.gettempdir()).resolve() / "owned-control"
+        fixture.install = Path(tempfile.gettempdir()).resolve() / "owned-install"
+        fixture.cli = Path("airkctl") if split else None
+        fixture.single_image = True
+        fixture.scopes = {"fixture": {"index_id": "idx_fixture", "grant_id": "grant"}}
+        return fixture
+
+    def test_https_catalogs_list_scopes_instead_of_a_bound_project(self):
+        self.assertIn("list_scopes", CLIENTS.HTTPS_MCP_TOOLS)
+        self.assertNotIn("projects", CLIENTS.HTTPS_MCP_TOOLS)
+        self.assertIn("search", CLIENTS.HTTPS_MCP_TOOLS)
+        self.assertEqual(len(CLIENTS.HTTPS_MCP_TOOLS), 30)
+        self.assertIn("list_scopes", CLIENTS.HTTPS_API_READ_NAMES)
+        self.assertNotIn("projects", CLIENTS.HTTPS_API_READ_NAMES)
+        self.assertNotIn("draft_search", CLIENTS.HTTPS_API_READ_NAMES)
+        self.assertIn("projects", CLIENTS.MCP_TOOLS)  # the schema-1 stdio catalog is unchanged
+
+    def test_open_call_names_the_fixture_index_or_a_workspace_on_the_cli(self):
+        fixture = self.fixture()
+        reply = {"content": [{"type": "text", "text": "{}"}]}
+        fixture.run = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(reply), ""))
+        self.assertEqual(fixture.open_call("fixture", "airk_search", {"query": "q"}), (0, reply))
+        self.assertEqual(fixture.run.call_args.args, ("--service-runtime-dir", str(fixture.control), "tools", "call", "airk_search",
+                                                      "--index", "idx_fixture", "--args", '{"query": "q"}'))
+        fixture.open_call("fixture", "airk_search", {}, workspace="C:/work")
+        self.assertEqual(fixture.run.call_args.args[5:7], ("--workspace", "C:/work"))
+        self.assertNotIn("--index", fixture.run.call_args.args)
+        fixture.run = Mock(return_value=subprocess.CompletedProcess([], 2, "{}", ""))
+        with self.assertRaisesRegex(AssertionError, "exit 2"):
+            fixture.open_call("fixture", "airk_search", {})
+
+    def test_open_tool_replays_only_typed_rejections_and_refuses_finite_tools(self):
+        fixture = self.fixture()
+        busy = {"isError": True, "content": [{"type": "text", "text": json.dumps(
+            {"status": "retry", "retryable": True, "action": "repeat_same_request", "code": "publication_busy", "retry_after_ms": 1})}]}
+        done = {"content": [{"type": "text", "text": "{\"hits\":[]}"}]}
+        fixture.open_call = Mock(side_effect=[(1, busy), (0, done)])
+        with patch.object(CLIENTS.time, "sleep"):
+            self.assertEqual(fixture.open_tool("fixture", "airk_search", {}), done)
+        self.assertEqual(fixture.open_call.call_count, 2)
+        fixture.open_call = Mock(return_value=(1, {"isError": True, "content": [{"type": "text", "text": "{\"error\":{\"code\":\"x\"}}"}]}))
+        with self.assertRaises(AssertionError):
+            fixture.open_tool("fixture", "airk_search", {})
+        self.assertEqual(fixture.open_call.call_count, 1)
+        with self.assertRaisesRegex(AssertionError, "replayable"):
+            fixture.open_tool("fixture", "airk_answer", {})
+
+    def test_https_answer_reference_takes_the_open_path_once(self):
+        fixture = self.fixture()
+        fixture.arguments = Mock(side_effect=AssertionError("catalog session used for an HTTPS reference"))
+        response = {"content": [{"type": "text", "text": "{}"}]}
+        fixture.run = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(response), ""))
+        self.assertEqual(fixture.answer_once("fixture", {"original": "request"}), response)
+        self.assertEqual(fixture.run.call_count, 1)
+        self.assertEqual(fixture.run.call_args.args[:7], ("--service-runtime-dir", str(fixture.control), "tools", "call",
+                                                          "airk_answer", "--index", "idx_fixture"))
+
+    def test_endpoint_discovery_needs_matching_cli_and_published_records(self):
+        endpoint = {"schema": 1, "url": "https://127.0.0.1:4433/mcp", "state": "ready"}
+        for split in (True, False):
+            with self.subTest(split=split):
+                fixture = self.fixture(split=split)
+                fixture.run = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(endpoint), ""))
+                fixture.service_run = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(endpoint), ""))
+                transport = Mock()
+                transport.read_endpoint.return_value = endpoint
+                with patch.object(CLIENTS, "http_transport", return_value=transport):
+                    self.assertEqual(fixture.http_endpoint(), endpoint)
+                    transport.read_endpoint.assert_called_once_with(fixture.control)
+                    if split:
+                        self.assertEqual(fixture.run.call_args.args, ("--output", "json", "--service-runtime-dir", str(fixture.control), "agents", "endpoint"))
+                        fixture.service_run.assert_not_called()
+                    else:
+                        self.assertEqual(fixture.service_run.call_args.args, ("runtime", "http-endpoint", "--install-dir", fixture.install))
+                    transport.read_endpoint.return_value = {**endpoint, "url": "https://127.0.0.1:4434/mcp"}
+                    with self.assertRaisesRegex(AssertionError, "differs"):
+                        fixture.http_endpoint()
+
+    def test_open_http_connects_tokenless_with_the_fixture_index_and_never_enrolls(self):
+        fixture = self.fixture()
+        endpoint = {"schema": 1, "url": "https://127.0.0.1:4433/mcp"}
+        fixture.http_endpoint = Mock(return_value=endpoint)
+        fixture.managed_health = {"instance": "owned"}
+        fixture.rpc = Mock(return_value={"observation": {"instance": "owned"}})
+        fixture.assert_alive = Mock()
+        fixture.enroll_http = Mock(side_effect=AssertionError("credential enrollment"))
+        fixture.service_run = Mock(side_effect=AssertionError("native enrollment command"))
+        transport = Mock()
+        with patch.object(CLIENTS, "http_transport", return_value=transport):
+            self.assertIs(fixture.open_http("fixture", "codex"), transport.McpClient.return_value)
+        transport.validate_native_identity.assert_called_once_with(endpoint, {"instance": "owned"})
+        transport.McpClient.assert_called_once_with(endpoint, fixture.control, scope={"index_ids": ["idx_fixture"]})
+        fixture.rpc.return_value = {"observation": {"instance": "other"}}
+        with patch.object(CLIENTS, "http_transport", return_value=transport), self.assertRaisesRegex(AssertionError, "another service"):
+            fixture.open_http("fixture", "codex")
+
+    def test_scope_helpers_read_the_complete_result(self):
+        named = {"source": "named", "index_ids": ["idx_fixture"]}
+        structured = {"hits": [], "read_scope": named}
+        envelope = {"content": [{"type": "text", "text": json.dumps(structured)}], "structuredContent": structured}
+        self.assertEqual(CLIENTS.result_scope(envelope), named)
+        self.assertEqual(CLIENTS.result_scope({"content": envelope["content"]}), named)
+        error = {"error": {"code": "scope_required", "message": "Name the indexes ... Call list_scopes to see indexes."}}
+        refused = {"content": [{"type": "text", "text": json.dumps(error)}], "structuredContent": error, "isError": True}
+        self.assertEqual(CLIENTS.scope_refusal(refused)["code"], "scope_required")
+        for wrong in ({**refused, "isError": False},
+                      {"content": [{"type": "text", "text": json.dumps({"error": {"code": "other", "message": "list_scopes"}})}], "isError": True}):
+            with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
+                CLIENTS.scope_refusal(wrong)
+
+
 if __name__ == "__main__":
     unittest.main()

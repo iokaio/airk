@@ -654,10 +654,20 @@ fn body_with_budgets(
             serde_json::from_value(delivery["receipt"].clone())?;
         ensure!(receipt.schema == 1, "unknown delivery receipt schema");
         let mut digest_body = value.clone();
-        digest_body
+        let fields = digest_body
             .as_object_mut()
-            .context("delivery body must be an object")?
-            .remove("delivery_observation");
+            .context("delivery body must be an object")?;
+        fields.remove("delivery_observation");
+        // U110 (contracts §2.11): an open read adds `read_scope` (how its scope
+        // was chosen) to the delivered result after the native delivery
+        // digest is taken. It is outside that proof; every native field
+        // stays covered, and `read_scope` itself stays in every comparison.
+        if fields
+            .get("read_scope")
+            .is_some_and(|scope| scope.get("source").is_some_and(Value::is_string))
+        {
+            fields.remove("read_scope");
+        }
         let digest = framed_digest(
             b"airk/combined-delivery-result/1",
             &[&serde_json::to_vec(&digest_body)?],
@@ -1160,32 +1170,46 @@ struct McpSession {
     transport: http::HttpMcpSession,
     negotiated_protocol: String,
 }
+/// U110: the indexes a combined catalog request reaches: its explicit
+/// `index_ids`, else every index a selected project has a membership in
+/// (the fixture's memberships: project 0 holds index 0, 1 and 3.., project 1
+/// holds index 0, project 2 holds index 2), in fixture order.
+fn indexes_of(f: &Fixture, selected: &CombinedConnectRequest) -> Vec<IndexId> {
+    if let Some(ids) = &selected.index_ids {
+        return ids.clone();
+    }
+    f.indexes
+        .iter()
+        .enumerate()
+        .filter(|(n, _)| {
+            selected.project_ids.iter().any(|project| {
+                match f.projects.iter().position(|p| p == project) {
+                    Some(0) => *n != 2,
+                    Some(1) => *n == 0,
+                    Some(2) => *n == 2,
+                    _ => false,
+                }
+            })
+        })
+        .map(|(_, id)| *id)
+        .collect()
+}
+
 impl McpSession {
+    /// The tokenless local agent session naming, on every read, the indexes
+    /// the fixture's combined catalog session reaches (read whole).
     fn start(f: &Fixture) -> Result<Self> {
         Self::start_selected(f, &f.session)
     }
     fn start_selected(f: &Fixture, selected: &CombinedConnectRequest) -> Result<Self> {
-        Self::start_selection(
-            f,
-            airk_core::service_http::HttpSelection::Combined {
-                selection: selected.clone(),
-            },
-        )
+        Self::start_scope(f, http::Scope::indexes(indexes_of(f, selected)))
     }
     fn start_scoped(f: &Fixture, selected: &ScopedConnectRequest) -> Result<Self> {
-        Self::start_selection(
-            f,
-            airk_core::service_http::HttpSelection::Scoped {
-                selection: selected.clone(),
-            },
-        )
+        Self::start_scope(f, http::Scope::indexes([selected.index_id]))
     }
-    fn start_selection(
-        f: &Fixture,
-        selection: airk_core::service_http::HttpSelection,
-    ) -> Result<Self> {
+    fn start_scope(f: &Fixture, scope: http::Scope) -> Result<Self> {
         let mut session = Self {
-            transport: http::HttpMcpSession::start(&f.control, selection)?,
+            transport: http::HttpMcpSession::start(&f.control, scope)?,
             negotiated_protocol: String::new(),
         };
         let initialized = session.request(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
@@ -1205,6 +1229,14 @@ impl McpSession {
     fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
         self.transport.request(id.try_into()?, method, params)
     }
+    /// The open read of this session's scope through the pipe (M3
+    /// `ToolSelection::Open`): the same service path the MCP read takes,
+    /// so the two complete results compare directly. A refusal is an error.
+    async fn pipe(&self, f: &Fixture, tool: &str, arguments: &Value) -> Result<Value> {
+        pipe_read(f, self.transport.scope.open_selection(), tool, arguments)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("open pipe read of {tool} refused: {refused}"))
+    }
     fn call(&mut self, mut id: u64, name: &str, arguments: Value) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
@@ -1217,6 +1249,64 @@ impl McpSession {
             id += 100;
         }
     }
+    /// U110: one read through tokenless HTTPS MCP and the same open read
+    /// through the pipe, with their complete results compared. A catalog
+    /// session's `index_ids` argument becomes the call's named scope (read
+    /// whole); `project_ids`/`member_availability` belong to grant-bound
+    /// sessions and are not sent. Returns (MCP JSON-RPC reply, pipe result).
+    async fn open_parity(
+        &mut self,
+        f: &Fixture,
+        id: u64,
+        tool: &str,
+        arguments: &Value,
+        label: &str,
+    ) -> Result<(Value, Value)> {
+        let (stripped, scope) = open_read_arguments(arguments, &self.transport.scope)?;
+        let mut named = stripped.clone();
+        named["index_ids"] = json!(scope.index_ids);
+        let wire = self.call(id, tool.strip_prefix("airk_").unwrap_or(tool), named)?;
+        ensure!(wire.get("error").is_none(), "{label}: MCP failed: {wire}");
+        let piped = pipe_read(f, scope.open_selection(), tool, &stripped)
+            .await?
+            .map_err(|refused| anyhow::anyhow!("{label}: open pipe read refused: {refused}"))?;
+        ensure!(
+            wire["result"]["isError"] == piped["isError"],
+            "{label}: MCP and pipe error states differ; MCP reply {}; complete replies: {}",
+            wire["result"]
+                .to_string()
+                .chars()
+                .take(2048)
+                .collect::<String>(),
+            save_replies(label, &json!({"mcp":wire,"pipe":piped}))?.display()
+        );
+        assert_parity(label, &body(&piped)?, &body(&wire["result"])?)?;
+        Ok((wire, piped))
+    }
+}
+
+/// U110: the open-read form of combined-session read arguments: the
+/// arguments without session selectors, and the named scope (`index_ids`
+/// when given, else `default`).
+fn open_read_arguments(arguments: &Value, default: &http::Scope) -> Result<(Value, http::Scope)> {
+    let mut stripped = arguments.clone();
+    let object = stripped
+        .as_object_mut()
+        .context("object arguments required")?;
+    object.remove("project_ids");
+    object.remove("member_availability");
+    let scope = match object.remove("index_ids") {
+        Some(ids) => http::Scope::indexes(
+            ids.as_array()
+                .context("index_ids must be an array")?
+                .iter()
+                .map(|id| id.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .context("index_ids must be strings")?,
+        ),
+        None => default.clone(),
+    };
+    Ok((stripped, scope))
 }
 
 #[tokio::test]
@@ -1355,10 +1445,18 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
         &body(&native)?,
         &body(&f.cli_search().await?)?,
     )?;
+    // U110: tokenless HTTPS MCP names the session's indexes per call (read
+    // whole); it takes the open read path, so it compares with the same open
+    // read through the pipe.
     let mut mcp = McpSession::start(&f)?;
-    let reply = mcp.call(2, "search", arguments)?;
+    let reply = mcp.call(2, "search", arguments.clone())?;
     ensure!(reply.get("error").is_none(), "MCP failed: {reply}");
-    assert_parity("full MCP result", &body(&native)?, &body(&reply["result"])?)?;
+    let open = mcp.pipe(&f, "search", &arguments).await?;
+    assert_parity(
+        "full MCP open result",
+        &body(&open)?,
+        &body(&reply["result"])?,
+    )?;
     let catalog = mcp.request(3, "tools/list", json!({}))?;
     let tools = catalog["result"]["tools"]
         .as_array()
@@ -1367,20 +1465,16 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
         .iter()
         .find(|tool| tool["name"] == "search")
         .context("search catalog missing")?;
-    let native_catalog = serde_json::to_value(
-        backend
-            .catalog()
+    let local_catalog = serde_json::to_value(
+        airk_mcp::open::local_catalog()
             .into_iter()
-            .find(|tool| tool.name == "airk_search")
-            .context("native search catalog missing")?,
+            .find(|tool| tool.name == "search")
+            .context("local search catalog missing")?,
     )?;
-    for selector in ["project_ids", "index_ids", "member_availability"] {
-        assert_eq!(
-            search["inputSchema"]["properties"][selector],
-            native_catalog["inputSchema"]["properties"][selector],
-            "input catalog drift: {selector}"
-        );
-    }
+    assert_eq!(
+        search["inputSchema"], local_catalog["inputSchema"],
+        "input catalog drift through HTTPS"
+    );
     let checked = native_read(
         backend.as_ref(),
         "airk_search",
@@ -1672,23 +1766,36 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
         // framing failure; no symptom is hidden by abandoning later families.
         let native = native_read(backend.as_ref(), tool, &arguments).await?;
         let cli = f.cli(tool, &arguments).await?;
-        let wire = mcp.call(
-            10 + offset as u64,
-            tool.strip_prefix("airk_").unwrap(),
-            arguments,
-        )?;
+        // U110: MCP names the same indexes per call and reads them whole on
+        // the open path; it compares with the same open read through the pipe.
+        let wire = match mcp
+            .open_parity(
+                &f,
+                10 + offset as u64,
+                tool,
+                &arguments,
+                &format!("{tool} MCP open"),
+            )
+            .await
+        {
+            Ok((wire, _)) => wire,
+            Err(error) => {
+                failures.push(format!("{tool}: MCP open read: {error:#}"));
+                Value::Null
+            }
+        };
         let native_body =
             body(&native).with_context(|| format!("{tool}: native observed result"))?;
         let cli_body = body(&cli).with_context(|| format!("{tool}: CLI result"))?;
-        let mcp_body = body(&wire["result"]).with_context(|| format!("{tool}: MCP result"))?;
+        let mcp_body = if wire.is_null() {
+            Value::Null
+        } else {
+            body(&wire["result"]).with_context(|| format!("{tool}: MCP result"))?
+        };
         // Equivalent error envelopes prove parity but cannot qualify this
         // positive read matrix. Every selected member must actually serve the
         // canonical handler; intentional member failures have separate tests.
-        for (route, observed) in [
-            ("native", &native_body),
-            ("CLI", &cli_body),
-            ("MCP", &mcp_body),
-        ] {
+        for (route, observed) in [("native", &native_body), ("CLI", &cli_body)] {
             let Some(members) = observed["members"].as_array() else {
                 let path = save_replies(tool, &json!({"route":route,"raw_result":observed}))?;
                 failures.push(format!(
@@ -1805,11 +1912,6 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
         {
             failures.push(difference);
         }
-        if let Some(difference) =
-            parity_difference(&format!("{tool} MCP"), &native_body, &mcp_body)?
-        {
-            failures.push(difference);
-        }
         if native_body["members"].as_array().map(Vec::len) != Some(expected_indexes.len()) {
             let path = save_replies(tool, &native_body)?;
             failures.push(format!(
@@ -1821,16 +1923,12 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
     }
     // Whole-index observations remain unavailable through partial A/B scopes.
     // Exercise those refusals separately from the full-root positive matrix.
-    for (offset, tool) in ["airk_status", "airk_diagnostics"].into_iter().enumerate() {
+    // (U110: an MCP read names whole indexes, so it has no partial scope.)
+    for tool in ["airk_status", "airk_diagnostics"] {
         let arguments = json!({"project_ids":f.projects[..2],"index_ids":[f.indexes[0]],"member_availability":"require","response_mode":"full"});
         let native = native_read(backend.as_ref(), tool, &arguments).await?;
         let cli = f.cli(tool, &arguments).await?;
-        let wire = mcp.call(
-            100 + offset as u64,
-            tool.strip_prefix("airk_").unwrap(),
-            arguments,
-        )?;
-        for (route, envelope) in [("native", &native), ("CLI", &cli), ("MCP", &wire["result"])] {
+        for (route, envelope) in [("native", &native), ("CLI", &cli)] {
             let observed = body(envelope)?;
             let members = observed["members"].as_array();
             let refused = members
@@ -1850,11 +1948,6 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
             &format!("{tool} partial CLI"),
             &body(&native)?,
             &body(&cli)?,
-        )?;
-        assert_parity(
-            &format!("{tool} partial MCP"),
-            &body(&native)?,
-            &body(&wire["result"])?,
         )?;
     }
     for tool in [
@@ -1938,11 +2031,40 @@ async fn capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_
         });
         let native = native_read(backend.as_ref(), "airk_parse", &request).await?;
         let cli = f.cli("airk_parse", &request).await?;
-        // Use the actual MCP alias used by client hosts, retaining its JSON-RPC
-        // envelope when checking the existing one-MiB transport bound.
-        let wire = mcp.call(9000 + count as u64, "parse", request.clone())?;
+        // U110: MCP names the same indexes per call (read whole) on the open
+        // path. Use the actual MCP alias used by client hosts, retaining its
+        // JSON-RPC envelope when checking the existing one-MiB transport bound,
+        // and compare its complete plan with the same open read through the pipe.
+        let (wire, _) = mcp
+            .open_parity(
+                &f,
+                9000 + count as u64,
+                "parse",
+                &request,
+                &format!("{count}-member capabilities plan MCP open"),
+            )
+            .await?;
         airk_core::index_catalog::encoded_size(&wire, 1024 * 1024)?;
-        for (route, envelope) in [("native", &native), ("CLI", &cli), ("MCP", &wire["result"])] {
+        let envelope = &wire["result"];
+        ensure!(
+            envelope["isError"] != true,
+            "MCP open capabilities plan failed: {envelope}"
+        );
+        let parsed = parse_body(envelope, OUTPUT_BYTES)
+            .with_context(|| format!("MCP: {count}-member open capabilities plan"))?;
+        let text: Value = serde_json::from_str(
+            envelope["content"][0]["text"]
+                .as_str()
+                .context("parse text mirror missing")?,
+        )?;
+        assert_eq!(
+            text, parsed,
+            "MCP: complete text and structured replies differ"
+        );
+        assert_eq!(parsed["status"], "complete", "MCP: {parsed}");
+        assert_eq!(parsed["executed"], true);
+        assert_eq!(parsed["truncated"], false);
+        for (route, envelope) in [("native", &native), ("CLI", &cli)] {
             ensure!(
                 envelope["isError"] != true,
                 "{route} capabilities plan failed: {envelope}"
@@ -2031,27 +2153,38 @@ async fn actual_query_scope_discovery_keeps_three_views_and_continuations_in_par
             1,
         ),
     ] {
+        // U110: MCP names whole indexes per call on the open path; each of
+        // its pages (its own continuation) compares with the same open read
+        // through the pipe.
+        let mut open_arguments = arguments.clone();
+        for page in 0..4 {
+            let (wire, _) = mcp
+                .open_parity(
+                    &f,
+                    id,
+                    "query_scope",
+                    &open_arguments,
+                    &format!("query_scope {view} MCP open page {page}"),
+                )
+                .await?;
+            id += 1;
+            match body(&wire["result"])?["cursor"].as_str() {
+                Some(cursor) => open_arguments["cursor"] = json!(cursor),
+                None => break,
+            }
+        }
         let mut items = Vec::new();
         let mut cursors = std::collections::BTreeSet::new();
         loop {
             let native = native_read(backend.as_ref(), "airk_query_scope", &arguments).await?;
             let cli = f.cli("airk_query_scope", &arguments).await?;
-            let wire = mcp.call(id, "query_scope", arguments.clone())?;
-            id += 1;
             ensure!(
-                native["isError"] != true
-                    && cli["isError"] != true
-                    && wire["result"]["isError"] != true,
+                native["isError"] != true && cli["isError"] != true,
                 "{view}: scoped discovery returned an error; complete replies: {}",
-                save_replies(view, &json!({"native":native,"cli":cli,"mcp":wire}))?.display()
+                save_replies(view, &json!({"native":native,"cli":cli}))?.display()
             );
             let result = body(&native)?;
             assert_parity(&format!("query_scope {view} CLI"), &result, &body(&cli)?)?;
-            assert_parity(
-                &format!("query_scope {view} MCP"),
-                &result,
-                &body(&wire["result"])?,
-            )?;
             assert_eq!(result["schema"], "airk.query-scope/1");
             assert_eq!(result["count"], expected_total);
             assert_eq!(result["count_precision"], "exact_selected_scope");
@@ -2139,14 +2272,15 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         }
         let native = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
         let cli = f.cli("airk_query_scope", &args).await?;
-        let wire = mcp.call(id, "query_scope", args.clone())?;
-        id += 1;
         ensure!(
-            native["isError"] != true
-                && cli["isError"] != true
-                && wire["result"]["isError"] != true,
-            "advice failed: {native} {cli} {wire}"
+            native["isError"] != true && cli["isError"] != true,
+            "advice failed: {native} {cli}"
         );
+        // U110: MCP names whole indexes per call on the open path; its advice
+        // compares with the same open read through the pipe.
+        mcp.open_parity(&f, id, "query_scope", &args, "recommendations MCP open")
+            .await?;
+        id += 1;
         let result = body(&native)?;
         assert_eq!(result["schema"], "airk.recommendations/1");
         let instructions = result["instructions"]["text"]
@@ -2161,15 +2295,24 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
             "obsolete management guidance: {instructions}"
         );
         assert_parity("recommendations CLI", &result, &body(&cli)?)?;
-        assert_parity("recommendations MCP", &result, &body(&wire["result"])?)?;
         let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
-        let parsed = mcp.call(id, "parse", plan)?;
+        // The catalog session's Workbench plan runs through the combined CLI;
+        // MCP's open plan compares with the open pipe.
+        mcp.open_parity(
+            &f,
+            id,
+            "parse",
+            &plan,
+            "recommendations Workbench plan MCP open",
+        )
+        .await?;
         id += 1;
+        let parsed = f.cli("airk_parse", &plan).await?;
         ensure!(
-            parsed["result"]["isError"] != true,
+            parsed["isError"] != true,
             "Workbench advisory plan failed: {parsed}"
         );
-        let parsed_body = body(&parsed["result"])?;
+        let parsed_body = body(&parsed)?;
         assert_parity(
             "recommendations Workbench plan",
             &result,
@@ -2178,20 +2321,16 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         if let Some(choice) = args.get("selection") {
             let slash = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","text":format!("/query_scope recommendations --selection '{choice}' --situation focused_task --bytes 65536")});
             let cli = f.cli("airk_parse", &slash).await?;
-            let wire = mcp.call(id, "parse", slash)?;
+            mcp.open_parity(&f, id, "parse", &slash, "recommendations slash MCP open")
+                .await?;
             id += 1;
-            for (route, reply) in [("CLI", cli), ("MCP", wire["result"].clone())] {
-                ensure!(
-                    reply["isError"] != true,
-                    "{route} slash advice failed: {reply}"
-                );
-                let plan = body(&reply)?;
-                assert_parity(
-                    &format!("recommendations slash {route}"),
-                    &result,
-                    &body(&plan["steps"][0]["result"])?,
-                )?;
-            }
+            ensure!(cli["isError"] != true, "CLI slash advice failed: {cli}");
+            let plan = body(&cli)?;
+            assert_parity(
+                "recommendations slash CLI",
+                &result,
+                &body(&plan["steps"][0]["result"])?,
+            )?;
         }
         assert_eq!(result["limits"]["evidence_queries"], 0);
         assert_eq!(
@@ -2212,10 +2351,11 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
             let name = example["name"]
                 .as_str()
                 .context("scope example tool absent")?;
-            let reply = mcp.call(id, name, example["arguments"].clone())?;
-            id += 1;
+            // U110: the copied examples name the catalog session's selectors;
+            // they execute through the catalog session's CLI transport.
+            let reply = f.cli(name, &example["arguments"]).await?;
             ensure!(
-                reply["result"]["isError"] != true,
+                reply["isError"] != true,
                 "copied example rejected by actual transport: {reply}"
             );
         }
@@ -2223,13 +2363,12 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         // matches permitted policy evidence, including in the one-index subset.
         let mut task = result["instructions"]["examples"][1]["arguments"].clone();
         task["query"] = json!("boundaryneedle");
-        let reply = mcp.call(id, "search", task)?;
-        id += 1;
+        let reply = f.cli("search", &task).await?;
         ensure!(
-            reply["result"]["isError"] != true,
+            reply["isError"] != true,
             "recommended task scope failed: {reply}"
         );
-        let evidence = body(&reply["result"])?;
+        let evidence = body(&reply)?;
         assert_eq!(
             evidence["selection"], result["selected"],
             "advisory and retrieval scopes diverged"
@@ -2263,14 +2402,19 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         let args = json!({"view":"recommendations","situation":situation,"max_bytes":65536});
         let native = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
         let cli = f.cli("airk_query_scope", &args).await?;
-        let wire = mcp.call(id, "query_scope", args.clone())?;
-        id += 1;
         ensure!(
-            native["isError"] != true
-                && cli["isError"] != true
-                && wire["result"]["isError"] != true,
-            "management advice failed: {native} {cli} {wire}"
+            native["isError"] != true && cli["isError"] != true,
+            "management advice failed: {native} {cli}"
         );
+        mcp.open_parity(
+            &f,
+            id,
+            "query_scope",
+            &args,
+            "management recommendations MCP open",
+        )
+        .await?;
+        id += 1;
         let result = body(&native)?;
         assert_eq!(result["cards"][0]["action"], action);
         let tradeoff = result["cards"][0]["tradeoff"]
@@ -2282,19 +2426,22 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
             "management review boundaries absent: {tradeoff}"
         );
         assert_parity("management recommendations CLI", &result, &body(&cli)?)?;
-        assert_parity(
-            "management recommendations MCP",
-            &result,
-            &body(&wire["result"])?,
-        )?;
         let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
-        let parsed = mcp.call(id, "parse", plan)?;
+        mcp.open_parity(
+            &f,
+            id,
+            "parse",
+            &plan,
+            "management recommendations Workbench plan MCP open",
+        )
+        .await?;
         id += 1;
+        let parsed = f.cli("airk_parse", &plan).await?;
         ensure!(
-            parsed["result"]["isError"] != true,
+            parsed["isError"] != true,
             "management advisory plan failed: {parsed}"
         );
-        let parsed_body = body(&parsed["result"])?;
+        let parsed_body = body(&parsed)?;
         assert_parity(
             "management recommendations Workbench plan",
             &result,
@@ -3246,8 +3393,10 @@ async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_work
             canonical["observed_selection"],
             json!({"project_ids":selected.project_ids,"index_ids":[selected.index_id]})
         );
-        let wire = mcp.call(id, "query_scope", args.clone())?;
-        assert_parity("installed scope MCP", &canonical, &body(&wire["result"])?)?;
+        // U110: MCP names the one index per call on the open path (no grant
+        // to disclose); it compares with the same open read through the pipe.
+        mcp.open_parity(&f, id, "query_scope", &args, "installed scope MCP open")
+            .await?;
         for (tool, arguments) in [
             ("airk_query_scope", args.clone()),
             (
@@ -4268,6 +4417,7 @@ fn open_selection(
         index_ids: indexes.iter().map(|name| (*name).to_owned()).collect(),
         index_set_ids: sets.iter().map(|name| (*name).to_owned()).collect(),
         connection_id,
+        workspace: None,
     }
 }
 
@@ -4276,41 +4426,28 @@ fn refusal_code(refused: &Value) -> String {
     refused["code"].as_str().unwrap_or_default().to_owned()
 }
 
-/// `tools list --connection` lists `list_indexes` exactly when choice is on.
-async fn open_catalog_lists(f: &Fixture, connection: &str, choice_on: bool) -> Result<()> {
-    let (code, stdout, stderr) =
-        airkctl_full(f, &["tools", "list", "--connection", connection]).await?;
-    ensure!(code == 0, "tools list --connection failed: {stderr}");
-    ensure!(
-        stdout.contains("list_indexes") == choice_on,
-        "catalog with choice {choice_on}: {stdout}"
-    );
-    Ok(())
-}
-
 /// U105 (open-agent-access step 5): `airkctl tools call --index/--set
 /// [--connection]` and M3 `ToolSelection::Open` are one service path. The
 /// list tool and an open read return the same complete result through both;
-/// a set expands to its member indexes read whole; the connection's stored
-/// defaults and agent choice decide each call and change without a new
-/// credential generation.
+/// a set expands to its member indexes read whole. (U110 removed the
+/// per-connection defaults and agent choice this test also covered.)
 #[tokio::test]
-async fn open_reads_keep_cli_and_pipe_results_and_follow_connection_defaults() -> Result<()> {
+async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
     // The list tool: the local owner may list; CLI and pipe answer the same.
     let listed = pipe_read(
         &f,
         open_selection(&[], &[], None),
-        "list_indexes",
+        "list_scopes",
         &json!({}),
     )
     .await?
     .map_err(|refused| anyhow::anyhow!("list refused: {refused}"))?;
-    let (code, stdout, stderr) = airkctl_full(&f, &["tools", "call", "list_indexes"]).await?;
-    ensure!(code == 0, "airkctl list_indexes failed: {stderr}");
+    let (code, stdout, stderr) = airkctl_full(&f, &["tools", "call", "list_scopes"]).await?;
+    ensure!(code == 0, "airkctl list_scopes failed: {stderr}");
     let from_cli: Value = serde_json::from_str(&stdout)?;
-    assert_eq!(from_cli, listed, "list_indexes CLI and pipe differ");
+    assert_eq!(from_cli, listed, "list_scopes CLI and pipe differ");
     let list = body(&listed)?;
     let indexes = list["indexes"].as_array().context("indexes absent")?;
     let sets = list["index_sets"].as_array().context("index sets absent")?;
@@ -4390,174 +4527,31 @@ async fn open_reads_keep_cli_and_pipe_results_and_follow_connection_defaults() -
     );
 
     // Refusals before any read: an unknown name, a local call naming nothing.
-    for (selection, code) in [
-        (
-            open_selection(&["no such index"], &[], None),
-            "scope_name_unknown",
-        ),
-        (open_selection(&[], &[], None), "agent_default_scope_unset"),
-    ] {
-        let refused = pipe_read(&f, selection, "airk_search", &arguments)
-            .await?
-            .err()
-            .context("refusal expected")?;
-        assert_eq!(refusal_code(&refused), code, "{refused}");
-    }
-
-    // An open connection: choice off and no default scope until set.
-    let ControlResponse::HttpEndpoint {
-        endpoint: Some(endpoint),
-    } = airk_cli::service_runtime::request(&f.control, ControlMethod::HttpEndpoint).await?
-    else {
-        anyhow::bail!("HTTPS endpoint unavailable");
-    };
-    let connection_id = Incarnation::from_bytes([0x5a; 16]);
-    let enrolled = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::HttpEnroll {
-            connection_id,
-            selection: Box::new(airk_core::service_http::HttpSelection::Open {
-                selection: airk_core::service_http::OpenHttpSelection {
-                    namespace: endpoint.namespace,
-                },
-            }),
-            client: airk_core::usage::ClientFamily::Codex,
-            explorer_descriptor: None,
-            reattach_connection_id: None,
-        },
-    )
-    .await?;
-    let ControlResponse::HttpConnection { connection } = enrolled else {
-        anyhow::bail!(
-            "open enrollment refused: {}",
-            serde_json::to_string(&enrolled)?
-        );
-    };
-    assert_eq!(
-        connection.open,
-        Some(airk_core::service_http_credentials::OpenConnectionState::initial())
-    );
-    let connection_text = connection_id.to_string();
-    open_catalog_lists(&f, &connection_text, false).await?;
-    for (selection, tool, code) in [
-        (
-            open_selection(&[], &[], Some(connection_id)),
-            "airk_search",
-            "agent_default_scope_unset",
-        ),
-        // U109: with choice off a name narrows the assigned set, and an
-        // empty assigned set cannot be narrowed.
-        (
-            open_selection(&[&index_name], &[], Some(connection_id)),
-            "airk_search",
-            "agent_default_scope_unset",
-        ),
-        (
-            open_selection(&[], &[], Some(connection_id)),
-            "list_indexes",
-            "agent_scope_choice_disabled",
-        ),
-    ] {
-        let refused = pipe_read(&f, selection, tool, &json!({}))
-            .await?
-            .err()
-            .context("refusal expected")?;
-        assert_eq!(refusal_code(&refused), code, "{tool}: {refused}");
-    }
-    // Defaults: compare-and-swap on the defaults revision.
-    let set_defaults = |expected: u64| ControlMethod::AgentConnectionDefaults {
-        connection_id,
-        expected_defaults_revision: expected,
-        index_ids: Some(vec![f.indexes[0]]),
-        index_set_ids: None,
-        agent_choice: None,
-    };
-    let changed = airk_cli::service_runtime::request(&f.control, set_defaults(1)).await?;
-    let ControlResponse::AgentConnectionDefaults { open, .. } = changed else {
-        anyhow::bail!("defaults refused: {}", serde_json::to_string(&changed)?);
-    };
-    assert_eq!(open.defaults_revision, 2);
-    let conflict = airk_cli::service_runtime::request(&f.control, set_defaults(1)).await?;
-    assert_eq!(
-        serde_json::to_value(&conflict)?["code"],
-        "agent_defaults_conflict"
-    );
-    // The next call reads the new default scope: the same result as naming it.
-    let defaulted = pipe_read(
+    let refused = pipe_read(
         &f,
-        open_selection(&[], &[], Some(connection_id)),
+        open_selection(&["no such index"], &[], None),
         "airk_search",
         &arguments,
     )
     .await?
-    .map_err(|refused| anyhow::anyhow!("default read refused: {refused}"))?;
-    // Each lease (local owner, connection) is its own selection authority:
-    // only the documented selection-dependent fields differ.
-    let (left, right) = (
-        without_selection_source(stable(logical_comparison_copy(&body(&defaulted)?)?)?),
-        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
-    );
-    if let Some(difference) = first_difference(&left, &right, "") {
-        anyhow::bail!("default scope and named read differ: {difference}");
-    }
-    // `agents default` turns choice on; the list tool appears and answers.
-    let (code, stdout, stderr) = airkctl_full(
+    .err()
+    .context("refusal expected")?;
+    assert_eq!(refusal_code(&refused), "scope_name_unknown", "{refused}");
+    // U110: a local call naming no scope and no workspace is the tool error
+    // `scope_required`, as over MCP.
+    let unscoped = pipe_read(
         &f,
-        &[
-            "agents",
-            "default",
-            "--connection-id",
-            &connection_text,
-            "--agent-choice",
-            "on",
-            "--expected-revision",
-            "2",
-        ],
-    )
-    .await?;
-    ensure!(code == 0, "agents default failed: {stderr}");
-    let printed: Value = serde_json::from_str(&stdout)?;
-    assert_eq!(printed["schema"], 1);
-    assert_eq!(printed["connectionId"], json!(connection_id));
-    assert_eq!(printed["open"]["defaults_revision"], 3);
-    assert_eq!(printed["open"]["agent_choice"], "on");
-    assert_eq!(printed["open"]["default_index_ids"], json!([f.indexes[0]]));
-    open_catalog_lists(&f, &connection_text, true).await?;
-    let listed_by_agent = pipe_read(
-        &f,
-        open_selection(&[], &[], Some(connection_id)),
-        "list_indexes",
-        &json!({}),
+        open_selection(&[], &[], None),
+        "airk_search",
+        &arguments,
     )
     .await?
-    .map_err(|refused| anyhow::anyhow!("agent list refused: {refused}"))?;
-    assert_eq!(listed_by_agent, listed);
+    .map_err(|refused| anyhow::anyhow!("unscoped read not a tool error: {refused}"))?;
+    assert_eq!(
+        unscoped["structuredContent"]["error"]["code"], "scope_required",
+        "{unscoped}"
+    );
     f.assert_sources_unchanged()
-}
-
-/// The service's open state update through the pipe (`AgentConnectionDefaults`).
-async fn set_open_defaults(
-    f: &Fixture,
-    connection_id: Incarnation,
-    expected: u64,
-    index_ids: Option<Vec<IndexId>>,
-    agent_choice: Option<airk_core::service_http_credentials::AgentChoice>,
-) -> Result<airk_core::service_http_credentials::OpenConnectionState> {
-    let changed = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::AgentConnectionDefaults {
-            connection_id,
-            expected_defaults_revision: expected,
-            index_ids,
-            index_set_ids: None,
-            agent_choice,
-        },
-    )
-    .await?;
-    let ControlResponse::AgentConnectionDefaults { open, .. } = changed else {
-        anyhow::bail!("defaults refused: {}", serde_json::to_string(&changed)?);
-    };
-    Ok(open)
 }
 
 fn listed_tools(reply: &Value) -> Result<Vec<String>> {
@@ -4569,291 +4563,154 @@ fn listed_tools(reply: &Value) -> Result<Vec<String>> {
         .collect())
 }
 
-/// U105 (open-agent-access step 6): an open HTTPS MCP connection. Its
-/// `tools/list` follows the agent choice and its calls follow the stored
-/// default scope; a change applies to the next request on the same session,
-/// with no reconnect and no new credential. MCP and the pipe (and so the
-/// CLI) return the same results through the one service path.
+/// U110: the HTTPS MCP endpoint takes no credential (the fixture enrolls
+/// nothing and sends no token); every session is the built-in local agent
+/// session. Reads name their scope (`index_ids`/`index_set_ids`) or a
+/// `workspace` whose stored default applies; otherwise `scope_required`.
+/// Workspace defaults set through the CLI apply to the next MCP call, and
+/// MCP, the pipe and `airkctl tools call --workspace` return the same result.
 #[tokio::test]
-async fn open_https_connection_follows_choice_and_defaults_on_the_same_session() -> Result<()> {
-    use airk_core::service_http_credentials::AgentChoice;
+async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let mut mcp = McpSession::start_selection(
-        &f,
-        airk_core::service_http::HttpSelection::Open {
-            selection: airk_core::service_http::OpenHttpSelection {
-                namespace: f.session.namespace,
-            },
-        },
-    )?;
-    let connection_id = mcp.transport.connection.connection_id;
-    assert_eq!(
-        mcp.transport.connection.open,
-        Some(airk_core::service_http_credentials::OpenConnectionState::initial())
-    );
-    // Choice off: no selectors, no list tool, and no default scope yet.
-    let off = mcp.request(2, "tools/list", json!({}))?;
-    let names = listed_tools(&off)?;
+    let mut mcp = McpSession::start_scope(&f, http::Scope::none())?;
+    let catalog = mcp.request(2, "tools/list", json!({}))?;
+    let names = listed_tools(&catalog)?;
     ensure!(
-        !names.contains(&"list_indexes".to_owned()) && names.contains(&"search".to_owned()),
-        "{off}"
+        names.contains(&"list_scopes".to_owned()) && names.contains(&"search".to_owned()),
+        "{catalog}"
     );
-    let search = off["result"]["tools"]
+    let search = catalog["result"]["tools"]
         .as_array()
         .context("tools")?
         .iter()
         .find(|tool| tool["name"] == "search")
         .context("search tool")?;
-    // U109: with choice off the selectors only narrow the assigned set.
+    let properties = &search["inputSchema"]["properties"];
     ensure!(
-        search["inputSchema"]["properties"]["index_ids"]["description"]
-            .as_str()
-            .is_some_and(|text| text.contains("never outside it")),
+        properties["workspace"].is_object()
+            && properties["index_ids"]["description"]
+                .as_str()
+                .is_some_and(|text| text.contains("A scope is required")),
         "{search}"
     );
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
-    let unset = mcp.call(3, "search", arguments.clone())?;
+    let with = |key: &str, value: Value| {
+        let mut changed = arguments.clone();
+        changed[key] = value;
+        changed
+    };
+    // No scope: refused, and the refusal says how to name one.
+    let unscoped = mcp.call(3, "search", arguments.clone())?;
     assert_eq!(
-        unset["result"]["structuredContent"]["error"]["code"], "agent_default_scope_unset",
-        "{unset}"
+        unscoped["result"]["structuredContent"]["error"]["code"], "scope_required",
+        "{unscoped}"
     );
-    // Defaults set through the pipe apply to the next call on this session.
-    set_open_defaults(&f, connection_id, 1, Some(vec![f.indexes[0]]), None).await?;
-    let read = mcp.call(4, "search", arguments.clone())?;
-    ensure!(read["result"]["isError"] != true, "{read}");
+    // A named index: the same complete read through MCP and the pipe.
+    let index = f.indexes[0].to_string();
+    let named = mcp.call(4, "search", with("index_ids", json!([index])))?;
+    ensure!(named["result"]["isError"] != true, "{named}");
+    let named_body = body(&named["result"])?;
+    assert_eq!(named_body["read_scope"]["source"], "named", "{named_body}");
     let piped = pipe_read(
         &f,
-        open_selection(&[], &[], Some(connection_id)),
+        open_selection(&[index.as_str()], &[], None),
         "search",
         &arguments,
     )
     .await?
     .map_err(|refused| anyhow::anyhow!("pipe read refused: {refused}"))?;
-    let (left, right) = (
-        stable(logical_comparison_copy(&body(&read["result"])?)?)?,
-        stable(logical_comparison_copy(&body(&piped)?)?)?,
-    );
-    if let Some(difference) = first_difference(&left, &right, "") {
-        anyhow::bail!("MCP and pipe open reads differ: {difference}");
-    }
-    // U109: with choice off a name outside the assigned set is refused and
-    // named; a name inside it narrows the read.
-    let named = mcp.call(5, "search", {
-        let mut named = arguments.clone();
-        named["index_ids"] = json!([f.indexes[1]]);
-        named
-    })?;
-    assert_eq!(
-        named["result"]["structuredContent"]["error"]["code"], "agent_scope_choice_disabled",
-        "{named}"
-    );
-    let message = named["result"]["structuredContent"]["error"]["message"]
-        .as_str()
-        .context("refusal message")?;
-    ensure!(
-        message.contains(&f.indexes[1].to_string())
-            && message.contains("outside this connection's assigned set"),
-        "{message}"
-    );
-    set_open_defaults(
+    assert_parity(
+        "U110 named MCP vs pipe",
+        &body(&named["result"])?,
+        &body(&piped)?,
+    )?;
+    // A workspace default set through the CLI applies to a nested workspace.
+    let folder = f.registrations[0].root.clone();
+    let (code, stdout, stderr) = airkctl_full(
         &f,
-        connection_id,
-        2,
-        Some(vec![f.indexes[0], f.indexes[1]]),
-        None,
-    )
-    .await?;
-    let narrowed = mcp.call(9, "search", {
-        let mut narrowed = arguments.clone();
-        narrowed["index_ids"] = json!([f.indexes[0]]);
-        narrowed
-    })?;
-    ensure!(narrowed["result"]["isError"] != true, "{narrowed}");
-    let (left, right) = (
-        without_selection_source(stable(logical_comparison_copy(&body(
-            &narrowed["result"],
-        )?)?)?),
-        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
-    );
-    if let Some(difference) = first_difference(&left, &right, "") {
-        anyhow::bail!("narrowed read is not the one-index read: {difference}");
-    }
-    // Names, as setup creates them: an index and a set both named "airk".
-    for line in [
-        vec![
-            "library",
-            "rename",
+        &[
+            "scope",
+            "default",
+            "--workspace",
+            &folder,
             "--index",
-            &index_text(&f, 0),
-            "--name",
-            "airk",
-            "--yes",
+            &index,
         ],
-        vec![
-            "library",
-            "set-rename",
-            "--set",
-            &project_text(&f, 0),
-            "--name",
-            "airk",
-            "--yes",
-        ],
-    ] {
-        let (code, _, stderr) = airkctl_full(&f, &line).await?;
-        ensure!(code == 0, "{line:?}: {stderr}");
-    }
-    // U106(f): the renames moved the catalog revision; this open connection
-    // keeps working on the same TLS/MCP session and reads the new names.
-    // The assigned set is now the set "airk" (indexes 0 and 1).
-    let changed = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::AgentConnectionDefaults {
-            connection_id,
-            expected_defaults_revision: 3,
-            index_ids: Some(Vec::new()),
-            index_set_ids: Some(vec![f.projects[0]]),
-            agent_choice: None,
-        },
     )
     .await?;
-    ensure!(
-        matches!(changed, ControlResponse::AgentConnectionDefaults { .. }),
-        "{}",
-        serde_json::to_string(&changed)?
-    );
-    // Narrow by the set name: both members; by an index name (a unique
-    // case-insensitive match): that index alone.
-    let by_set = mcp.call(10, "search", {
-        let mut named = arguments.clone();
-        named["index_set_ids"] = json!(["airk"]);
-        named["limit_per_index"] = json!(1);
-        named
-    })?;
-    ensure!(by_set["result"]["isError"] != true, "{by_set}");
-    let by_set_body = body(&by_set["result"])?;
-    let members: Vec<Value> = by_set_body["members"]
-        .as_array()
-        .context("members absent")?
-        .iter()
-        .map(|member| member["index_id"].clone())
-        .collect();
-    assert_eq!(members, vec![json!(f.indexes[0]), json!(f.indexes[1])]);
-    for member in by_set_body["members"].as_array().unwrap() {
-        assert_eq!(member["allocation"]["limit"], 1, "{member}");
-    }
-    assert_eq!(by_set_body["members"][0]["index_name"], "airk");
-    let by_index = mcp.call(11, "search", {
-        let mut named = arguments.clone();
-        named["index_ids"] = json!(["AIRK"]);
-        named
-    })?;
-    ensure!(by_index["result"]["isError"] != true, "{by_index}");
-    let (left, right) = (
-        without_selection_source(stable(logical_comparison_copy(&body(
-            &by_index["result"],
-        )?)?)?),
-        without_selection_source(stable(logical_comparison_copy(&body(&piped)?)?)?),
-    );
-    if let Some(difference) = first_difference(&left, &right, "") {
-        anyhow::bail!("index-name narrowing is not the one-index read: {difference}");
-    }
-    // The CLI reaches the same path with the same names and controls.
-    let connection_text = connection_id.to_string();
-    for (label, reply, extra) in [
-        ("set name", &by_set, vec!["--set", "airk"]),
-        ("index name", &by_index, vec!["--index", "AIRK"]),
-    ] {
-        let mut cli_arguments = arguments.clone();
-        if label == "set name" {
-            cli_arguments["limit_per_index"] = json!(1);
-        }
-        let argument_text = cli_arguments.to_string();
-        let mut line = vec!["tools", "call", "search", "--connection", &connection_text];
-        line.extend(extra);
-        line.extend(["--args", &argument_text]);
-        let (code, stdout, stderr) = airkctl_full(&f, &line).await?;
-        ensure!(code == 0, "CLI {label}: {stderr}");
-        let from_cli: Value = serde_json::from_str(&stdout)?;
-        let (left, right) = (
-            stable(logical_comparison_copy(&body(&from_cli)?)?)?,
-            stable(logical_comparison_copy(&body(&reply["result"])?)?)?,
-        );
-        if let Some(difference) = first_difference(&left, &right, "") {
-            anyhow::bail!("CLI and HTTPS {label} narrowing differ: {difference}");
-        }
-    }
-    // A name outside the assigned set is refused and named, through both.
-    let outside_id = f.indexes[2].to_string();
-    let outside = mcp.call(12, "search", {
-        let mut named = arguments.clone();
-        named["index_ids"] = json!([outside_id]);
-        named
-    })?;
+    ensure!(code == 0, "scope default failed: {stderr}");
+    let stored: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(stored["schema"], 1, "{stored}");
+    assert_eq!(stored["entries"][0]["folder"], json!(folder), "{stored}");
     assert_eq!(
-        outside["result"]["structuredContent"]["error"]["code"], "agent_scope_choice_disabled",
-        "{outside}"
+        stored["entries"][0]["index_ids"],
+        json!([index]),
+        "{stored}"
     );
-    let argument_text = arguments.to_string();
-    let (code, stdout, _) = airkctl_full(
+    let nested = format!("{folder}/nested/deeper");
+    let defaulted = mcp.call(5, "search", with("workspace", json!(nested)))?;
+    ensure!(defaulted["result"]["isError"] != true, "{defaulted}");
+    let defaulted_body = body(&defaulted["result"])?;
+    assert_eq!(defaulted_body["read_scope"]["source"], "workspace_default");
+    assert_eq!(
+        defaulted_body["read_scope"]["workspace_folder"],
+        json!(folder)
+    );
+    let mut left = named_body.clone();
+    let mut right = defaulted_body.clone();
+    for value in [&mut left, &mut right] {
+        value.as_object_mut().context("body")?.remove("read_scope");
+    }
+    assert_eq!(
+        stable(logical_comparison_copy(&left)?)?,
+        stable(logical_comparison_copy(&right)?)?,
+        "a workspace default reads exactly its stored scope"
+    );
+    // The CLI's --workspace takes the same path.
+    let arguments_text = arguments.to_string();
+    let (code, stdout, stderr) = airkctl_full(
         &f,
         &[
             "tools",
             "call",
             "search",
-            "--connection",
-            &connection_text,
-            "--index",
-            &outside_id,
             "--args",
-            &argument_text,
+            &arguments_text,
+            "--workspace",
+            &nested,
         ],
     )
     .await?;
-    ensure!(code != 0, "outside narrowing was not refused");
+    ensure!(code == 0, "tools call --workspace failed: {stderr}");
     let from_cli: Value = serde_json::from_str(&stdout)?;
+    assert_parity(
+        "U110 workspace MCP vs CLI",
+        &body(&defaulted["result"])?,
+        &body(&from_cli)?,
+    )?;
+    // list_scopes shows the stored defaults and the one for a workspace.
+    let listed = mcp.call(6, "list_scopes", json!({"workspace": nested}))?;
+    let listed_body = body(&listed["result"])?;
     assert_eq!(
-        from_cli["structuredContent"],
-        outside["result"]["structuredContent"]
+        listed_body["workspace_defaults"][0]["folder"],
+        json!(folder)
     );
-    // Choice on: the same session lists the selectors and the list tool.
-    set_open_defaults(&f, connection_id, 4, None, Some(AgentChoice::On)).await?;
-    let on = mcp.request(6, "tools/list", json!({}))?;
-    ensure!(
-        listed_tools(&on)?.contains(&"list_indexes".to_owned()),
-        "{on}"
-    );
-    let listed = mcp.call(7, "list_indexes", json!({}))?;
-    let piped_list = pipe_read(
-        &f,
-        open_selection(&[], &[], None),
-        "list_indexes",
-        &json!({}),
-    )
-    .await?
-    .map_err(|refused| anyhow::anyhow!("pipe list refused: {refused}"))?;
-    assert_eq!(body(&listed["result"])?, body(&piped_list)?);
-    let set_name = body(&piped_list)?["index_sets"]
-        .as_array()
-        .context("sets")?
-        .iter()
-        .find(|set| set["id"] == json!(f.projects[0]))
-        .and_then(|set| set["name"].as_str().map(str::to_owned))
-        .context("set name")?;
-    let expanded = mcp.call(8, "search", {
-        let mut named = arguments.clone();
-        named["index_set_ids"] = json!([set_name]);
-        named
-    })?;
-    ensure!(expanded["result"]["isError"] != true, "{expanded}");
+    assert_eq!(listed_body["workspace_default"]["folder"], json!(folder));
+    // Clearing the default: the workspace no longer selects a scope.
+    let (code, stdout, stderr) =
+        airkctl_full(&f, &["scope", "default", "--workspace", &folder]).await?;
+    ensure!(code == 0, "scope default clear failed: {stderr}");
     assert_eq!(
-        body(&expanded["result"])?["members"]
-            .as_array()
-            .context("members absent")?
-            .len(),
-        2
+        serde_json::from_str::<Value>(&stdout)?["entries"],
+        json!([])
     );
-    f.assert_sources_unchanged()
+    let cleared = mcp.call(7, "search", with("workspace", json!(nested)))?;
+    assert_eq!(
+        cleared["result"]["structuredContent"]["error"]["code"], "scope_required",
+        "{cleared}"
+    );
+    Ok(())
 }
 
 /// U107/U108 (behaviour): `limit_per_index` gives each selected index exactly
@@ -4923,13 +4780,6 @@ async fn per_index_counts_apply_to_catalog_and_open_reads_and_bind_cursors() -> 
         );
     }
     f.assert_sources_unchanged()
-}
-
-fn index_text(f: &Fixture, n: usize) -> String {
-    f.indexes[n].to_string()
-}
-fn project_text(f: &Fixture, n: usize) -> String {
-    f.projects[n].to_string()
 }
 
 fn authenticated_fallback_case(header: u8) -> Result<(airk_core::arbiter::Budget, Value)> {
@@ -5522,6 +5372,30 @@ fn assert_context_envelopes(
         }
     }
 }
+/// U110: the envelope without its top-level `read_scope` (from both the structured
+/// copy and an identical text copy), and that scope. A text copy that differs
+/// from the structured copy is left for the comparison to report.
+fn without_open_scope(envelope: &Value) -> Result<(Option<Value>, Value)> {
+    let mut copy = envelope.clone();
+    let scope = copy
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+        .and_then(|structured| structured.remove("read_scope"));
+    if let Some(text) = envelope.pointer("/content/0/text").and_then(Value::as_str)
+        && let Ok(mut parsed) = serde_json::from_str::<Value>(text)
+        && let Some(fields) = parsed.as_object_mut()
+        && let Some(text_scope) = fields.remove("read_scope")
+    {
+        ensure!(
+            scope.as_ref().is_none_or(|scope| *scope == text_scope),
+            "text and structured scopes differ"
+        );
+        copy["content"][0]["text"] = Value::String(parsed.to_string());
+        return Ok((Some(text_scope), copy));
+    }
+    Ok((scope, copy))
+}
+
 fn compare_context_envelopes(
     label: &str,
     left: &Value,
@@ -5531,6 +5405,16 @@ fn compare_context_envelopes(
 ) -> Result<()> {
     let parsed: airk_mcp::AnswerArgs = serde_json::from_value(arguments.clone())?;
     parsed.request.validate()?;
+    // U110: an open read reports its scope after the native read (outside
+    // its digests). Both sides must report the same scope; the comparison of
+    // the native packet then proceeds without it.
+    let (left_scope, left) = without_open_scope(left)?;
+    let (right_scope, right) = without_open_scope(right)?;
+    ensure!(
+        left_scope == right_scope,
+        "{label}: open read scopes differ: {left_scope:?} vs {right_scope:?}"
+    );
+    let (left, right) = (&left, &right);
     let budget = &parsed.request.budget;
     let verification = parsed.verification.controls();
     let projected = mcp_protocol
@@ -5682,6 +5566,14 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
         &arguments,
         None,
     )?;
+    // U110: HTTPS MCP names the one index per call (read whole) on the open
+    // path; it compares with the same open read through the pipe.
+    let open_reference = context_pipe_once(
+        &f,
+        open_selection(&[&f.indexes[0].to_string()], &[], None),
+        &arguments,
+    )
+    .await?;
     let mut mcp = McpSession::start_scoped(&f, &selected)?;
     let reply = mcp.request(
         2,
@@ -5694,7 +5586,7 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
     );
     assert_context_envelopes(
         "current Answer single HTTPS MCP",
-        &reference,
+        &open_reference,
         &reply["result"],
         &arguments,
         Some(&mcp.negotiated_protocol),
@@ -5744,51 +5636,26 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
         &arguments,
         None,
     )?;
-    let mut mcp = McpSession::start(&f)?;
-    let reply = mcp.request(
-        2,
-        "tools/call",
-        json!({"name":"answer","arguments":arguments}),
-    )?;
-    ensure!(
-        reply.get("error").is_none(),
-        "many MCP Answer failed without replay: {reply}"
-    );
-    assert_context_envelopes(
-        "current Answer many HTTPS MCP",
-        &reference,
-        &reply["result"],
+    // U110: the open read of the same two indexes through the pipe, the
+    // CLI (`tools call --index`) and tokenless HTTPS MCP naming them per call.
+    let first = f.indexes[0].to_string();
+    let second = f.indexes[1].to_string();
+    let reference = context_pipe_once(
+        &f,
+        open_selection(&[&first, &second], &[], None),
         &arguments,
-        Some(&mcp.negotiated_protocol),
-    )?;
-    let mut open = McpSession::start_selection(
-        &f,
-        airk_core::service_http::HttpSelection::Open {
-            selection: airk_core::service_http::OpenHttpSelection {
-                namespace: f.session.namespace,
-            },
-        },
-    )?;
-    let connection = open.transport.connection.connection_id;
-    set_open_defaults(
-        &f,
-        connection,
-        1,
-        Some(vec![f.indexes[0], f.indexes[1]]),
-        None,
     )
     .await?;
-    let reference =
-        context_pipe_once(&f, open_selection(&[], &[], Some(connection)), &arguments).await?;
-    let connection = connection.to_string();
     let (code, stdout, stderr) = airkctl_full(
         &f,
         &[
             "tools",
             "call",
             "airk_answer",
-            "--connection",
-            &connection,
+            "--index",
+            &first,
+            "--index",
+            &second,
             "--args",
             &text,
         ],
@@ -5805,7 +5672,8 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
         &arguments,
         None,
     )?;
-    let reply = open.request(
+    let mut mcp = McpSession::start(&f)?;
+    let reply = mcp.request(
         2,
         "tools/call",
         json!({"name":"answer","arguments":arguments}),
@@ -5819,7 +5687,7 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
         &reference,
         &reply["result"],
         &arguments,
-        Some(&open.negotiated_protocol),
+        Some(&mcp.negotiated_protocol),
     )?;
     f.assert_sources_unchanged()
 }

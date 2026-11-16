@@ -63,8 +63,8 @@ selected subset.
 
 `airkctl` provides commands, diagnostics, setup, an interactive tool shell and
 the framed session used by the editor. External agents ordinarily connect
-directly to the service's authenticated loopback HTTPS `/mcp` endpoint. A
-credential helper is a one-shot, not a resident process per agent.
+directly to the service's loopback HTTPS `/mcp` endpoint, which takes no token
+(U110); no AIRK process runs per agent.
 
 ### Typical journeys
 
@@ -74,14 +74,15 @@ run indexing. They then select existing indexes or sets in Search. Changing
 Search selection does not create an index. Progress, paused jobs, failures and
 actual readiness are exposed by the native job/catalog owners.
 
-**An AI agent asks a question.** The owner configures an authenticated agent
-connection and its default selection. The agent calls a listed MCP tool with
-bounded arguments. Native admission resolves the current permitted selection;
-the query returns cited evidence, metadata and disclosed gaps. The agent may
-make an explicitly permitted follow-up read. AIRK does not execute the agent's
-proposed code change. With agent choice enabled, the agent may explicitly
-select any index owned by that same OS user; defaults are convenience, not an
-access-control list (ACL).
+**An AI agent asks a question.** The owner writes the agent's endpoint entry
+(no token since U110) and may store a workspace default by applying a search
+scope in the Explorer. The agent calls a listed MCP tool with bounded
+arguments, naming indexes or index sets or passing its `workspace` folder.
+Native admission resolves that scope; the query returns cited evidence,
+metadata, the resolved `scope` and disclosed gaps. AIRK does not execute the
+agent's proposed code change. The agent may name any index of the
+installation; workspace defaults are convenience, not an access-control list
+(ACL).
 
 **A person reviews evidence.** Search and guided tools expose native results
 alongside readable citations. Review can assemble an impact/test checklist;
@@ -323,14 +324,16 @@ evidence. No cloud acquisition or evaluator is implied by this diagram set.
 
 [Open full-size PNG](images/06-scope-and-trust.png)
 
-Agent connection defaults, editor search selection and Admin session selection
-are distinct owners. A preference, path, index name or renderer object cannot
-grant access. Open agent connections resolve the owner's assigned defaults;
-choice is off by default: the agent stays within its assigned default scope or
-narrows it. When choice is explicitly enabled, the agent may select **any index
-owned by the same OS user**, subject to native admission. Workspace defaults
-are not an access-control boundary. Selecting an existing index does not
-create one.
+Agent scope, editor search selection and Admin session selection are distinct
+owners. Since U110 every MCP session is the service's built-in local agent
+session: `/mcp` takes no token, and each read names its scope (`index_ids`,
+`index_set_ids`) or passes `workspace`, which resolves to the service-stored
+workspace default of the most specific containing folder; otherwise the read is
+refused `scope_required`. Any local process that can reach 127.0.0.1 may read
+**any index of the installation**, subject to native admission; the user
+accepted this. Workspace defaults are a convenience, not an access-control
+boundary. Selecting an existing index does not create one. (The diagram above
+predates U110 and still shows per-connection defaults.)
 
 The editor's W4 grant binds its live window lease and checked catalog
 selection. Admin's A2 grant binds the actual browser/native Admin session.
@@ -404,11 +407,11 @@ also excludes AIRK-private state, retained edit archives and forbidden alias
 paths. Ignore defaults are convenience policy, not a guarantee that all secrets
 in arbitrary source files will be detected.
 
-TLS identifies the local HTTPS service. Agent authentication identifies a
-connection; scope admission selects what it may read. Browser cookie and
-anti-forgery admission authorize its management session. These are separate
-checks. Same-OS-user agent choice is intentionally broad when enabled; a
-workspace default is not a confidentiality boundary against that choice.
+TLS identifies the local HTTPS service. Agents are not authenticated (U110);
+scope resolution selects what a read covers. Browser cookie and anti-forgery
+admission authorize its management session. These are separate checks. Agent
+access is intentionally broad; a workspace default is not a confidentiality
+boundary.
 Unknown outcomes, credential errors and expired grants are explicit results,
 not reasons to leak private transport responses into public output.
 

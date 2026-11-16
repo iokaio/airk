@@ -185,66 +185,6 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     Ok(())
 }
 
-#[test]
-fn explorer_mcp_client_info_cannot_override_its_enrolled_family() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
-    std::fs::write(
-        root.path().join("explorer.rs"),
-        "pub fn explorer_fixture() -> bool { true }\n",
-    )?;
-    let service = common::Service::reviewed(root.path(), data.path(), "usage");
-    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
-    service.configure(airk_cli::service_configuration::Draft::Usage {
-        mode: RecordingMode::AggregatesOnly,
-    });
-    service.job(JobKind::Index);
-    let collection = airk_store::service::collection::Collection::existing(
-        std::path::Path::new(&service.project.data_root),
-        &service.project.root,
-        &service.project.collection,
-    )?;
-    let store = collection.selected_store()?;
-    let writer = hold_writer(&store)?;
-    // HTTPS attribution belongs to the native credential. Client-supplied MCP
-    // initialization must not overwrite Explorer's enrolled family.
-    let mut session = common::http::HttpMcpSession::start_for_client(
-        &service.control,
-        service.http_selection(),
-        ClientFamily::Explorer,
-    )?;
-    let mut exchange = |message: Value, id: Option<u64>| -> Result<Option<Value>> {
-        session.send(message)?;
-        let Some(id) = id else { return Ok(None) };
-        Ok(Some(session.receive(id.try_into()?)?))
-    };
-    exchange(
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"vscode","version":"1"}}}),
-        Some(1),
-    )?;
-    exchange(
-        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
-        None,
-    )?;
-    // native read: one measured attribution call while the fixture deliberately
-    // holds the writer; saved-source publication fencing is tested separately.
-    let reply = exchange(
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"explorer_fixture","mode":"lexical","verification":"off"}}}),
-        Some(2),
-    )?
-    .unwrap();
-    ensure!(reply["result"]["isError"] != true, "{reply}");
-    session.close()?;
-    drop(writer);
-    let report = native_report(root.path(), data.path())
-        .context("native CLI usage report after Explorer MCP read")?;
-    let clients = &report["report"]["clients"];
-    assert_eq!(clients["explorer"], 1, "{clients}");
-    assert!(clients.get("vscode").is_none(), "{clients}");
-    assert!(clients.get("unknown").is_none(), "{clients}");
-    Ok(())
-}
-
 fn single_search(root: &std::path::Path, data: &std::path::Path) -> Result<()> {
     let output = common::command(root, data, "usage")
         .args([

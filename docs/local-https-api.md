@@ -9,6 +9,17 @@ The HTTPS API invokes the same scoped read handlers and returns their complete
 results. It does not expose service shutdown, installation, grant creation,
 indexing mutations or private management commands.
 
+> **No token (U110, 15 November 2026).** The bearer plane (`/mcp` and the
+> `/api/v1` tool routes) takes no credential: the gateway strips and ignores any
+> `Authorization` header and serves every request as the built-in local agent
+> session. Host, `Origin` and admin-cookie refusals remain, and TLS issuer trust
+> is still required. Any local process of any OS user that can reach 127.0.0.1
+> can read every index. A read names its scope per call (`index_ids`,
+> `index_set_ids` or `workspace`; see [MCP tools](mcp.md)). Statements below
+> about credential files, bearer values, grants and connection IDs describe the
+> earlier contract; that machinery remains compiled but unused and will be
+> removed separately.
+
 ## Obtain a connection
 
 > **Command names after split Phase 4.** `airkctl` is the CLI. `runtime
@@ -84,14 +95,13 @@ chain, validity and IP-address verification enabled. Add this CA to existing
 trusted roots rather than disabling verification or replacing unrelated trust.
 The CA is independent of macOS Developer ID signing credentials.
 
-Read the bearer value from the protected `credential_file`. Send
-`Authorization: Bearer <value>` on **every** request, including MCP session GET
-and DELETE. Never put it in a URL, project configuration, command argument,
-diagnostic log or shared file. Native setup binds it to one exact existing
-authority. A session ID is not a substitute for the bearer or the grant.
+Since U110 no `Authorization` header is needed; one that is sent is stripped
+and ignored. Before U110 the client read a bearer value from the protected
+`credential_file` and sent it on every request.
 
-The service checks the current credential ledger and native grant on every
-request. Revoked or expired credentials fail. Repeating enrollment with the same
+The rest of this section describes the pre-U110 credential ledger, which
+remains compiled but unused. The service checked the credential ledger and
+native grant on every request. Revoked or expired credentials fail. Repeating enrollment with the same
 connection ID preserves its original token and expiry; a different authority or
 an expired/revoked connection needs a new explicitly reviewed ID. A forward
 catalog clock alone can be refreshed without changing the selected authority.
@@ -231,8 +241,8 @@ All routes use the same origin as `endpoint.url`.
 
 | Method and path | Input | Response |
 | --- | --- | --- |
-| `GET /api/v1/tools` | Authorization header | `airk.local-api/1` catalog with complete input schemas, canonical names and supported aliases |
-| `POST /api/v1/tools/{name}` | Authorization and `Content-Type: application/json`; body is the tool's argument object | Complete MCP tool-result JSON, including `content`, `structuredContent` and `isError` when present |
+| `GET /api/v1/tools` | None (no `Authorization` since U110) | `airk.local-api/1` catalog with complete input schemas, canonical names and supported aliases |
+| `POST /api/v1/tools/{name}` | `Content-Type: application/json`; body is the tool's argument object | Complete MCP tool-result JSON, including `content`, `structuredContent` and `isError` when present |
 | `POST /mcp` | Standard Streamable HTTP MCP initialization/messages | MCP JSON or SSE according to the protocol |
 | `GET /mcp` | Standard MCP session headers | Session SSE stream |
 | `DELETE /mcp` | Standard MCP session headers | Closes that MCP session |
@@ -244,16 +254,26 @@ parameters are unsupported. The request body is the argument object itself,
 not a JSON-RPC envelope or an extra `arguments` wrapper.
 
 The executable developer examples use standard runtimes without third-party
-HTTP clients. Save fresh complete connection JSON from verified native setup in
-an owner-private file outside the repository. The native setup/read-only getter
-must have verified the referenced files' private ownership; arbitrary JSON is
-not proof of authority. List the supported tools before selecting a read:
+HTTP clients. They take no token (U110): each reads the owner-private
+`http-1/endpoint.json` and `http-1/ca.pem` that the native service publishes in
+its control directory, refuses redirected, linked, changed or non-private files,
+and checks that the CA matches the endpoint's `ca_sha256`. Pass the absolute
+service control directory (`airkctl agents endpoint --output json` prints the
+same endpoint record). List the supported tools before selecting a read:
 
-| Runtime | Catalog command |
-| --- | --- |
-| Python 3.11+ | `python examples/local_https_client.py --connection <absolute-private-file>` |
-| Node.js 24+ | `node examples/local_https_client.cjs --connection <absolute-private-file>` |
-| PowerShell 7.4+ on Windows | `pwsh -NoProfile -File examples/local_https_client.ps1 -Connection <absolute-private-file>` |
+| Runtime | Catalog command | Read with a scope |
+| --- | --- | --- |
+| Python 3.11+ | `python examples/local_https_client.py --control-dir <absolute-control-dir>` | `... --tool search --arguments '<JSON-object>' --index <index-id-or-name>` |
+| Node.js 24+ | `node examples/local_https_client.cjs --control-dir <absolute-control-dir>` | `... --tool search --arguments '<JSON-object>' --index <index-id-or-name>` |
+| PowerShell 7.4+ on Windows | `pwsh -NoProfile -File examples/local_https_client.ps1 -ControlDir <absolute-control-dir>` | `... -Tool search -Arguments '<JSON-object>' -Index <index-id-or-name>` |
+
+Read tools need a scope on every call: `--index`/`-Index` (sent as
+`index_ids`) and `--set`/`-Set` (sent as `index_set_ids`) take ids or names and
+repeat; `--workspace`/`-Workspace <absolute-folder>` reads the default scope
+applied for that folder in the AIRK Explorer. A read with none is a
+`scope_required` tool error. The catalog call takes no scope. `airkctl tools
+call <tool> --index <id>` (or `--set`, `--workspace`) takes the same open read
+path, so its result equals the example's.
 
 The [Python](../examples/local_https_client.py) and
 [Node](../examples/local_https_client.cjs) examples support Unix owner/mode and
@@ -267,7 +287,7 @@ Add `--tool <advertised-name> --arguments '<JSON-object>'` for Python/Node, or
 PowerShell also accept `--arguments-file <absolute-private-file>` and
 `-ArgumentsFile <absolute-private-file>` respectively, avoiding OS command-line
 length limits. That JSON object is bounded to 64 KiB and uses the same protected
-file checks; it contains arguments, never a bearer. Do not supply both inline
+file checks; it contains arguments only. Do not supply both inline
 and file arguments.
 
 All examples add the local CA to normal trust, retain IP/name and certificate
@@ -280,8 +300,7 @@ request deadline; Python's socket timeout is 125 seconds per blocking operation.
 The request and response budgets are 64 KiB and 1 MiB respectively.
 Node/PowerShell disable proxies,
 do not automatically retry requests and exit unsuccessfully on non-200 replies,
-tool errors or incomplete/oversized data. Their generic transport errors exclude
-the credential. These small read-only examples are not native setup, a service
+tool errors or incomplete/oversized data. These small read-only examples are not native setup, a service
 manager, or proof that an external MCP application's trust is configured.
 
 For example, after reading the catalog and finding `search`, a request has this
@@ -290,10 +309,9 @@ shape (use the actual advertised name and schema):
 ```http
 POST /api/v1/tools/search HTTP/1.1
 Host: 127.0.0.1:<published-port>
-Authorization: Bearer <read-from-protected-file>
 Content-Type: application/json
 
-{"query":"service ownership","limit":5,"response_mode":"full"}
+{"query":"service ownership","index_set_ids":["<set-name>"],"limit":5,"response_mode":"full"}
 ```
 
 The JSON API retains Full results. `X-AIRK-Response-Mode: terse` is rejected on
@@ -316,7 +334,9 @@ capacity. Changing concurrency applies to new admissions; it does not cancel
 already accepted work. Status has its existing reserved admission path.
 
 The current HTTP bounds include 128 TCP connections, 32 concurrent TLS
-handshakes, 128 MCP sessions overall and eight sessions per credential. Session
+handshakes, 128 MCP sessions overall and eight sessions per client context.
+Since U110 every agent shares the one local agent session context, so the
+eight-session bound applies across all agents together. Session
 initialization expires after 15 seconds and idle sessions after 300 seconds.
 Request bodies are bounded to 64 KiB and complete JSON replies to 1 MiB. Native
 tool budgets can impose smaller limits. Output accounting remains charged while
@@ -325,7 +345,7 @@ successful truncated result. SSE replay through `Last-Event-ID` is unsupported.
 
 Authentication, admission and transport failures use non-200 HTTP statuses and
 an `airk.local-api-error/1` body with `error.code`. Examples include
-`credential_required`, `credential_refused`, `native_grant_refused`,
+`host_refused`, `origin_refused`, `cookie_on_bearer_plane`,
 `query_admission_busy`, `upgrade_in_progress`, `request_body_limit` and
 `request_deadline_exhausted`. Other canonical tool failures remain complete tool
 results. Treat a disconnected stream as incomplete, not as an empty result.
@@ -335,7 +355,7 @@ The documented pre-admission HTTP refusals are:
 | HTTP status | `error.code` | Phase | Effect |
 | --- | --- | --- | --- |
 | 429 | `query_admission_busy` | Evidence admission | No work submitted |
-| 503 | `authentication_busy` | Bounded credential authentication | No work submitted; no session or credential state changed |
+| 503 | `authentication_busy` | Bounded credential authentication (not emitted since U110) | No work submitted; no session or credential state changed |
 | 503 | `native_validation_busy` | Bounded native scope validation | No work submitted; no session or credential state changed |
 
 The body remains `{"schema":"airk.local-api-error/1","error":{"code":"…"}}`.
@@ -347,7 +367,7 @@ oversized response is uncertain and is never replayed.
 
 | Observed outcome | Status / code | Load accounting | Harness retry | Cleanup |
 | --- | --- | --- | --- | --- |
-| Authentication refusal | 503 / `authentication_busy` | Refused by code, in the attempted initialization/read/API phase | None | Close owned socket; delete an already established session when the exchange is complete |
+| Authentication refusal (not emitted since U110) | 503 / `authentication_busy` | Refused by code, in the attempted initialization/read/API phase | None | Close owned socket; delete an already established session when the exchange is complete |
 | Validation refusal | 503 / `native_validation_busy` | Refused by code, in the attempted phase | None | Same complete-response cleanup |
 | Query refusal | 429 / `query_admission_busy` | Refused by code, in the attempted phase | None | Same complete-response cleanup |
 | Credential, fence, unknown status/code, JSON-RPC or tool error | Other pair, or HTTP 200 error | Failed | None | Retain bounded response/request evidence; close owned sockets and retain failed cleanup |

@@ -5,6 +5,18 @@ writes; the service, extension and MCP do not. Existing connect/repair/remove
 classification, unrelated-byte preservation, linked-file refusal and the 1 MiB
 input/output bounds remain in force.
 
+U110 entries carry only the loopback endpoint URL and the
+`X-AIRK-Response-Mode` header. HTTPS entries are recognized by that URL plus
+an AIRK server key or a legacy AIRK credential marker; entries still carrying
+`Authorization`, `headersHelper`, `http_headers_helper` or
+`bearer_token_env_var` are reported as `https_unknown_connection` with a
+detail naming U110, and `repair` strips those fields (and an unreferenced
+VS Code token input) while keeping every other field. Recognition applies in
+both scopes and the stale-credential status precedes every observation. The
+hand-reviewed `fixtures/split/agents/config_cases.json` pins these rules for
+this module and for the extension's removal-only recognizer
+(`packages/vscode/src/airkctl/agents/recognizer.ts`).
+
 The I2 Entry and its Agent, Scope, Class and Transport data live in
 `contract::agent_entry`, with their original decode/schema rules. This module
 reexports those same types and retains classification, labels, findings and
@@ -76,9 +88,10 @@ flush API success is not claimed power-loss qualification.
 Known early changes refuse before publication. Late in-place/editor changes
 retain the actual displaced object and return a published-conflict result;
 deletion remains absence. Typed local errors distinguish refusal, retained
-conflict and uncertain outcome. Connect checks admission before enrollment;
-later errors retain the selected connection identity in their message. Existing
-repair/remove action shapes keep complete error strings and partial outcomes.
+conflict and uncertain outcome. Connect checks admission before reading the
+live endpoint URL; under U110 it enrolls no connection, so its errors name
+none. Existing repair/remove action shapes keep complete error strings and
+partial outcomes.
 
 ## Versioned private bytes
 

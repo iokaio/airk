@@ -61,9 +61,14 @@ fn open_hooks(
                 super::open_reads::response(
                     &state,
                     super::open_reads::OpenCall {
-                        connection_id: Some(read.connection_id),
+                        // U110: the built-in local agent session is the local
+                        // caller: no stored default, scope named per call.
+                        connection_id: (read.connection_id
+                            != airk_core::service_http::LOCAL_AGENT_CONNECTION)
+                            .then_some(read.connection_id),
                         index_names: read.index_names,
                         set_names: read.set_names,
+                        workspace: read.workspace,
                         tool: read.tool,
                         arguments: read.arguments,
                         mode: airk_core::service::ToolResponseMode::Terse,
@@ -180,7 +185,6 @@ impl Owner {
             Arc::new(move || Ok(Arc::new(checkpoint.admit()?)));
         let gateway = airk_https::http_gateway::Gateway::new(
             &descriptor,
-            credentials.clone(),
             receiver,
             validate,
             airk_https::http_gateway::NativeAdmission {

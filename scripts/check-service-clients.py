@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise an approved native runtime in private, disposable project scopes."""
+"""Exercise an approved native runtime in private, disposable project scopes.
+
+U110 (split-plan §2.1, contracts §2.11): HTTPS MCP and the JSON API take no
+credential. HTTPS clients discover the endpoint record (`airkctl agents
+endpoint`, cross-checked with the owner-private `<control>/http-1/endpoint.json`)
+and the AIRK CA, and every read names the fixture index (`index_ids`). CLI
+results compared against HTTPS take the same open read path (`airkctl tools
+call <tool> --index <id>`). The report has no credential fields.
+"""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
@@ -69,6 +77,34 @@ RETRYABLE_TOOLS = TOOLS - {"airk_parse", "airk_answer"}
 MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
     "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
     "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+# U110: the HTTPS local agent session lists scopes instead of a bound project.
+HTTPS_MCP_TOOLS = (MCP_TOOLS - {"projects"}) | {"list_scopes"}
+# The JSON API's read catalog on that session (assistance mutations are absent).
+HTTPS_API_READ_NAMES = {name.removeprefix("airk_") for name in TOOLS} | {
+    "list_scopes", "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+SCOPE_REQUIRED = "scope_required"
+
+
+def http_transport():
+    spec = importlib.util.spec_from_file_location("native_https_fixture", Path(__file__).with_name("http_fixture.py"))
+    transport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(transport)
+    return transport
+
+
+def result_scope(envelope):
+    """U110: an open read reports its scope in structuredContent (and its JSON text copy)."""
+    structured = envelope.get("structuredContent") if isinstance(envelope, dict) else None
+    return (structured if isinstance(structured, dict) else tool_value(envelope)).get("read_scope")
+
+
+def scope_refusal(envelope):
+    """The complete scope_required tool error, or an assertion."""
+    assert isinstance(envelope, dict) and envelope.get("isError") is True, envelope
+    error = tool_value(envelope).get("error")
+    assert isinstance(error, dict) and error.get("code") == SCOPE_REQUIRED, envelope
+    assert "list_scopes" in error.get("message", ""), envelope
+    return error
 
 
 def assert_legacy_query_scope(value):
@@ -873,9 +909,14 @@ class Fixture:
                           json.dumps(arguments or {"response_mode": "full"}))
 
     def answer_once(self, project, arguments):
-        """One exact finite execution. Failure/unknown outcome never permits replay."""
-        result = self.run(*self.arguments(project), "tools", "call", "airk_answer", "--args",
-                          json.dumps(arguments), check=False, timeout=90)
+        """One exact finite execution. Failure/unknown outcome never permits replay.
+
+        On an HTTPS runtime the reference takes the open read path (U110), as MCP does."""
+        if getattr(self, "single_image", False):
+            argv = (*self.open_service(), "tools", "call", "airk_answer", *self.open_selector(project))
+        else:
+            argv = (*self.arguments(project), "tools", "call", "airk_answer")
+        result = self.run(*argv, "--args", json.dumps(arguments), check=False, timeout=90)
         assert result.returncode in (0, 1), "Finite Answer client process failed"
         envelope = json.loads(result.stdout)
         assert result.returncode == 0, "Finite Answer was refused or failed; original outcome retained without retry"
@@ -1060,30 +1101,59 @@ class Fixture:
                 child.wait(timeout=15)
 
     def enroll_http(self, selection, connection_id, client="unknown", *, deadline=None):
-        spec = importlib.util.spec_from_file_location("native_https_enrollment", Path(__file__).with_name("http_fixture.py"))
-        transport = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(transport)
-        # `runtime http-connection` is a U93 pre-split operation of the service image.
-        return transport.enroll_native(self.service_run, self.install, self.control, selection, connection_id,
-                                      client, deadline=deadline)
+        """Legacy (pre-U110) credential enrollment, kept only for harnesses that
+        have not moved to the tokenless endpoint; this harness never calls it."""
+        return http_transport().enroll_native(self.service_run, self.install, self.control, selection, connection_id,
+                                              client, deadline=deadline)
 
-    def open_http(self, name, client):
-        spec = importlib.util.spec_from_file_location("native_https_fixture", Path(__file__).with_name("http_fixture.py"))
-        transport = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(transport)
-        selected = self.scopes[name]
-        family = {"codex": "codex", "claude-code": "claude_code", "github-copilot": "copilot_cli"}.get(client, "unknown")
-        connection = self.enroll_http({"kind": "scoped", "selection": selected}, uuid.uuid4().hex, family)
+    def open_service(self):
+        return ("--service-runtime-dir", str(self.control))
+
+    def open_selector(self, name):
+        """U110: the fixture index named per call, as an agent's read names it."""
+        return ("--index", self.scopes[name]["index_id"])
+
+    def open_call(self, name, tool, arguments, *, workspace=None, deadline=None):
+        """One `airkctl tools call` on the open read path: --index, or --workspace alone."""
+        selector = ("--workspace", workspace) if workspace is not None else self.open_selector(name)
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
+        result = self.run(*self.open_service(), "tools", "call", tool, *selector, "--args", json.dumps(arguments),
+                          check=False, timeout=remaining(deadline, 90))
+        assert result.returncode in (0, 1), f"Native open read process failed: exit {result.returncode}"
+        return result.returncode, json.loads(result.stdout)
+
+    def open_tool(self, name, tool, arguments, deadline=None):
+        """The complete open-path CLI envelope, with the canonical typed-rejection replay only."""
+        assert tool in RETRYABLE_TOOLS, "Expected a replayable read-only fixture query"
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
+        def read(until):
+            code, envelope = self.open_call(name, tool, arguments, deadline=until)
+            assert code == 0 or read_retry_delay(envelope) is not None, "Native open read failed without a typed rejection"
+            return envelope
+        envelope, _ = read_envelope(read, deadline)
+        return envelope
+
+    def http_endpoint(self):
+        """Tokenless discovery: the CLI endpoint record must equal the owner-private endpoint.json."""
+        transport = http_transport()
+        if self.cli is not None:
+            endpoint = json.loads(self.run("--output", "json", *self.open_service(), "agents", "endpoint").stdout)
+        else:
+            endpoint = json.loads(self.service_run("runtime", "http-endpoint", "--install-dir", self.install).stdout)
+        assert endpoint == transport.read_endpoint(self.control), "CLI endpoint record differs from the published endpoint.json"
+        return endpoint
+
+    def open_http(self, name, client=None):
+        """A tokenless HTTPS client whose reads name this fixture's index (U110).
+
+        client labels nothing natively since U110; MCP clientInfo carries the name."""
+        transport = http_transport()
+        endpoint = self.http_endpoint()
         health = self.rpc("health")["observation"]
         self.assert_alive()
-        assert health["instance"] == self.managed_health["instance"], "HTTP enrollment returned another service instance"
-        transport.validate_native_identity(connection, health)
-        assert connection["selection"]["kind"] == "scoped"
-        actual = connection["selection"]["selection"].copy()
-        expected = selected.copy()
-        actual.pop("expected_catalog_revision"); expected.pop("expected_catalog_revision")
-        assert actual == expected, "HTTP enrollment changed the immutable reviewed scope"
-        return transport.McpClient(connection, self.control)
+        assert health["instance"] == self.managed_health["instance"], "HTTP endpoint names another service instance"
+        transport.validate_native_identity(endpoint, health)
+        return transport.McpClient(endpoint, self.control, scope={"index_ids": [self.scopes[name]["index_id"]]})
 
     def http_mcp(self, name, lifecycle, client, *, workbench=False):
         assert lifecycle in ("initialize", "disconnect", "reconnect")
@@ -1096,14 +1166,26 @@ class Fixture:
             mcp_catalog = network.receive(100)["result"]["tools"]
             api_catalog = network.api_catalog()
             assert api_catalog["schema"] == "airk.local-api/1" and api_catalog["contract_version"] == 1
-            read_names = {tool.removeprefix("airk_") for tool in TOOLS} | {"projects", "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+            read_names = HTTPS_API_READ_NAMES
             def catalog_value(rows):
                 return {row["name"].removeprefix("airk_"): {key: value for key, value in row.items() if key != "name"}
                         for row in rows if row["name"].removeprefix("airk_") in read_names}
             assert len(api_catalog["tools"]) == len(read_names), "JSON API read catalog is incomplete or duplicated"
             assert catalog_value(api_catalog["tools"]) == catalog_value(mcp_catalog), "Complete MCP/API input/output schemas or annotations differ"
-            scope = tool_value(network.api_read("query_scope", {"view": "projects"}))
-            assert scope == self.tool(name, "airk_query_scope", {"view": "projects"}), "Complete CLI/API query scope differs"
+            transport = http_transport()
+            arguments = {"view": "projects"}
+            scope = network.api_read("query_scope", arguments)
+            cli = self.open_tool(name, "airk_query_scope", arguments)
+            assert transport.parity_envelope(scope) == transport.parity_envelope(cli), "Complete open-path CLI/API query scope differs"
+            # U110: a read that names no scope is refused identically on both surfaces.
+            search = {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}
+            scope_refusal(network.api_read("search", search, scoped=False))
+            workspace = str(self.owner)  # absolute, and no workspace default is stored
+            api_refused = network.api_read("search", {**search, "workspace": workspace})
+            code, cli_refused = self.open_call(name, "airk_search", search, workspace=workspace)
+            assert code == 1, "CLI open read without a stored workspace default was not refused"
+            scope_refusal(api_refused); scope_refusal(cli_refused)
+            assert transport.parity_envelope(api_refused) == transport.parity_envelope(cli_refused), "Complete scope_required refusal differs"
             if workbench and self.answer_validator is not None:
                 arguments, reference = self.answer_references[name]
                 result = network.api_read("answer", arguments)
@@ -1135,7 +1217,8 @@ class Fixture:
         params = {"_meta": meta} if lifecycle == "inline" else {}
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
         catalog = receive(2)["result"]["tools"]
-        assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS, [item["name"] for item in catalog]
+        expected = HTTPS_MCP_TOOLS if self.single_image else MCP_TOOLS
+        assert len(catalog) == len(expected) and {item["name"] for item in catalog} == expected, [item["name"] for item in catalog]
         assert all(not any(key in item["inputSchema"] for key in
                            ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
                    for item in catalog), "Assistant-facing tool schemas must use plain object roots"
@@ -1149,11 +1232,23 @@ class Fixture:
         result, _ = read_envelope(read, time.monotonic() + 60)
         search_body = tool_value(result)
         assert search_body["hits"]
-        send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
-            **params, "name": "projects", "arguments": {}}})
-        scopes = tool_value(receive(4)["result"])
-        assert scopes["default_project"] == self.projects[name]["binding"]
-        assert len(scopes["projects"]) == 1
+        if self.single_image:
+            # U110: the HTTPS client named the fixture index; the result says so.
+            index_id = self.scopes[name]["index_id"]
+            assert result_scope(result) == {"source": "named", "index_ids": [index_id]}, result_scope(result)
+            send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                **params, "name": "list_scopes", "arguments": {}}})
+            listing = receive(4)["result"]
+            assert listing.get("isError") is not True, listing
+            listed = tool_value(listing)
+            assert index_id in [index["id"] for index in listed["indexes"]], listed
+            assert isinstance(listed.get("workspace_defaults"), list), listed
+        else:
+            send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                **params, "name": "projects", "arguments": {}}})
+            scopes = tool_value(receive(4)["result"])
+            assert scopes["default_project"] == self.projects[name]["binding"]
+            assert len(scopes["projects"]) == 1
         # This metadata-only call must preserve the exact native CLI body,
         # while granting no new Project or machine-library discovery.
         send({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {
@@ -1161,11 +1256,17 @@ class Fixture:
         scope_reply = receive(8)["result"]
         assert scope_reply.get("isError") is not True, scope_reply
         query_scope = tool_value(scope_reply)
-        if self.catalog_authority:
-            assert_frozen_query_scope(query_scope, self.scopes[name], search_body.get("scope_observation"))
+        if self.single_image:
+            # Both sides take the open read path with the same named index.
+            transport = http_transport()
+            cli = self.open_tool(name, "airk_query_scope", {"view": "projects"})
+            assert transport.parity_envelope(scope_reply) == transport.parity_envelope(cli), query_scope
         else:
-            assert_legacy_query_scope(query_scope)
-        assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
+            if self.catalog_authority:
+                assert_frozen_query_scope(query_scope, self.scopes[name], search_body.get("scope_observation"))
+            else:
+                assert_legacy_query_scope(query_scope)
+            assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
         if workbench and self.answer_validator is not None:
             arguments = current_answer_arguments("polaronlymarker")
             with self.hold_publication(name):
@@ -1213,12 +1314,13 @@ def mixed_mcp_clients(fixture, project):
     """Actual native processes, not claims about proprietary assistant UI testing."""
     modes = ([("initialize", "codex"), ("disconnect", "claude-code"), ("reconnect", "github-copilot")]
              if fixture.single_image else [("initialize", "codex"), ("fallback", "claude-code"), ("inline", "github-copilot")])
+    expected = HTTPS_MCP_TOOLS if fixture.single_image else MCP_TOOLS
     # Reconnect all three with the same saved project, without setup or indexing.
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=3) as pool:
             checks = [pool.submit(fixture.stdio, project, lifecycle, client) for lifecycle, client in modes]
-            assert all(check.result() == len(MCP_TOOLS) for check in checks)
-    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": len(MCP_TOOLS),
+            assert all(check.result() == len(expected) for check in checks)
+    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": len(expected),
             "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
 
 
@@ -1283,10 +1385,11 @@ def airkctl_session_smoke(fixture):
             if arguments is None:
                 arguments = current_answer_arguments("polaronlymarker")
                 reference = fixture.answer_once("project-a", arguments)
-            selected = fixture.arguments("project-a")
-            assert selected[:2] == ["--service-runtime-dir", str(fixture.control)], "Session must retain the exact owned service"
+            # The session supplies the owned service; the read names the
+            # fixture index on the open path, as the reference did (U110).
             identifier = uuid.uuid4().hex
-            send(identifier, {"invoke": {"argv": [*selected[2:], "tools", "call", "airk_answer", "--args", json.dumps(arguments)],
+            send(identifier, {"invoke": {"argv": ["tools", "call", "airk_answer", *fixture.open_selector("project-a"),
+                                                  "--args", json.dumps(arguments)],
                                          "deadline_ms": arguments["budget"]["deadline_ms"]}})
             outcome = reply(identifier)
             assert outcome["status"] == "invoked" and outcome["exit_code"] == 0, "Finite I2 Answer failed/unknown; no replay permitted"
@@ -1444,6 +1547,8 @@ def cold_first_status(fixture, admission, *, case_deadline=None):
             network.close()
             raise
 
+    selected = fixture.scopes["cold"]
+
     def observe(network):
         def read(until):
             budget = remaining(until, 60)
@@ -1451,17 +1556,12 @@ def cold_first_status(fixture, admission, *, case_deadline=None):
             if network.connection.sock is not None:
                 network.connection.sock.settimeout(budget)
             network.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                          "params": {"name": "status", "arguments": {}}})
+                          "params": {"name": "status", "arguments": {"index_ids": [selected["index_id"]]}}})
             return network.receive(2)["result"]
         envelope, retries = read_envelope(read, deadline)
         value = tool_value(envelope)
-        selected = fixture.scopes["cold"]
-        scope = value["scope_observation"]
-        assert "project" not in value and scope["qualifier"] == "selected_subset", value
-        assert scope["provenance"] == "user_reviewed_project_grant", scope
-        assert scope["grant"] == {"id": selected["grant_id"], "revision": selected["expected_grant_revision"]}, scope
-        assert [member["index_id"] for member in scope["members"]] == [selected["index_id"]], scope
-        assert sorted(item["project_id"] for member in scope["members"] for item in member["memberships"]) == sorted(selected["project_ids"]), scope
+        # U110: the read named exactly the fixture index, and nothing wider.
+        assert result_scope(envelope) == {"source": "named", "index_ids": [selected["index_id"]]}, value
         assert value["index_state"] in ("available", "unavailable"), value
         if value["index_state"] == "available":
             assert type(value["files"]) is int and value["files"] == 0 and value["publication"], value
@@ -1485,7 +1585,7 @@ def cold_first_status(fixture, admission, *, case_deadline=None):
             for number in range(4):
                 sessions.append(open_client(number))
         # Preserve the removed quick-status owner's 60-second observation budget,
-        # starting after admission; setup/enrollment has its own bounded commands.
+        # starting after admission; endpoint discovery has its own bounded commands.
         deadline = min(time.monotonic() + 60, case_deadline if case_deadline is not None else float("inf"))
         with ThreadPoolExecutor(max_workers=4) as pool:
             observations = list(pool.map(observe, sessions))

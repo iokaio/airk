@@ -1,43 +1,78 @@
 # MCP setup templates
 
-The 1.8.14 candidate connects MCP clients directly to the shared native HTTPS
-service. These are format templates, not ready-to-use connections. Obtain the
-actual configuration from AIRK: Connect Coding Agent, or native `airk setup`
-with an explicitly reviewed catalog selector. Replace the URL and connection
-reference together from that authenticated native result. Never assume that the
-preferred port is available: the persisted live endpoint can use another port.
+MCP clients connect directly to the shared native HTTPS service at
+`https://127.0.0.1:<port>/mcp`. These are format templates, not ready-to-use
+connections. Obtain the actual entry from AIRK (Connect Coding Agent in the
+Explorer or Admin, or `airkctl agents connect`), or replace the URL with the
+live one from `airkctl agents endpoint --output json` (`url`). Never assume the
+preferred port 57421 is available: the live endpoint can use another port, and
+it can change after a restart or upgrade.
 
-- `vscode.json`: VS Code / GitHub Copilot Chat Local harness configuration. The AIRK extension resolves its exact native connection ID through `airk.httpCredential`; no host environment reload is needed. Forwarded/portable harnesses which reject command inputs are not qualified.
-- `codex.toml`: Codex project configuration. `url` is literal; AIRK does not invent
-  unsupported URL interpolation. `bearer_token_env_var` names the protected
-  credential provisioned to the actual host process.
-- `native.json`: Claude Code project configuration, retaining its historical
-  filename. `${AIRK_MCP_TOKEN_...}` is Claude's header environment reference.
+## No token (U110)
+
+The loopback endpoint takes no credential. An entry contains only the URL and
+the `X-AIRK-Response-Mode: terse` header: no `Authorization` header, no
+`headersHelper` / `http_headers_helper`, no `bearer_token_env_var`, no
+`${input:…}` token and no connection id. AIRK recognizes its entry by URL. Any
+local process of any OS user that can reach 127.0.0.1 can read every index;
+the service still refuses a wrong `Host`, a browser `Origin` and the Admin
+cookie on this plane.
+
+- `native.json`: Claude Code project configuration (`.mcp.json`), retaining its
+  historical filename: `{"type": "http", "url": …, "headers": {…}}`.
+- `vscode.json`: VS Code / GitHub Copilot Chat `mcp.json`: `type` `http`, `url`
+  and `headers`. No extension command input is needed.
+- `codex.toml`: Codex configuration: literal `url` plus
+  `[mcp_servers.airk.http_headers]`. Codex does not substitute environment
+  variables into the URL.
 - `docker.json`: **historical predecessor stdio example only**. It is not a
-  supported 1.8.14 shared HTTPS connection. A host cannot reach a container's
-  private loopback listener by reusing the same URL. Container/remote deployment
-  requires a separately qualified endpoint, trust, credentials and exact scope;
-  preserve the old configuration until that migration is verified.
+  supported shared HTTPS connection. A host cannot reach a container's private
+  loopback listener by reusing the same URL; container or remote deployment
+  needs a separately qualified endpoint and trust.
 
-Native enrollment retains the selected reviewed grant or genuine imported
-legacy snapshot; it does not infer authority from an open folder or this file.
-The templates contain no token or private key. Do not paste the native
-`credential_file` contents into a tracked configuration. Native internal clients
-read protected credential references; external clients require their verified
-host-specific provisioning. New VS Code terminals can receive the prepared
-Codex/Claude environment. Already running terminals and remote hosts are not
-changed by saving a configuration.
+## TLS trust is still required
 
-HTTPS certificate validation remains enabled. Provision the exact native local
-issuer using an additive client CA bundle or supported per-user OS trust.
-VS Code exposes **AIRK: Trust Local HTTPS Issuer**, with the actual native
-fingerprint for review; **Remove Owned Local HTTPS Trust** preserves preexisting
-issuers. A saved URL alone proves neither trust nor a working client connection.
-Linux VS Code has no automatic per-user trust-store path here: an administrator must install the exact reviewed issuer in its distribution system store and user NSS store. An internal AIRK HTTPS check is not external Code qualification.
+Removing the token does not relax HTTPS. Certificate validation stays enabled
+and the client must trust the installation's AIRK CA (`<control>/http-1/ca.pem`,
+whose SHA-256 is the endpoint's `ca_sha256`). Add it to the client's existing
+roots: an additive CA bundle such as `NODE_EXTRA_CA_CERTS` or Codex's
+`CODEX_CA_CERTIFICATE`, or per-user OS trust with
+`airkctl service trust inspect` then
+`airkctl service trust install --expected-ca-sha256 <reviewed digest>`.
+VS Code exposes **AIRK: Trust Local HTTPS Issuer** with the actual fingerprint
+for review. Linux has no automatic per-user trust-store path here: an
+administrator must install the exact reviewed issuer in the distribution's
+system store and the user's NSS store. A saved URL alone proves neither trust
+nor a working connection.
+
+## Scope is a per-call parameter
+
+There is no per-connection scope. Every read tool takes a scope in its
+arguments:
+
+- `index_ids` and/or `index_set_ids`: ids or names (union, at most 32 each); or
+- `workspace`: an absolute folder path. The default scope applied in the
+  Explorer for the most specific stored folder containing it is used.
+
+A read with neither is refused with `scope_required`. MCP clients that declare
+the `roots` capability get `workspace` filled from their first `file:` root
+when a read names no scope. Results report `read_scope.source` (`named` or
+`workspace_default`).
+
+Call `list_scopes` (formerly `list_indexes`) first: it lists the indexes,
+index sets and stored workspace defaults; pass `workspace` to also get the
+matching `workspace_default` (or null).
+
+The raw JSON examples (`../local_https_client.py`, `.cjs`, `.ps1`) follow the
+same rules: they read `<control>/http-1/endpoint.json` and `ca.pem`, send no
+`Authorization` header, and merge `--index` / `--set` / `--workspace` into the
+tool arguments.
+
 Actual client initialization, tool discovery, scope and a cited read remain
 qualification gates. Other client schemas remain compatibility blockers until
 verified; do not translate these formats by guessing.
 
 See [agent integration](../../docs/agent-integration.md),
-[service setup](../../docs/service-project-setup.md), and the
-[implementation plan](../../docs/one-airk.md).
+[local HTTPS API](../../docs/local-https-api.md),
+[MCP tools](../../docs/mcp.md) and
+[service setup](../../docs/service-project-setup.md).

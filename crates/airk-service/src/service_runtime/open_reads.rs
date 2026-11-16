@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! U105/U106 open agent reads (`docs/split/open-agent-access.md` step 5,
-//! contracts §2.9): M3 `ToolSelection::Open`, the `list_indexes` tool, the
+//! contracts §2.9): M3 `ToolSelection::Open`, the `list_scopes` tool, the
 //! open connection catalog (M2 with `connection_id`) and
 //! `AgentConnectionDefaults`. `airkctl tools call --index/--set/--connection`
 //! reaches [`response`] over the pipe; the HTTPS open connection reaches the
@@ -15,19 +15,20 @@
 use super::{State, agent_plane, revoke_agent_connection, revoke_agent_dropped, tools_call};
 use airk_core::{
     agent_scope::{self, CatalogListing},
+    agent_workspace::{self, WorkspaceDefaults},
     catalog_management::{CatalogItem, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
     identity::Incarnation,
     index_catalog::MAX_SELECTION,
     service::{ControlResponse, ToolResponseMode, ToolSelection, ToolsCatalogDetail},
     service_http::open_refusal,
-    service_http_credentials::{AgentChoice, OpenConnectionState},
+    service_http_credentials::OpenConnectionState,
 };
 use airk_endpoint::http_endpoint::{OpenDefaultsChange, OpenDefaultsRefused};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::{
     path::Path,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// How long a listing waits for the registry, as the grant check waits.
@@ -44,6 +45,9 @@ pub(super) struct OpenCall {
     pub(super) connection_id: Option<Incarnation>,
     pub(super) index_names: Vec<String>,
     pub(super) set_names: Vec<String>,
+    /// U110: the caller's workspace folder, whose stored default applies
+    /// when no index or set is named (local caller only).
+    pub(super) workspace: Option<String>,
     pub(super) tool: String,
     pub(super) arguments: Map<String, Value>,
     pub(super) mode: ToolResponseMode,
@@ -205,6 +209,7 @@ async fn response_inner(
         index_ids: call.index_names.clone(),
         index_set_ids: call.set_names.clone(),
         connection_id: call.connection_id,
+        workspace: call.workspace.clone(),
     };
     if let Err(error) = selection.validate() {
         return tools_call::failed(&error);
@@ -217,31 +222,56 @@ async fn response_inner(
         None => None,
     };
     // Help reads no index: answered in process against the open catalog this
-    // caller sees (the local owner sees the choice-on catalog).
+    // caller sees (the local caller sees the U110 local catalog).
     if airk_frontend::tool_call::is_local_help(&call.tool) {
-        let choice = connection
+        let catalog = connection
             .as_ref()
-            .map_or(AgentChoice::On, |open| open.agent_choice);
-        let answer = airk_mcp::help::call_with_catalog(
-            Value::Object(call.arguments),
-            airk_mcp::open::catalog(choice),
-        );
+            .map_or_else(airk_mcp::open::local_catalog, |open| {
+                airk_mcp::open::catalog(open.agent_choice)
+            });
+        let answer = airk_mcp::help::call_with_catalog(Value::Object(call.arguments), catalog);
         return match serde_json::to_value(answer) {
-            Ok(result) => ControlResponse::ToolResult { result },
+            Ok(mut result) => {
+                complete_help_envelope(&mut result);
+                ControlResponse::ToolResult { result }
+            }
             Err(error) => tools_call::failed(&error.into()),
         };
     }
-    if call.tool == airk_mcp::open::LIST_INDEXES {
+    if call.tool == airk_mcp::open::LIST_SCOPES {
         return list(state, connection.as_ref(), &call).await;
     }
-    let requested =
-        match agent_scope::requested(&call.index_names, &call.set_names, connection.as_ref()) {
-            Ok(requested) => requested,
-            Err(code) => return refused(code),
-        };
     let listing = match listing(state, false).await {
         Ok(listing) => listing,
         Err(code) => return refused(code),
+    };
+    let named = !call.index_names.is_empty() || !call.set_names.is_empty();
+    // U110: the local caller names its scope, or names a workspace whose
+    // stored default applies; nothing else is ambient.
+    let stored_default;
+    let mut scope = json!({"source": if named { "named" } else { "connection_default" }});
+    let requested = if connection.is_none() && !named {
+        let Some(workspace) = call.workspace.as_deref() else {
+            return scope_required(None);
+        };
+        let defaults = match load_workspace_defaults(state, listing.namespace).await {
+            Ok(defaults) => defaults,
+            Err(error) => return tools_call::failed(&error),
+        };
+        let Some(entry) = defaults.matching(workspace) else {
+            return scope_required(Some(workspace));
+        };
+        stored_default = entry.clone();
+        scope = json!({"source": "workspace_default", "workspace_folder": stored_default.folder});
+        agent_scope::Requested::Defaults {
+            indexes: &stored_default.index_ids,
+            sets: &stored_default.index_set_ids,
+        }
+    } else {
+        match agent_scope::requested(&call.index_names, &call.set_names, connection.as_ref()) {
+            Ok(requested) => requested,
+            Err(code) => return refused(code),
+        }
     };
     let index_ids = match agent_scope::resolve(&listing, requested) {
         Ok(ids) => ids,
@@ -262,6 +292,7 @@ async fn response_inner(
     let Some(revision) = listing.revision else {
         return refused(agent_scope::SCOPE_UNAVAILABLE);
     };
+    let index_ids_text: Vec<String> = index_ids.iter().map(ToString::to_string).collect();
     let identity = match agent_plane::open_scope_identity(listing.namespace, revision, &index_ids) {
         Ok(identity) => identity,
         Err(error) => return tools_call::failed(&error),
@@ -331,13 +362,18 @@ async fn response_inner(
         Err(refusal) => Err(refusal),
     };
     match read {
-        Ok(result) => ControlResponse::ToolResult { result },
+        Ok(mut result) => {
+            // U110: every open read reports how its scope was chosen.
+            scope["index_ids"] = json!(index_ids_text);
+            with_scope(&mut result, scope);
+            ControlResponse::ToolResult { result }
+        }
         Err(tools_call::SelectionRead::Refused(code)) => refused(code),
         Err(tools_call::SelectionRead::Failed(error)) => tools_call::failed(&error),
     }
 }
 
-/// `list_indexes`: refused for a connection with choice off; its only
+/// `list_scopes`: refused for a connection with choice off; its only
 /// argument is `cursor` and it takes no scope.
 async fn list(
     state: &State,
@@ -351,7 +387,7 @@ async fn list(
         return ControlResponse::ToolResult {
             result: airk_mcp::unified::failure(
                 "INVALID_SCHEMA",
-                "list_indexes takes no index or index set selection.",
+                "list_scopes takes no index or index set selection.",
             ),
         };
     }
@@ -364,7 +400,7 @@ async fn list(
             return ControlResponse::ToolResult {
                 result: airk_mcp::unified::failure(
                     "INVALID_SCHEMA",
-                    "list_indexes accepts only cursor (a next_cursor string).",
+                    "list_scopes accepts only cursor (a next_cursor string).",
                 ),
             };
         }
@@ -373,11 +409,29 @@ async fn list(
         Ok(listing) => listing,
         Err(code) => return refused(code),
     };
-    match agent_scope::list_page(&listing, cursor.as_deref(), MAX_PAGE_BYTES) {
-        Ok(body) => ControlResponse::ToolResult {
-            result: airk_mcp::unified::success(body),
-        },
-        Err(code) => refused(code),
+    let mut body = match agent_scope::list_page(&listing, cursor.as_deref(), MAX_PAGE_BYTES) {
+        Ok(body) => body,
+        Err(code) => return refused(code),
+    };
+    // U110: the first page also lists the stored workspace defaults and,
+    // for a named workspace, the one that applies to it.
+    if cursor.is_none() {
+        let defaults = match load_workspace_defaults(state, listing.namespace).await {
+            Ok(defaults) => defaults,
+            Err(error) => return tools_call::failed(&error),
+        };
+        if let Some(object) = body.as_object_mut() {
+            if let Some(workspace) = call.workspace.as_deref() {
+                object.insert(
+                    "workspace_default".into(),
+                    json!(defaults.matching(workspace)),
+                );
+            }
+            object.insert("workspace_defaults".into(), json!(defaults.entries));
+        }
+    }
+    ControlResponse::ToolResult {
+        result: airk_mcp::unified::success(body),
     }
 }
 
@@ -439,6 +493,174 @@ pub(super) async fn defaults(
         Ok(Err(OpenDefaultsRefused::NotOpen)) => refused(open_refusal::AGENT_CONNECTION_NOT_OPEN),
         Ok(Err(OpenDefaultsRefused::Conflict)) => refused(open_refusal::AGENT_DEFAULTS_CONFLICT),
         Err(_) => refused("agent_defaults_unavailable"),
+    }
+}
+
+/// U110: add `read_scope` to a read result's structured copy and, when its text
+/// copy is a JSON object (the full document, or a terse rendering of it), to
+/// the text copy too, so every copy of the one result names its scope (not
+/// on a receipt-bound multi-index body). A
+/// distinct key: some results already carry their own top-level `scope`.
+fn with_scope(result: &mut Value, scope: Value) {
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return;
+    }
+    let text = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str::<Value>(text).ok());
+    // A delivered multi-index body is bound byte for byte by its delivery
+    // receipt (no transport may add a field); it names its open scope in
+    // `selection.scope_identity` instead.
+    let receipt_bound =
+        |body: Option<&Value>| body.is_some_and(|body| body.get("delivery_observation").is_some());
+    if receipt_bound(result.get("structuredContent")) || receipt_bound(text.as_ref()) {
+        return;
+    }
+    if let Some(structured) = result
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    {
+        structured.insert("read_scope".into(), scope.clone());
+    }
+    // The text copy is annotated whether or not a structured copy exists
+    // (native worker replies may carry only a JSON text body).
+    if let Some(Value::Object(mut text)) = text {
+        text.insert("read_scope".into(), scope);
+        result["content"][0]["text"] = Value::String(Value::Object(text).to_string());
+    }
+}
+
+/// U110: an open Help answer carries the same structured copy as every other
+/// public envelope: when only a JSON text body is present (help refusals),
+/// it is also exposed as `structuredContent`.
+fn complete_help_envelope(result: &mut Value) {
+    if result.get("structuredContent").is_some() {
+        return;
+    }
+    let body = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object);
+    if let (Some(body), Some(envelope)) = (body, result.as_object_mut()) {
+        envelope.insert("structuredContent".into(), body);
+    }
+}
+
+/// U110: the refusal of a read that named no scope it could use.
+fn scope_required(workspace: Option<&str>) -> ControlResponse {
+    let message = match workspace {
+        Some(workspace) => format!(
+            "No default scope is stored for workspace {workspace:?} or any folder containing it. Name the indexes or index sets to read (index_ids, index_set_ids), or apply a search scope in the AIRK Explorer for that folder. Call list_scopes to see indexes, index sets and workspace defaults."
+        ),
+        None => "Name the indexes or index sets to read (index_ids, index_set_ids), or pass workspace (your working folder) to use the default scope applied for it in the AIRK Explorer. Call list_scopes to see indexes, index sets and workspace defaults.".to_owned(),
+    };
+    ControlResponse::ToolResult {
+        result: airk_mcp::unified::failure(open_refusal::SCOPE_REQUIRED, &message),
+    }
+}
+
+/// The service's private HTTP directory, which holds the defaults file.
+fn workspace_root(state: &State) -> anyhow::Result<std::path::PathBuf> {
+    let root = state.control_root.join("http-1");
+    airk_ipc::endpoint::prepare_root(&root)?;
+    Ok(root)
+}
+
+/// Serializes read-modify-write of the defaults file within the service.
+static WORKSPACE_DEFAULTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn read_workspace_defaults(
+    root: &Path,
+    namespace: Incarnation,
+) -> anyhow::Result<WorkspaceDefaults> {
+    let Some(bytes) = airk_ipc::private_record::read_private(
+        root,
+        agent_workspace::FILE,
+        agent_workspace::MAX_FILE_BYTES,
+    )?
+    else {
+        return Ok(WorkspaceDefaults::empty(namespace));
+    };
+    let stored: WorkspaceDefaults = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid workspace defaults file"))?;
+    stored.validate()?;
+    // Defaults of another catalog namespace (a recreated catalog) never apply.
+    Ok(if stored.namespace == namespace {
+        stored
+    } else {
+        WorkspaceDefaults::empty(namespace)
+    })
+}
+
+/// The stored workspace defaults of `namespace`.
+async fn load_workspace_defaults(
+    state: &State,
+    namespace: Incarnation,
+) -> anyhow::Result<WorkspaceDefaults> {
+    let root = workspace_root(state)?;
+    let _serial = WORKSPACE_DEFAULTS.lock().await;
+    tokio::task::spawn_blocking(move || read_workspace_defaults(&root, namespace)).await?
+}
+
+/// `WorkspaceScopeDefault`: check the ids against the current catalog, then
+/// set or clear the default of each folder and answer every stored default.
+pub(super) async fn set_workspace_default(
+    state: &Arc<State>,
+    folders: Vec<String>,
+    index_ids: Vec<airk_core::index_catalog::IndexId>,
+    index_set_ids: Vec<airk_core::index_catalog::QueryProjectId>,
+) -> ControlResponse {
+    let listing = match listing(state, false).await {
+        Ok(listing) => listing,
+        Err(code) => return refused(code),
+    };
+    if (!index_ids.is_empty() || !index_set_ids.is_empty())
+        && let Err(code) = agent_scope::validate_defaults(&listing, &index_ids, &index_set_ids)
+    {
+        return refused(code);
+    }
+    let root = match workspace_root(state) {
+        Ok(root) => root,
+        Err(error) => return tools_call::failed(&error),
+    };
+    let _serial = WORKSPACE_DEFAULTS.lock().await;
+    let namespace = listing.namespace;
+    let written = tokio::task::spawn_blocking(move || -> anyhow::Result<WorkspaceDefaults> {
+        let mut defaults = read_workspace_defaults(&root, namespace)?;
+        let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+        defaults.apply(&folders, &index_ids, &index_set_ids, now)?;
+        airk_ipc::private_record::write_private(
+            &root,
+            agent_workspace::FILE,
+            &serde_json::to_vec(&defaults)?,
+            agent_workspace::MAX_FILE_BYTES,
+            true,
+        )?;
+        Ok(defaults)
+    })
+    .await;
+    match written {
+        Ok(Ok(defaults)) => ControlResponse::WorkspaceScopeDefaults {
+            entries: defaults.entries,
+        },
+        Ok(Err(error)) => tools_call::failed(&error),
+        Err(error) => tools_call::failed(&error.into()),
+    }
+}
+
+/// `WorkspaceScopeDefaults`: every stored default of the current catalog.
+pub(super) async fn workspace_defaults_response(state: &Arc<State>) -> ControlResponse {
+    let listing = match listing(state, false).await {
+        Ok(listing) => listing,
+        Err(code) => return refused(code),
+    };
+    match load_workspace_defaults(state, listing.namespace).await {
+        Ok(defaults) => ControlResponse::WorkspaceScopeDefaults {
+            entries: defaults.entries,
+        },
+        Err(error) => tools_call::failed(&error),
     }
 }
 

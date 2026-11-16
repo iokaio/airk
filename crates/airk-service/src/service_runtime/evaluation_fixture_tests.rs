@@ -1238,6 +1238,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                     index_ids: vec![binding.index_id.to_string()],
                     index_set_ids: vec![],
                     connection_id: None,
+                    workspace: None,
                 },
                 response_mode: airk_core::service::ToolResponseMode::Full,
                 usage_client: airk_core::usage::ClientFamily::Cli,

@@ -548,6 +548,7 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::AgentConnectionOwnership { .. }
         | ControlResponse::AgentConnectionVerified { .. }
         | ControlResponse::AgentConnectionDefaults { .. }
+        | ControlResponse::WorkspaceScopeDefaults { .. }
         | ControlResponse::HttpIssuerRotation { .. }
         | ControlResponse::LifecycleAbandoned { .. }
         | ControlResponse::StorageInventory { .. }

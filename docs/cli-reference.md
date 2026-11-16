@@ -79,6 +79,9 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl refs`](#airkctl-refs)
 - [`airkctl relationships`](#airkctl-relationships)
 - [`airkctl resume`](#airkctl-resume)
+- [`airkctl scope`](#airkctl-scope)
+- [`airkctl scope default`](#airkctl-scope-default)
+- [`airkctl scope defaults`](#airkctl-scope-defaults)
 - [`airkctl search`](#airkctl-search)
 - [`airkctl service`](#airkctl-service)
 - [`airkctl service abandon-lifecycle`](#airkctl-service-abandon-lifecycle)
@@ -145,7 +148,8 @@ Commands:
   init           Acknowledge an existing reviewed index mapping and prepare its reserved storage
   model-catalog  Print the offline model catalog and the CPU choice for this host
   session        Serve one editor window's framed session (protocol 2) on stdin/stdout
-  agents         Agent connections and configuration: endpoint, info, list, connect, repair, remove, verify, credential, launch and revoke
+  agents         Agent configuration: endpoint, list, connect, repair and remove; agents need no token (U110). info, verify, credential, launch, default and revoke are legacy connection commands
+  scope          Workspace default scopes agents read when a call names no index or index set (U110)
   admin          AIRK Admin in the browser: open it, or print a single-use sign-in URL
   explorer       Offline Explorer drafts, validation and templates; results go to a new --output-file
   settings       Read one project setting view; read-only
@@ -428,22 +432,22 @@ Options:
 ## airkctl agents
 
 ```text
-Agent connections and configuration: endpoint, info, list, connect, repair, remove, verify, credential, launch and revoke
+Agent configuration: endpoint, list, connect, repair and remove; agents need no token (U110). info, verify, credential, launch, default and revoke are legacy connection commands
 
 Usage: airkctl agents [OPTIONS] <COMMAND>
 
 Commands:
-  endpoint    Read the owner-authenticated local HTTPS endpoint without enrolling a client
-  info        Read an existing connection's verified references without issuing credentials
-  credential  Print an existing, unrevoked connection's bearer header for an agent's header helper
+  endpoint    Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)
+  info        Legacy (pre-U110): read an existing connection's verified references; agents no longer use connections
+  credential  Legacy (pre-U110): print an existing connection's bearer header. The MCP endpoint ignores it
   list        Classify AIRK's entries in agent configuration files; read-only
-  connect     Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection
-  repair      Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an unknown connection
+  connect     Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110)
+  repair      Rewrite AIRK entries that name another endpoint or still carry legacy credential fields (Authorization, headersHelper, http_headers_helper, bearer_token_env_var) to the URL-only form (U110)
   remove      Remove AIRK entries, optionally selecting exact list rows or a connection
-  verify      Probe the service's own MCP endpoint with a connection's stored credential
-  launch      Start Claude Code, Codex or VS Code on this connection in the foreground (U91)
-  default     Set an open connection's default scope and agent choice; the agent's next call uses it
-  revoke      Revoke one local HTTPS connection while preserving its original receipt
+  verify      Legacy (pre-U110): probe the service's own MCP endpoint with a connection's stored credential
+  launch      Legacy (pre-U110): start Claude Code, Codex or VS Code on a connection in the foreground (U91)
+  default     Legacy (pre-U110): set an open connection's default scope and agent choice. Agents now use workspace defaults: see `airkctl scope default`
+  revoke      Legacy (pre-U110): revoke one local HTTPS connection while preserving its original receipt
 
 Options:
       --output <OUTPUT>
@@ -493,9 +497,9 @@ Options:
 ## airkctl agents connect
 
 ```text
-Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection.
+Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110).
 
-An open connection reads its default scope (`agents default` or the Explorer sets it); with agent choice on, the agent may name indexes and index sets per call.
+Agents read with the scope a call names (index_ids, index_set_ids) or the workspace default of the folder it passes (`scope default`). Connections no longer exist, so --connection-id and --selection-file are refused.
 
 Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
@@ -516,7 +520,7 @@ Options:
           The AIRK service's control directory
 
       --connection-id <CONNECTION_ID>
-
+          Refused since U110: agent connections no longer exist
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -525,13 +529,13 @@ Options:
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --open
-          Enroll a new open connection with a new id: no reviewed grant, agent choice off and an empty default scope until `agents default` sets one
+          The default since U110; kept so earlier invocations still parse
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
 
       --selection-file <SELECTION_FILE>
-          Owner-private reviewed selection to enroll as --connection-id
+          Refused since U110: agent connections no longer exist
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
@@ -554,7 +558,7 @@ Options:
           [default: airk]
 
       --airkctl <AIRKCTL>
-          The airkctl executable written credential helpers name (default: this airkctl)
+          Unused since U110 (no credential helper is written)
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -574,9 +578,9 @@ Options:
 ## airkctl agents credential
 
 ```text
-Print an existing, unrevoked connection's bearer header for an agent's header helper.
+Legacy (pre-U110): print an existing connection's bearer header. The MCP endpoint ignores it.
 
-Offline: reads only the owner-private credential files; never starts the service, enrolls, rotates or logs the token. `--format header-json` prints {"Authorization":"Bearer <token>"}.
+Offline: reads only the owner-private credential files; never starts the service, enrolls, rotates or logs the token. `--format header-json` prints {"Authorization":"Bearer <token>"}. Since U110 agents need no token; `agents repair` removes credential helpers from agent configuration.
 
 Usage: airkctl agents credential [OPTIONS] --connection-id <CONNECTION_ID> --format <FORMAT>
 
@@ -637,7 +641,7 @@ Options:
 ## airkctl agents default
 
 ```text
-Set an open connection's default scope and agent choice; the agent's next call uses it.
+Legacy (pre-U110): set an open connection's default scope and agent choice. Agents now use workspace defaults: see `airkctl scope default`.
 
 --index and --set take an id, exact name or unique case-insensitive name and replace the whole default scope; --clear empties it. Without --expected-revision the current defaults revision is read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
 
@@ -714,7 +718,7 @@ Options:
 ## airkctl agents endpoint
 
 ```text
-Read the owner-authenticated local HTTPS endpoint without enrolling a client
+Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)
 
 Usage: airkctl agents endpoint [OPTIONS]
 
@@ -769,7 +773,7 @@ Options:
 ## airkctl agents info
 
 ```text
-Read an existing connection's verified references without issuing credentials
+Legacy (pre-U110): read an existing connection's verified references; agents no longer use connections
 
 Usage: airkctl agents info [OPTIONS] --connection-id <CONNECTION_ID>
 
@@ -827,9 +831,9 @@ Options:
 ## airkctl agents launch
 
 ```text
-Start Claude Code, Codex or VS Code on this connection in the foreground (U91).
+Legacy (pre-U110): start Claude Code, Codex or VS Code on a connection in the foreground (U91).
 
-The credential goes only into the client's environment and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Exits with the client's status.
+The credential goes only into the client's environment (the endpoint ignores it since U110) and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Exits with the client's status.
 
 Usage: airkctl agents launch [OPTIONS] --client <CLIENT> --connection-id <CONNECTION_ID> [-- <ARGS>...]
 
@@ -1030,7 +1034,7 @@ Options:
 ## airkctl agents repair
 
 ```text
-Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an unknown connection
+Rewrite AIRK entries that name another endpoint or still carry legacy credential fields (Authorization, headersHelper, http_headers_helper, bearer_token_env_var) to the URL-only form (U110)
 
 Usage: airkctl agents repair [OPTIONS]
 
@@ -1045,7 +1049,7 @@ Options:
           The service's control directory (default: --service-runtime-dir, else the installation's)
 
       --connection-id <CONNECTION_ID>
-
+          Ignored since U110: agent connections no longer exist
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -1063,7 +1067,7 @@ Options:
           Leave this user's agent configuration files out
 
       --airkctl <AIRKCTL>
-          The airkctl executable written credential helpers name (default: this airkctl)
+          Unused since U110 (no credential helper is written)
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
@@ -1097,7 +1101,7 @@ Options:
 ## airkctl agents revoke
 
 ```text
-Revoke one local HTTPS connection while preserving its original receipt
+Legacy (pre-U110): revoke one local HTTPS connection while preserving its original receipt
 
 Usage: airkctl agents revoke [OPTIONS] --connection-id <CONNECTION_ID>
 
@@ -1155,7 +1159,7 @@ Options:
 ## airkctl agents verify
 
 ```text
-Probe the service's own MCP endpoint with a connection's stored credential
+Legacy (pre-U110): probe the service's own MCP endpoint with a connection's stored credential
 
 Usage: airkctl agents verify [OPTIONS] --connection-id <CONNECTION_ID>
 
@@ -3522,7 +3526,7 @@ Commands:
   set-delete   Delete an index set (its indexes stay); needs --confirm <set name>
   rename       Rename an index
   retire       Retire an index (stop tracking it); needs --confirm <index name>
-  describe     Set or clear the description of an index or an index set; agents read it in list_indexes (without one, a description is generated from the name and paths)
+  describe     Set or clear the description of an index or an index set; agents read it in list_scopes (without one, a description is generated from the name and paths)
 
 Options:
       --output <OUTPUT>
@@ -3636,7 +3640,7 @@ Options:
 ## airkctl library describe
 
 ```text
-Set or clear the description of an index or an index set; agents read it in list_indexes (without one, a description is generated from the name and paths)
+Set or clear the description of an index or an index set; agents read it in list_scopes (without one, a description is generated from the name and paths)
 
 Usage: airkctl library describe [OPTIONS]
 
@@ -5025,6 +5029,183 @@ Options:
 
           [default: text]
           [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl scope
+
+```text
+Workspace default scopes agents read when a call names no index or index set (U110)
+
+Usage: airkctl scope [OPTIONS] <COMMAND>
+
+Commands:
+  default   Set the default scope of each --workspace folder; with no --index and no --set, clear it
+  defaults  Print every stored workspace default: {"schema":1,"entries":[...]}
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl scope default
+
+```text
+Set the default scope of each --workspace folder; with no --index and no --set, clear it.
+
+An agent read that names no index or index set and passes a workspace path (or whose client offers MCP roots) reads the default of the most specific folder containing it. Prints {"schema":1,"entries":[...]} with every stored default.
+
+Usage: airkctl scope default [OPTIONS] --workspace <WORKSPACES>
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --workspace <WORKSPACES>
+          An absolute workspace folder (repeatable)
+
+      --index <INDEXES>
+          An index (`idx_...`, exact name or unique case-insensitive name) (repeatable)
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --set <SETS>
+          An index set (`prj_...`, exact name or unique case-insensitive name) (repeatable)
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## airkctl scope defaults
+
+```text
+Print every stored workspace default: {"schema":1,"entries":[...]}
+
+Usage: airkctl scope defaults [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -7327,7 +7508,7 @@ Options:
 ```text
 Invoke an MCP tool and print its unchanged result envelope as JSON.
 
---index and --set read whole indexes and index sets (id, exact name or unique case-insensitive name) through the open read path an agent uses; --connection applies that open connection's default scope and agent choice, exactly as its MCP calls do. list_indexes always takes that path.
+--index and --set read whole indexes and index sets (id, exact name or unique case-insensitive name) through the open read path an agent uses; --workspace reads the default scope stored for that folder (U110), and with neither the read is refused scope_required, exactly as an agent's MCP call. list_scopes always takes that path and lists indexes, index sets and workspace defaults. --connection (legacy) applies a pre-U110 open connection's stored default and agent choice.
 
 Usage: airkctl tools call [OPTIONS] <TOOL>
 
@@ -7367,10 +7548,13 @@ Options:
           Frozen reviewed multi-Project session JSON; indexes are executed once each
 
       --connection <CONNECTION>
-          The open agent connection whose default scope and agent choice apply
+          Legacy (pre-U110): the open agent connection whose default scope and agent choice apply
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
+
+      --workspace <WORKSPACE>
+          An absolute workspace folder: with no --index/--set, its stored default scope applies (U110), as for an agent's MCP call
 
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
@@ -7417,7 +7601,7 @@ Options:
           [possible values: json, text]
 
       --connection <CONNECTION>
-          An open agent connection whose catalog to read
+          Legacy (pre-U110): an open agent connection whose catalog to read
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -7462,7 +7646,7 @@ Options:
 ```text
 List the connection's unified tools; --json includes complete schemas and annotations.
 
-With --connection, the catalog an open agent connection sees: its scope selectors and list_indexes appear only when its agent choice is on.
+Agents on the HTTPS endpoint see read tools that take index_ids, index_set_ids or workspace, plus list_scopes (U110). --connection (legacy) lists a pre-U110 open connection's catalog.
 
 Usage: airkctl tools list [OPTIONS]
 
@@ -7477,7 +7661,7 @@ Options:
           [possible values: json, text]
 
       --connection <CONNECTION>
-          An open agent connection whose catalog to list
+          Legacy (pre-U110): an open agent connection whose catalog to list
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory

@@ -594,6 +594,15 @@ pub enum ControlMethod {
         )]
         agent_choice: Option<crate::agent_connection::AgentChoice>,
     },
+    /// U110: set (or, with no indexes and no sets, clear) the default scope
+    /// of each workspace folder. Answers [`ControlResponse::WorkspaceScopeDefaults`].
+    WorkspaceScopeDefault {
+        folders: Vec<String>,
+        index_ids: Vec<crate::index_catalog::IndexId>,
+        index_set_ids: Vec<crate::index_catalog::QueryProjectId>,
+    },
+    /// U110: every stored workspace default.
+    WorkspaceScopeDefaults {},
     /// M18 (split step 3e.5, `service issuer-rotation status`): the saved
     /// issuer rotation and current endpoint, as `airk runtime
     /// http-issuer-rotation --action status` printed them, read at the
@@ -856,6 +865,8 @@ impl ControlMethod {
             | Self::AgentConnectionOwnership { .. }
             | Self::AgentConnectionVerify { .. }
             | Self::AgentConnectionDefaults { .. }
+            | Self::WorkspaceScopeDefault { .. }
+            | Self::WorkspaceScopeDefaults {}
             | Self::HttpIssuerRotation { .. }
             | Self::AdminScopeGrant { .. } => {
                 return Some("console_method_not_reviewed");
@@ -1150,6 +1161,14 @@ pub enum ToolSelection {
             deserialize_with = "combined_present"
         )]
         connection_id: Option<Incarnation>,
+        /// U110: with no index or set named, the workspace default of the
+        /// most specific stored folder containing this absolute path.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        workspace: Option<String>,
     },
 }
 
@@ -1163,8 +1182,12 @@ impl ToolSelection {
             Self::Open {
                 index_ids,
                 index_set_ids,
+                workspace,
                 ..
             } => {
+                if let Some(workspace) = workspace {
+                    crate::agent_workspace::validate_path(workspace)?;
+                }
                 for names in [index_ids, index_set_ids] {
                     crate::index_catalog::unique_bounded(
                         names,
@@ -1750,6 +1773,10 @@ pub enum ControlResponse {
     AgentConnectionDefaults {
         connection_id: Incarnation,
         open: crate::agent_connection::OpenConnectionState,
+    },
+    /// U110: every stored workspace default (after a change, when one was made).
+    WorkspaceScopeDefaults {
+        entries: Vec<crate::agent_workspace::WorkspaceDefault>,
     },
     /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
     /// characters, as the pre-split CLI's `operation_failed` line carried it.

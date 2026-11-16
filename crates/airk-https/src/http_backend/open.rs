@@ -26,6 +26,9 @@ pub struct OpenRead {
     pub connection_id: Incarnation,
     pub index_names: Vec<String>,
     pub set_names: Vec<String>,
+    /// U110: the caller's workspace folder (explicit, or filled from the
+    /// client's MCP roots), removed from the arguments.
+    pub workspace: Option<String>,
     pub tool: String,
     pub arguments: Map<String, Value>,
     pub client: ClientFamily,
@@ -54,6 +57,12 @@ pub fn open_factory(connection_id: Incarnation, hooks: OpenHooks) -> Authenticat
             client: Mutex::new(ClientFamily::Unknown),
         }) as Arc<dyn RemoteTools>)
     })
+}
+
+impl OpenBackend {
+    fn local(&self) -> bool {
+        self.connection_id == airk_core::service_http::LOCAL_AGENT_CONNECTION
+    }
 }
 
 struct OpenBackend {
@@ -98,15 +107,24 @@ fn envelope(response: ControlResponse) -> Value {
 
 impl RemoteTools for OpenBackend {
     fn catalog(&self) -> Vec<Tool> {
+        if self.local() {
+            return airk_mcp::open::local_catalog();
+        }
         airk_mcp::open::catalog((self.hooks.choice)(self.connection_id).unwrap_or_default())
+    }
+    /// U110: the local agent session's reads and list take `workspace`,
+    /// which the bridge may fill from the client's MCP roots.
+    fn fills_workspace(&self, tool: &str) -> bool {
+        self.local() && airk_mcp::open::takes_workspace(tool)
     }
     /// Help is answered by the service against this connection's catalog.
     fn local_help(&self) -> bool {
         false
     }
-    /// The list tool takes only its cursor.
+    /// The list tool takes only its cursor and workspace.
     fn uses_response_mode(&self, tool: &str) -> bool {
-        tool != airk_mcp::open::LIST_INDEXES
+        // query_scope's schema takes no response_mode (as on every backend).
+        !matches!(tool, "query_scope" | "airk_query_scope") && tool != airk_mcp::open::LIST_SCOPES
     }
     fn client(&self, client: ClientFamily) {
         *self
@@ -125,6 +143,20 @@ impl RemoteTools for OpenBackend {
                     "index_ids and index_set_ids are arrays of ids or exact names.",
                 ));
             };
+            let workspace = match arguments.remove("workspace") {
+                None => None,
+                Some(Value::String(path))
+                    if airk_core::agent_workspace::validate_path(&path).is_ok() =>
+                {
+                    Some(path)
+                }
+                Some(_) => {
+                    return Ok(airk_mcp::unified::failure(
+                        "INVALID_SCHEMA",
+                        "workspace is an absolute folder path.",
+                    ));
+                }
+            };
             let client = *self
                 .client
                 .lock()
@@ -133,6 +165,7 @@ impl RemoteTools for OpenBackend {
                 connection_id: self.connection_id,
                 index_names,
                 set_names,
+                workspace,
                 tool,
                 arguments,
                 client,
@@ -195,10 +228,11 @@ mod tests {
         );
         // A revoked or unknown connection offers the choice-off catalog.
         *choice.lock().unwrap() = None;
-        assert!(!names(&backend.catalog()).contains(&"list_indexes".to_owned()));
+        assert!(!names(&backend.catalog()).contains(&"list_scopes".to_owned()));
         assert!(!backend.local_help());
-        assert!(!backend.uses_response_mode("list_indexes"));
+        assert!(!backend.uses_response_mode("list_scopes"));
         assert!(backend.uses_response_mode("search"));
+        assert!(!backend.uses_response_mode("query_scope"));
         Ok(())
     }
 

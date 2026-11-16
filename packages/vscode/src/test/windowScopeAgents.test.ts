@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// U105: the window search scope as the default scope of open agent
-// connections, the follow hook after user and automatic grants, and
+// U105, U110: the window search scope as the workspace default agents use,
+// the follow hook after user and automatic grants, and
 // descriptions (`library describe` argv, bounds, catalog descriptions). Every
 // session exchange is a recorded fake; expected frames and argv are written
 // out here, never derived from the code under test.
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { describeArgv, libraryCommands, WindowScope, type AgentScopeChange, type ScopeSession } from '../airkctl/features/windowScope';
-import { OPEN_AGENTS_KEY, WindowAgents } from '../airkctl/features/windowAgents';
+import { WindowAgents } from '../airkctl/features/windowAgents';
 
 const namespace = 'ab'.repeat(16);
 const idx = (n: number) => 'idx_' + n.toString(16).padStart(2, '0').repeat(16);
@@ -81,19 +81,18 @@ test('U105 the agent default scope is the checked union, the narrowed indexes of
     ]);
 });
 
-test('U105 applying a scope runs agents default for the followed open connections of this workspace only; a refusal does not fail the apply', async () => {
-    const s = session(), store = memento({ [OPEN_AGENTS_KEY]: [
-        { connectionId: '1a'.repeat(16), client: 'claude', follow: true }, { connectionId: '2b'.repeat(16), client: 'codex', follow: false }] });
+test('U110 applying a scope stores it as the workspace default of the window folders; a refusal does not fail the apply', async () => {
+    const s = session(), store = memento();
     const scope = new WindowScope(s.fake, ready, store, base, () => {}, s.library);
     const calls: string[][] = [];
-    const agents = new WindowAgents({ session: { json: async argv => { calls.push([...argv]); throw Object.assign(new Error('Unknown connection.'), { code: 'agent_connection_unknown' }); } } },
-        () => '/work/app', () => {}, () => {}, { store, scope });
+    const agents = new WindowAgents({ session: { json: async argv => { calls.push([...argv]); throw Object.assign(new Error('Unwritable.'), { code: 'workspace_defaults_unwritable' }); } } },
+        () => ['/work/app', '/work/lib'], () => {}, () => {}, { scope });
     scope.onDidChangeAgentScope(change => { void agents.followScope(change.scope, change.user); });
     await scope.readSearchScope();
     const outcome = await scope.applySearchScope({ project_ids: [prj(1)], index_ids: [] });
-    assert.equal(outcome.status, 'scope', 'the apply succeeds although the follow was refused');
+    assert.equal(outcome.status, 'scope', 'the apply succeeds although storing the default was refused');
     await agents.settled();
-    assert.deepEqual(calls, [['agents', 'default', '--connection-id', '1a'.repeat(16), '--set', prj(1)]]);
+    assert.deepEqual(calls, [['scope', 'default', '--workspace', '/work/app', '--workspace', '/work/lib', '--set', prj(1)]]);
 });
 
 test('U105 descriptions: library describe argv, bounds, and the catalog descriptions read again afterwards', async () => {

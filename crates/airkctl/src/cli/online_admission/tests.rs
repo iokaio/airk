@@ -133,7 +133,7 @@ fn online_command_families_enter_admission_while_observation_roster_does_not() {
         vec!["tools", "list"],
         vec!["tools", "help", "search"],
         vec!["tools", "call", "airk_help", "--args", "{}"],
-        vec!["tools", "call", "list_indexes", "--args", "{}"],
+        vec!["tools", "call", "list_scopes", "--args", "{}"],
         vec![
             "tools",
             "call",

@@ -366,98 +366,79 @@ test('U104 the automatic scope enables Apply unchanged; Save as index set sends 
     assert.deepEqual(plain(went),{workspace:'manage',tab:'agents'});
 });
 
-test('U104 Management › Agents lists this folder\'s entries, disconnects one and connects the chosen agent', async () => {
+test('U110 Management › Agents puts the task first: pick an agent, Connect, see its status; then the endpoint line with Copy and the scope note', async () => {
     const searchScope={available:true,active:true,outOfDate:false,remembered:true,label:'Application Project'};
     const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{},searchScope};
     const props:any={state,route:{workspace:'manage',tab:'agents'},go(){},publications:[]};
     const f=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
-    const id='0a'.repeat(16),report={entries:[],checked:[],future_native_field:'kept'};
-    const listed={folder:'/work/app',report,entries:[{client:'claude',agent:'claude',file:'/work/app/.mcp.json',scope:'project',serverKey:'airk',connectionId:id,status:'ok'}]};
+    const url='https://127.0.0.1:61021/mcp',report={entries:[],checked:[],future_native_field:'kept'};
+    const scopeItems=[{kind:'set',id:projectId,name:'Application Project',description:'Services <b>and</b> UI'},{kind:'index',id:secondId}];
+    const listed={folder:'/work/app',folders:['/work/app','/work/lib'],report,endpoint:{url,state:'ready'},endpointReport:{url,state:'ready'},
+        defaultsReport:{schema:1,entries:[]},windowScope:{items:scopeItems},
+        workspaceDefaults:[{folder:'/work/app',stored:{folder:'/work/app',index_ids:[secondId],index_set_ids:[projectId],applied_unix_ms:1,items:scopeItems}},{folder:'/work/lib',stored:null}],
+        entries:[{client:'claude',agent:'claude',file:'/work/app/.mcp.json',scope:'project',serverKey:'airk',url,status:'ok'}]};
     f.hold('agents.read');f.render();await f.flush();
     assert.deepEqual(f.sent.map(fields),[{type:'agents.read'}]);
     f.release('agents.read',listed);await f.flush();
     let tree=f.render();
-    assert.match(text(tree),/Search scope: Application Project/);
-    assert.match(text(tree),/Claude Code · \/work\/app\/\.mcp\.json · airk · connection 0a0a/);
-    assert.deepEqual(plain(component(tree,'CompleteNativeResponse').at(-1).props.value),report,'the complete native report is shown');
-    assert.ok(component(tree,'AdminButton').some(node=>node.props.page==='agents'),'Open AIRK Admin stays for advanced management');
+    const all=text(tree);
+    assert.ok(all.indexOf('Connect a coding agent')<all.indexOf('Ready: agents can connect'),'the connect task comes before the endpoint');
+    assert.match(all,/Claude Code in \/work\/app: Connected \(\/work\/app\/\.mcp\.json\)/);
+    assert.match(all,new RegExp(`Ready: agents can connect · ${url.replace(/[.]/g,'\\.')}`));
+    assert.match(all,/Agents choose indexes or index sets on each call\. A call that names none uses the workspace default of its folder, which is this window's applied search scope\./);
+    assert.match(all,/Workspace default for \/work\/app: /);
+    assert.match(all,/Workspace default for \/work\/lib: none \(agents must name indexes on each call\)/);
+    assert.doesNotMatch(all,/connection|credential|token|revoke|Let the agent choose/i,'no connection, credential, revoke or choice UI');
+    assert.equal(nodes(tree).filter(node=>node.type==='input'&&node.props.role==='switch').length,0);
+    // Scope names render escaped; each description is the tooltip.
+    const names=component(tree,'ScopeNames');assert.equal(names.length,1);
+    const rendered=names[0].type(names[0].props),spans=nodes(rendered).filter((node:any)=>node.type==='span'&&node.props.title);
+    assert.deepEqual(plain(spans.map((node:any)=>[node.props.title,text(node)])),[['Services <b>and</b> UI','Application Project'],[secondId,secondId]]);
+    // The native reports and AIRK Admin are in the collapsed Details.
+    const details=nodes(tree).find(node=>node.type==='details');
+    assert.ok(details&&!details.props.open,'Details is collapsed');
+    assert.deepEqual(plain(component(details,'CompleteNativeResponse').map(node=>node.props.value)),[report,{url,state:'ready'},{schema:1,entries:[]}],'the complete native reports are kept');
+    assert.ok(component(details,'AdminButton').some(node=>node.props.page==='agents'),'AIRK Admin › Agents stays reachable for manual setup and trust');
+    // Copy puts the URL on the clipboard.
+    button(tree,/^Copy$/).props.onClick();await f.flush();
+    assert.deepEqual(f.sent.map(fields).at(-1),{type:'clipboard.write',text:url});
+    // Connect the chosen agent.
     assert.deepEqual(plain(nodes(tree).filter(node=>node.type==='option').map(node=>node.props.value)),['claude','codex','vscode']);
     nodes(tree).find(node=>node.type==='select').props.onChange({currentTarget:{value:'codex'}});
-    f.hold('agents.connect');button(f.render(),/^Connect$/).props.onClick();await f.flush();
-    const second='1b'.repeat(16);
-    f.release('agents.connect',{status:'connected',client:'codex',connectionId:second,file:'/work/app/.codex/config.toml',changed:true,scope:[{kind:'set',id:projectId,name:'Application Project'}],follows:true,open:{agent_choice:'off'}});await f.flush();
-    f.release('agents.read',listed);await f.flush();
     tree=f.render();
-    assert.match(text(tree),/Codex connected in \/work\/app\/\.codex\/config\.toml \(connection 1b1b/);
-    assert.match(text(tree),/It follows this window's search scope\. Agent choice is off\./);
-    assert.match(text(tree),/If Codex is already running, restart it to load the new entry\./,'a new entry may need a running agent to load it');
-    assert.doesNotMatch(text(tree),/Coming in the next step/);
-    f.hold('agents.disconnect');button(f.render(),/^Disconnect$/).props.onClick();await f.flush();
-    f.release('agents.disconnect',{schema:1,actions:[]});await f.flush();
-    f.release('agents.read',{...listed,entries:[]});await f.flush();
-    assert.deepEqual(f.sent.map(fields).slice(1),[{type:'agents.connect',client:'codex'},{type:'agents.read'},{type:'agents.disconnect',connectionId:id},{type:'agents.read'}]);
-    assert.match(text(f.render()),/No AIRK agent entries in this folder/);
-    // Without an applied scope, Connect is disabled and the page links to Search scope.
-    let went:unknown;
-    const none:any={...state,searchScope:{...searchScope,active:false}};
-    const g=webview('agents.tsx',none,exports=>exports.AgentsScreen({...props,state:none,go(route:unknown){went=route;}}));
-    g.hold('agents.read');tree=g.render();await g.flush();tree=g.render();
-    assert.equal(button(tree,/^Connect$/).props.disabled,true);
-    assert.match(text(tree),/No search scope is applied in this window/);
-    button(tree,/^Choose a search scope$/).props.onClick();assert.deepEqual(plain(went),{workspace:'indexing',tab:'window'});
+    assert.match(text(tree),/Codex in \/work\/app: not connected/);
+    f.hold('agents.connect');button(f.render(),/^Connect$/).props.onClick();await f.flush();
+    f.release('agents.connect',{status:'connected',client:'codex',connected:{schema:1},file:'/work/app/.codex/config.toml',url,changed:true,scope:scopeItems});await f.flush();
+    f.release('agents.read',{...listed,entries:[...listed.entries,{client:'codex',agent:'codex',file:'/work/app/.codex/config.toml',scope:'project',serverKey:'airk',url,status:'ok'}]});await f.flush();
+    tree=f.render();
+    assert.match(text(tree),/Codex connected in \/work\/app\/\.codex\/config\.toml\./);
+    assert.match(text(tree),/If Codex is already running, restart it to load the new entry\./);
+    assert.match(text(tree),/Codex in \/work\/app: Connected \(\/work\/app\/\.codex\/config\.toml\)/);
+    // Remove this folder's entry for the agent.
+    f.hold('agents.disconnect');button(f.render(),/^Remove$/).props.onClick();await f.flush();
+    f.release('agents.disconnect',{removed:{schema:1,actions:[]}});await f.flush();
+    f.release('agents.read',listed);await f.flush();
+    assert.deepEqual(f.sent.map(fields).filter(message=>message.type!=='clipboard.write').slice(1),[{type:'agents.connect',client:'codex'},{type:'agents.read'},{type:'agents.disconnect',client:'codex'},{type:'agents.read'}]);
+    assert.match(text(f.render()),/Codex in \/work\/app: not connected/);
     const screens=webview('workspaces.tsx',{},exports=>exports).exports.SCREENS;
     assert.equal(screens['manage/agents'].name,'AgentsScreen');
 });
 
-test('U105 an open connection shows its default scope, Follow and the choice switch (off by default) with what each setting means', async () => {
-    const searchScope={available:true,active:true,outOfDate:false,remembered:true,label:'Application Project'};
-    const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{},searchScope};
-    const props:any={state,route:{workspace:'manage',tab:'agents'},go(){},publications:[]};
-    const f=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
-    const id='0a'.repeat(16),grant='0c'.repeat(16),scopeItems=[{kind:'set',id:projectId,name:'Application Project',description:'Services <b>and</b> UI'},{kind:'index',id:secondId}];
-    const openView={defaults_revision:2,default_index_ids:[secondId],default_index_set_ids:[projectId],agent_choice:'off',scope:scopeItems};
-    const listed=(choice:'off'|'on',follows=true,extra:any={})=>({folder:'/work/app',report:{entries:[]},windowScope:{items:scopeItems},entries:[
-        {client:'claude',agent:'claude',file:'/work/app/.mcp.json',scope:'project',serverKey:'airk',connectionId:id,status:'ok'},
-        {client:'vscode',agent:'copilot',file:'/work/app/.vscode/mcp.json',scope:'project',serverKey:'airk',connectionId:id,status:'ok'},
-        {client:'codex',agent:'codex',file:'/work/app/.codex/config.toml',scope:'project',serverKey:'airk',connectionId:grant,status:'ok'}],
-        connections:[{connectionId:id,remembered:true,follows,open:{...openView,agent_choice:choice},info:{open:openView},...extra},{connectionId:grant,remembered:false,follows:false,info:{schema:1}}]});
-    f.hold('agents.read');f.render();await f.flush();
-    f.release('agents.read',listed('off'));await f.flush();
-    let tree=f.render();
-    const switches=()=>nodes(f.render()).filter(node=>node.type==='input'&&node.props.role==='switch');
-    assert.equal(switches().length,1,'settings show once per open connection; a grant-bound connection has none');
-    assert.equal(switches()[0].props.checked,false,'agent choice is off');
-    assert.match(text(tree),/Let the agent choose indexes/);
-    assert.match(text(tree),/Off \(default\): the agent searches only its default scope, which is this window's search scope while it follows the window\. It can narrow a request to some of those indexes, but never searches outside its assigned set\./);
-    assert.match(text(tree),/This connection reads the scope it was connected with; manage it in AIRK Admin › Agents\./);
-    const follow=()=>nodes(f.render()).find(node=>node.type==='input'&&node.props.type==='checkbox'&&node.props.role!=='switch');
-    assert.equal(follow().props.checked,true);
-    // Scope names render escaped; each description is the tooltip.
-    const names=component(tree,'ScopeNames');assert.ok(names.length>=2);
-    const rendered=names[0].type(names[0].props),spans=nodes(rendered).filter((node:any)=>node.type==='span'&&node.props.title);
-    assert.deepEqual(plain(spans.map((node:any)=>[node.props.title,text(node)])),[['Services <b>and</b> UI','Application Project'],[secondId,secondId]]);
-    // Choice on.
-    f.hold('agents.choice');switches()[0].props.onChange({currentTarget:{checked:true}});await f.flush();
-    f.release('agents.choice',{connectionId:id,choice:'on',result:{}});await f.flush();
-    f.release('agents.read',listed('on'));await f.flush();
-    tree=f.render();
-    assert.equal(switches()[0].props.checked,true);
-    assert.match(text(tree),/On: the agent can list every index and index set on this computer, with their descriptions and folders, and search any of them\./);
-    assert.match(text(tree),/Agent choice turned on\. A running Claude Code session may need \/mcp to reload its tool list\./);
-    // Follow off.
-    f.hold('agents.follow');follow().props.onChange({currentTarget:{checked:false}});await f.flush();
-    f.release('agents.follow',{connectionId:id,follow:false});await f.flush();
-    f.release('agents.read',listed('on',false,{followError:{code:'agent_defaults_revision_changed',message:'The defaults changed.'}}));await f.flush();
-    tree=f.render();
-    assert.equal(follow().props.checked,false);
-    assert.match(text(tree),/This connection keeps its current default scope\./);
-    assert.match(text(tree),/This window's search scope was not passed on \(agent_defaults_revision_changed\): The defaults changed\./);
-    assert.deepEqual(f.sent.map(fields),[{type:'agents.read'},{type:'agents.choice',connectionId:id,choice:'on'},{type:'agents.read'},{type:'agents.follow',connectionId:id,follow:false},{type:'agents.read'}]);
-    // Following on: no reconnect is needed for a default-scope change.
-    f.hold('agents.follow');follow().props.onChange({currentTarget:{checked:true}});await f.flush();
-    f.release('agents.follow',{connectionId:id,follow:true,result:{}});await f.flush();
-    f.release('agents.read',listed('on'));await f.flush();
-    assert.match(text(f.render()),/follows this window's search scope\. Changing the default scope takes effect on the agent's next call; no reconnect is needed\./);
+test('U110 Connect works without an applied scope; the page links to Search scope and reports endpoint and default failures', async () => {
+    let went:unknown;
+    const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{},searchScope:{available:true,active:false}};
+    const props:any={state,route:{workspace:'manage',tab:'agents'},go(route:unknown){went=route;},publications:[]};
+    const g=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
+    g.hold('agents.read');g.render();await g.flush();
+    g.release('agents.read',{folder:'/work/app',folders:['/work/app'],report:{entries:[]},entries:[],endpoint:null,endpointError:{code:'service_missing',message:'The service is stopping.'},
+        workspaceDefaults:[{folder:'/work/app',stored:null}],defaultsError:{code:'agent_command_failed',message:'Malformed.'},followError:{code:'workspace_defaults_unwritable',message:'Read-only.'},windowScope:null});await g.flush();
+    const tree=g.render();
+    assert.equal(button(tree,/^Connect$/).props.disabled,false,'agents can name their scope per call');
+    assert.match(text(tree),/The MCP endpoint could not be read \(service_missing\): The service is stopping\./);
+    assert.match(text(tree),/The workspace defaults could not be read \(agent_command_failed\): Malformed\./);
+    assert.match(text(tree),/This window's search scope was not stored as the workspace default \(workspace_defaults_unwritable\): Read-only\./);
+    assert.match(text(tree),/No search scope is applied in this window/);
+    button(tree,/^Choose a search scope$/).props.onClick();assert.deepEqual(plain(went),{workspace:'indexing',tab:'window'});
 });
 
 test('U105 Search scope shows each index and set description as escaped text and edits it within 1 KiB', async () => {

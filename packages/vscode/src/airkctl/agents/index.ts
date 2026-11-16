@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Agent connections through `airkctl agents …` (plan §6.4, §8.1, §8.4; U12,
-//! U28, U92) and the no-service removal sweep. The extension writes no agent
+//! Agent entries through `airkctl agents …` (plan §6.4, §8.1, §8.4; U12,
+//! U28, U92), workspace defaults through `airkctl scope …` (U110) and the
+//! no-service removal sweep. The extension writes no agent
 //! entry itself: with a service every edit is an `airkctl agents` command;
 //! without one it only removes recognized entries (./recognizer.ts) and
 //! records what it removed so Explorer can list it.
@@ -45,10 +46,6 @@ export function listAgents(airkctl: AgentsRunner, projects: readonly string[], i
 /** `agents repair`: rewrites stale entries; `replacement` replaces unknown connections. */
 export function repairAgents(airkctl: AgentsRunner, projects: readonly string[], replacement?: string): Promise<unknown> {
     return airkctl.session.json(['agents', 'repair', ...projectArgs(projects), '--no-user', ...(replacement ? ['--connection-id', replacement] : [])]);
-}
-/** `agents remove`: deletes AIRK's entries (only those naming `connectionId`, when given). */
-export function removeAgents(airkctl: AgentsRunner, projects: readonly string[], connectionId?: string): Promise<unknown> {
-    return airkctl.session.json(['agents', 'remove', ...projectArgs(projects), '--no-user', ...(connectionId ? ['--connection-id', connectionId] : [])]);
 }
 
 export const ENTRY_REMOVE_CAPABILITY = 'agents-entry-remove/1';
@@ -120,73 +117,73 @@ export function agentActionErrors(result: unknown): string[] {
     });
     return [...errors, ...object.blockers.map(blocker => `Agent configuration blocker: ${JSON.stringify(blocker)}`)];
 }
-/** `agents connect` reusing an existing connection; enrolling a new one is an admin action (U6). */
-export function connectAgent(airkctl: AgentsRunner, client: Client, connectionId: string, project: string): Promise<unknown> {
-    return airkctl.session.json(['agents', 'connect', '--client', client, '--connection-id', connectionId, '--project', project]);
+/** (U110) `agents connect`: write the client's entry for `project` with only the endpoint URL and the
+ * `X-AIRK-Response-Mode` header (no credential, no connection). */
+export function connectArgv(client: Client, project: string): string[] {
+    return ['agents', 'connect', '--client', client, '--project', project];
 }
-/** (U105) Whether an open connection's agent may list and pick indexes itself; `off` by default. */
-export type AgentChoice = 'off' | 'on';
-/** (U105) An open connection's default scope: index sets and indexes, read as a union. */
+export function connectAgent(airkctl: AgentsRunner, client: Client, project: string): Promise<unknown> {
+    return airkctl.session.json(connectArgv(client, project));
+}
+/** `agents endpoint`: the service's checked loopback MCP endpoint descriptor. */
+export function agentEndpoint(airkctl: AgentsRunner): Promise<unknown> {
+    return airkctl.session.json(['agents', 'endpoint']);
+}
+/** The window search scope as index ids and index set (`prj_`) ids, read as a union. */
 export interface AgentDefaultScope { readonly index_ids: readonly string[]; readonly project_ids: readonly string[] }
-/** (U105) The service-stored defaults of an open connection, as `agents connect --open`, `agents default` and `agents info` report them. */
-export interface OpenConnectionState { defaults_revision: number; default_index_ids: string[]; default_index_set_ids: string[]; agent_choice: AgentChoice }
-const INDEX_ID = /^idx_[0-9a-f]{32}$/, SET_ID = /^prj_[0-9a-f]{32}$/;
-/** The `open` member of a native answer; undefined when absent (a grant-bound connection) or malformed. */
-export function openConnectionState(value: unknown): OpenConnectionState | undefined {
-    const open = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-    if (!open) { return undefined; }
-    const list = (items: unknown, pattern: RegExp) => Array.isArray(items) && items.length <= 1024 && items.every(item => typeof item === 'string' && pattern.test(item)) ? items as string[] : undefined;
-    const indexes = list(open.default_index_ids, INDEX_ID), sets = list(open.default_index_set_ids, SET_ID);
-    if (typeof open.defaults_revision !== 'number' || !Number.isSafeInteger(open.defaults_revision) || open.defaults_revision < 1
-        || !indexes || !sets || (open.agent_choice !== 'off' && open.agent_choice !== 'on')) { return undefined; }
-    return { defaults_revision: open.defaults_revision, default_index_ids: [...indexes], default_index_set_ids: [...sets], agent_choice: open.agent_choice };
+/** (U110) `scope default`: set the workspace default of every folder (no selectors clears it). */
+export function scopeDefaultArgv(folders: readonly string[], scope: AgentDefaultScope | null): string[] {
+    if (!folders.length) { throw new Error('A workspace default needs at least one folder.'); }
+    return ['scope', 'default', ...folders.flatMap(folder => ['--workspace', folder]),
+        ...(scope ? [...scope.index_ids.flatMap(id => ['--index', id]), ...scope.project_ids.flatMap(id => ['--set', id])] : [])];
 }
-/** (U105) `agents connect --open`: enroll a new open connection (choice off, empty default) and write the client's entry for `project`. */
-export function connectOpenArgv(client: Client, project: string): string[] {
-    return ['agents', 'connect', '--open', '--client', client, '--project', project];
+export function setWorkspaceDefault(airkctl: AgentsRunner, folders: readonly string[], scope: AgentDefaultScope | null): Promise<unknown> {
+    return airkctl.session.json(scopeDefaultArgv(folders, scope));
 }
-export function connectOpenAgent(airkctl: AgentsRunner, client: Client, project: string): Promise<unknown> {
-    return airkctl.session.json(connectOpenArgv(client, project));
+/** (U110) `scope defaults`: every stored workspace default, read-only. */
+export function workspaceDefaults(airkctl: AgentsRunner): Promise<unknown> {
+    return airkctl.session.json(['scope', 'defaults']);
 }
-/** (U105) `agents default`: a given scope replaces the default scope as a whole (an empty one is `--clear`);
- * a given choice sets `--agent-choice`; anything not given keeps its stored value. */
-export function agentDefaultArgv(connectionId: string, change: { scope?: AgentDefaultScope; choice?: AgentChoice; expectedRevision?: number }): string[] {
-    if (!INCARNATION.test(connectionId)) { throw new Error('invalid_connection_id'); }
-    const scope = change.scope;
-    return ['agents', 'default', '--connection-id', connectionId,
-        ...(scope ? scope.index_ids.length || scope.project_ids.length
-            ? [...scope.index_ids.flatMap(id => ['--index', id]), ...scope.project_ids.flatMap(id => ['--set', id])] : ['--clear'] : []),
-        ...(change.choice ? ['--agent-choice', change.choice] : []),
-        ...(change.expectedRevision !== undefined ? ['--expected-revision', String(change.expectedRevision)] : [])];
+/** One stored workspace default as `scope default`/`scope defaults` print it. */
+export interface WorkspaceDefault { folder: string; index_ids: string[]; index_set_ids: string[]; applied_unix_ms: number }
+/** The entries of a `scope defaults` document; a malformed document throws. */
+export function workspaceDefaultEntries(document: unknown): WorkspaceDefault[] {
+    const object = document && typeof document === 'object' && !Array.isArray(document) ? document as Record<string, unknown> : undefined;
+    if (!object || object.schema !== 1 || !Array.isArray(object.entries)) { throw new Error('The workspace defaults document is unavailable or malformed.'); }
+    const strings = (value: unknown) => Array.isArray(value) && value.every(item => typeof item === 'string') ? [...value as string[]] : undefined;
+    return object.entries.map(value => {
+        const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+        const index_ids = strings(row.index_ids), index_set_ids = strings(row.index_set_ids);
+        if (typeof row.folder !== 'string' || !index_ids || !index_set_ids || typeof row.applied_unix_ms !== 'number' || !Number.isSafeInteger(row.applied_unix_ms)) {
+            throw new Error('A workspace default entry is malformed.');
+        }
+        return { folder: row.folder, index_ids, index_set_ids, applied_unix_ms: row.applied_unix_ms };
+    });
 }
-export function setAgentDefaults(airkctl: AgentsRunner, connectionId: string, change: { scope?: AgentDefaultScope; choice?: AgentChoice; expectedRevision?: number }): Promise<unknown> {
-    return airkctl.session.json(agentDefaultArgv(connectionId, change));
+/** (U110) The stored default that applies to `folder`: the most specific stored folder containing it
+ * (Windows: case-insensitive, `/` and `\` equal). */
+export function defaultFor(entries: readonly WorkspaceDefault[], folder: string, windows = process.platform === 'win32'): WorkspaceDefault | undefined {
+    const separator = windows ? '\\' : '/';
+    const normal = (value: string) => {
+        let text = windows ? value.replace(/\//g, '\\').toLowerCase() : value;
+        while (text.length > 1 && text.endsWith(separator) && !(windows && /^[a-z]:\\$/.test(text))) { text = text.slice(0, -1); }
+        return text;
+    };
+    const target = normal(folder);
+    let best: WorkspaceDefault | undefined, length = -1;
+    for (const entry of entries) {
+        const stored = normal(entry.folder);
+        const inside = target === stored || target.startsWith(stored.endsWith(separator) ? stored : stored + separator);
+        if (inside && stored.length > length) { best = entry; length = stored.length; }
+    }
+    return best;
 }
-/** `agents revoke`: revoke one connection (its original receipt is kept). */
-export function revokeConnection(airkctl: AgentsRunner, connectionId: string): Promise<unknown> {
-    if (!INCARNATION.test(connectionId)) { return Promise.reject(new Error('invalid_connection_id')); }
-    return airkctl.session.json(['agents', 'revoke', '--connection-id', connectionId]);
-}
-/** `agents info`: an existing connection's references (never its credential). */
-export function connectionInfo(airkctl: AgentsRunner, connectionId: string): Promise<unknown> {
-    return airkctl.session.json(['agents', 'info', '--connection-id', connectionId]);
-}
-/** The endpoint URL of a connection's `agents info` answer. */
+/** The endpoint URL of an `agents endpoint` answer (or a connection's `agents info` answer). */
 export function connectionUrl(info: unknown): string | undefined {
     const record = info && typeof info === 'object' ? info as Record<string, unknown> : {};
     const endpoint = record.endpoint && typeof record.endpoint === 'object' ? record.endpoint as Record<string, unknown> : {};
     const url = typeof endpoint.url === 'string' ? endpoint.url : typeof record.url === 'string' ? record.url : undefined;
     return url && /^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/.test(url) ? url : undefined;
-}
-/** Connection ids named by recognized entries of an `agents list` report. */
-export function reportedConnections(report: unknown): string[] {
-    const entries = report && typeof report === 'object' ? (report as Record<string, unknown>).entries : undefined;
-    const ids = new Set<string>();
-    for (const entry of Array.isArray(entries) ? entries : []) {
-        const id = (entry as Record<string, unknown>)?.connectionId;
-        if (typeof id === 'string' && INCARNATION.test(id)) { ids.add(id); }
-    }
-    return [...ids];
 }
 
 /** One removal the no-service sweep made, kept so Explorer can list it (U12). */
@@ -249,7 +246,7 @@ export async function sweepWithoutService(folders: readonly string[], files: Swe
     options: SweepOptions = {}): Promise<{ removed: RemovedEntry[]; skipped: { file: string; reason: string }[] }> {
     const select = options.select ?? (() => true);
     const reasonFor = options.reason ?? ((entry: Removal) => entry.recognized.kind === 'stdio' ? 'Retired stdio AIRK entry; the AIRK Service serves HTTPS only.'
-        : 'AIRK HTTPS entry with no installed AIRK Service to serve its connection.');
+        : 'AIRK HTTPS entry with no installed AIRK Service to serve it.');
     const removed: RemovedEntry[] = [], skipped: { file: string; reason: string }[] = [];
     for (const root of folders) {
         let realRoot: string;

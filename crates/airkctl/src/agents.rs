@@ -245,6 +245,67 @@ pub fn default_scope(
     }
 }
 
+/// U110: `{"schema":1,"entries":[...]}` from a workspace-defaults answer.
+fn workspace_document(response: ControlResponse) -> Result<Value, ErrorLine> {
+    match response {
+        ControlResponse::WorkspaceScopeDefaults { entries } => {
+            Ok(serde_json::json!({"schema": 1, "entries": entries}))
+        }
+        other => Err(crate::service::refusal(&other)),
+    }
+}
+
+/// `scope default` (U110): resolve names by the shared rule, then set (or,
+/// naming nothing, clear) the default of each workspace folder.
+pub fn workspace_default(
+    control: &Path,
+    version: &str,
+    folders: Vec<String>,
+    index_names: &[String],
+    set_names: &[String],
+) -> Result<Value, ErrorLine> {
+    for folder in &folders {
+        airk_core::agent_workspace::validate_path(folder)
+            .map_err(|error| refused(&format!("{error:#}: {folder}")))?;
+    }
+    let (mut indexes, mut sets) = (Vec::new(), Vec::new());
+    if !index_names.is_empty() || !set_names.is_empty() {
+        let listing = catalog_listing(control, version)?;
+        for name in index_names {
+            let id = airk_core::agent_scope::index_by_name(&listing, name)
+                .map_err(|code| name_refused(code, name))?;
+            if !indexes.contains(&id) {
+                indexes.push(id);
+            }
+        }
+        for name in set_names {
+            let id = airk_core::agent_scope::set_by_name(&listing, name)
+                .map_err(|code| name_refused(code, name))?;
+            if !sets.contains(&id) {
+                sets.push(id);
+            }
+        }
+    }
+    workspace_document(crate::service::request(
+        control,
+        ControlMethod::WorkspaceScopeDefault {
+            folders,
+            index_ids: indexes,
+            index_set_ids: sets,
+        },
+        version,
+    )?)
+}
+
+/// `scope defaults` (U110): every stored workspace default.
+pub fn workspace_defaults(control: &Path, version: &str) -> Result<Value, ErrorLine> {
+    workspace_document(crate::service::request(
+        control,
+        ControlMethod::WorkspaceScopeDefaults {},
+        version,
+    )?)
+}
+
 /// `http-revoke`: the service must accept requests; the revoke is fenced to
 /// the observed instance and must name the connection asked for.
 pub fn revoke(

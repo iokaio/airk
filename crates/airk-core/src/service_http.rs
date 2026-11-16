@@ -182,9 +182,16 @@ pub mod open_refusal {
     pub const AGENT_CONNECTION_NOT_OPEN: &str = "agent_connection_not_open";
     /// `expected_defaults_revision` is not the stored defaults revision.
     pub const AGENT_DEFAULTS_CONFLICT: &str = "agent_defaults_conflict";
-    /// A `list_indexes` cursor of another catalog revision.
+    /// U110: a read named no index, no index set and no workspace with a
+    /// stored default.
+    pub const SCOPE_REQUIRED: &str = "scope_required";
+    /// A `list_scopes` cursor of another catalog revision.
     pub const LIST_CURSOR_EXPIRED: &str = "list_cursor_expired";
 }
+
+/// U110: the reserved id of the built-in local agent session every
+/// tokenless MCP session uses. Never issued to a ledger record.
+pub const LOCAL_AGENT_CONNECTION: Incarnation = Incarnation::from_bytes([0; 16]);
 
 /// U105: the open connection's namespace only. It names no index, grant or
 /// project; the service-stored default scope lives in the credential ledger.

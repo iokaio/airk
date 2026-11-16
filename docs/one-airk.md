@@ -7,6 +7,19 @@
 > `bridge` and `service console` are retired. See the
 > [split plan](split/split-plan.md).
 
+> **U110 (user decision, 15 November 2026; supersedes the client-authentication
+> and per-connection scope parts below).** `/mcp` takes no token: the gateway
+> strips and ignores any `Authorization` header and keeps its Host, `Origin` and
+> admin-cookie refusals; TLS issuer trust still applies. The user accepted that
+> any local process that can reach 127.0.0.1 can read every index. Agent entries
+> carry only the URL and `X-AIRK-Response-Mode`. Each read names its scope
+> (`index_ids`, `index_set_ids` or `workspace`, resolved against service-stored
+> workspace defaults), and `list_scopes` replaces `list_indexes`. The credential
+> requirements in §§ below on client authentication, credential binding and
+> per-connection grants describe the earlier design. See
+> [agent integration](agent-integration.md) and the
+> [split plan](split/split-plan.md) U110.
+
 > **User decisions, 10 November 2026: one resident process.** These replace
 > §1's "one executable is not a promise of one total OS process" paragraph and
 > the worker processes in the §2 diagram.
@@ -291,7 +304,7 @@ Implement these controls before migrating production clients:
   Windows signing and release-signing credentials. Keep private keys in protected
   native storage. Handle expiry, renewal, revocation, uninstall and authenticated
   trust rotation without accepting an unverified replacement identity.
-- **Client authentication:** issue strong, revocable credentials through trusted
+- **Client authentication (superseded by U110 for `/mcp`):** issue strong, revocable credentials through trusted
   setup. Bind each credential to an explicit client connection and reviewed
   native scope; validate it on every request, including session reconnections.
   Use supported credential references or client-native credential storage.

@@ -441,7 +441,9 @@ impl Capture {
                 tasks.push(scope.spawn(move||->Result<(Value,u128)>{
                 let started=Instant::now();
                 // native read: one timed sample retains typed overload instead of replaying it.
-                let reply=session.request((1000+wave*4+client)as u64,"tools/call",json!({"name":"airk_search","arguments":{
+                // U110: the session names the selected index per call: a
+                // one-index open read whose body is that index's own result.
+                let reply=session.request((1000+wave*4+client)as u64,"tools/call",json!({"name":"search","arguments":{
                     "query":"boundaryneedle","mode":"lexical","path_prefix":"api/","limit":1,"max_bytes":16384,"verification":"off","response_mode":"full"}}))?;
                 Ok((reply,started.elapsed().as_micros()))}));
             }
@@ -499,11 +501,12 @@ impl Capture {
                 );
                 continue;
             } else {
-                let value = body(result)?;
-                let member =
-                    airk_core::combined_reads::shared_values::materialize_combined_member_result(
-                        &value, self.index,
-                    )?;
+                let member = body(result)?;
+                ensure!(
+                    member["read_scope"]["index_ids"] == json!([self.index])
+                        && member.get("members").is_none(),
+                    "metric read did not read exactly its one selected index: {reply}"
+                );
                 ensure!(
                     member["hits"][0]["citation"]["content_hash"] == self.expected_hash,
                     "unrelated metric citation/hash changed: {reply}"

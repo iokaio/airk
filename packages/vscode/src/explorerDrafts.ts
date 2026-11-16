@@ -31,7 +31,7 @@ export const MANAGEMENT_INTENTS = {
     'recovery.review_failure': { route: 'manage/repair', guidance: 'Read the failure and request status in Management › Recovery and Activity; a rebuild is a last resort you choose explicitly.' },
     'storage.review': { route: 'manage/storage', guidance: 'Review storage location, quotas and cleanup previews in Management › Storage.' },
     'service.review': { route: 'manage/service', guidance: 'Check service health and runtime state in Management › Service; lifecycle actions ask for confirmation.' },
-    'agents.setup': { route: 'manage/agents', guidance: 'Use Management › Agents to connect or check a coding agent; each connection is configured and verified separately.' },
+    'agents.setup': { route: 'manage/agents', guidance: 'Use Management › Agents to connect or check a coding agent; each agent entry is configured and loaded separately.' },
     'usage.review': { route: 'manage/usage', guidance: 'Open Management › Usage for local usage and savings estimates; they are not billing data.' },
     'logs.review': { route: 'manage/logs', guidance: 'Open Management › Logs to read recent extension and service output.' },
 } as const;

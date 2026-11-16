@@ -1260,6 +1260,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AgentConnectionOwnership { .. }
         | ControlMethod::AgentConnectionVerify { .. }
         | ControlMethod::AgentConnectionDefaults { .. }
+        | ControlMethod::WorkspaceScopeDefault { .. }
+        | ControlMethod::WorkspaceScopeDefaults {}
         | ControlMethod::HttpIssuerRotation { .. }
         | ControlMethod::AdminLaunchCode {}
         | ControlMethod::AdminScopeGrant { .. } => {

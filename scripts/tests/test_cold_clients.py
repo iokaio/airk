@@ -13,9 +13,9 @@ CLIENTS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CLIENTS)
 
 SELECTED = {'grant_id':'grant', 'expected_grant_revision':7, 'index_id':'index', 'project_ids':['project']}
+# U110: an open read reports the scope it named.
 STATUS = {'index_state':'available', 'files':0, 'publication':{'token':'empty'},
-          'scope_observation':{'qualifier':'selected_subset', 'provenance':'user_reviewed_project_grant',
-          'grant':{'id':'grant','revision':7}, 'members':[{'index_id':'index','memberships':[{'project_id':'project'}]}]}}
+          'read_scope':{'source':'named', 'index_ids':['index']}}
 
 class Network:
     def __init__(self, fixture):
@@ -28,10 +28,11 @@ class Network:
         if request['method'] == 'initialize':
             self.replies[1] = {'result':{'serverInfo':{'name':'airk'}}}
         elif request['method'] == 'tools/call':
-            assert request['params'] == {'name':'status', 'arguments':{}}
+            assert request['params'] == {'name':'status', 'arguments':{'index_ids':['index']}}
             if self.fixture.barrier:
                 self.fixture.barrier.wait(timeout=5)
-            self.replies[2] = {'result':{'content':[{'type':'text','text':json.dumps(self.fixture.status)}]}}
+            self.replies[2] = {'result':{'content':[{'type':'text','text':json.dumps(self.fixture.status)}],
+                                         'structuredContent':copy.deepcopy(self.fixture.status)}}
     def receive(self, identifier):
         return self.replies.pop(identifier)
     def close(self):
@@ -89,12 +90,11 @@ class ColdClientsTests(unittest.TestCase):
         self.assertTrue(all(session.closed for session in fixture.sessions))
         self.assertNotIn('tools/call',fixture.calls)
     def test_first_status_refuses_widened_scope_indexed_or_unknown_result(self):
-        changes = [lambda s:s.update(project='legacy'),
-                   lambda s:s['scope_observation'].update(qualifier='all'),
-                   lambda s:s['scope_observation'].update(provenance='ambient'),
-                   lambda s:s['scope_observation']['grant'].update(revision=8),
-                   lambda s:s['scope_observation']['members'][0].update(index_id='other'),
-                   lambda s:s['scope_observation']['members'][0]['memberships'].append({'project_id':'other'}),
+        changes = [lambda s:s.pop('read_scope'),
+                   lambda s:s['read_scope'].update(source='workspace_default'),
+                   lambda s:s['read_scope'].update(index_ids=['other']),
+                   lambda s:s['read_scope']['index_ids'].append('other'),
+                   lambda s:s['read_scope'].update(workspace_folder='C:/elsewhere'),
                    lambda s:s.update(files=1), lambda s:s.update(index_state='unknown')]
         for mutate in changes:
             fixture=Fixture();mutate(fixture.status)

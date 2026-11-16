@@ -121,10 +121,14 @@ fn current_help_tasks_have_complete_native_guides_and_continuations() {
         (
             "agent-setup",
             vec![
-                "agent_default_scope_unset",
-                "agent_scope_choice_disabled",
-                "off by default",
+                "airkctl scope default --workspace",
+                "no token",
+                "agents repair",
             ],
+        ),
+        (
+            "mcp",
+            vec!["no token", "scope_required", "list_scopes", "MCP roots"],
         ),
         (
             "request-recovery",

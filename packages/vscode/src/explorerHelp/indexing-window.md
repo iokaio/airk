@@ -3,7 +3,7 @@ id: indexing.window
 title: Indexes — Search scope
 route: indexing/window
 area: explorer
-aliases: search scope, active indexes, window selection, description, edit description
+aliases: search scope, active indexes, window selection, description, edit description, workspace default
 related_airk_help: indexing
 ---
 # Search scope
@@ -16,13 +16,13 @@ When the selection covers more indexes than this machine searches at once (the s
 
 **Save as index set** creates a new index set with the name you enter, holding the checked indexes and the indexes of the checked sets; when that set would hold more indexes than this machine searches at once, a note under the button says so. **Connect an agent** opens Agents.
 
-Each index and index set shows its description under its name. **Edit description** opens a text box for it (at most 1 KiB; line breaks are allowed): **Save** stores it (`airkctl library describe … --yes`) and **Clear** removes it; the choices are then read again. Descriptions help coding agents that may choose indexes themselves (Agents, "Let the agent choose indexes") pick the right ones. Saving a description changes the index library's revision, so the window's scope is selected again at the new revision.
+Each index and index set shows its description under its name. **Edit description** opens a text box for it (at most 1 KiB; line breaks are allowed): **Save** stores it (`airkctl library describe … --yes`) and **Clear** removes it; the choices are then read again. Descriptions help coding agents pick the right indexes: list_scopes shows them. Saving a description changes the index library's revision, so the window's scope is selected again at the new revision.
 
 Until you apply or clear a scope, the window reads its folder's index automatically through the index sets that hold it. A scope you apply or clear is kept; the automatic scope never replaces it.
 
 Choices load automatically when the connection is ready. Refresh choices retries a failed read. More indexes and More index sets load additional bounded pages; a partial list does not mean other entries are absent. Saved choices appear as checkboxes; apply them when a fresh search connection is needed. Selection active confirms the applied window scope.
 
-You own these indexes locally. Search selection handles the underlying connection metadata without separate grant or association forms. Coding agents connected in Agents follow the scope you apply here (their default scope changes on their next call) unless following is turned off for them there; agents connected in AIRK Admin for a reviewed scope keep that scope. Selecting indexes does not create them or start indexing.
+You own these indexes locally. Search selection handles the underlying connection metadata without separate grant or association forms. The scope you apply here is also the workspace default of every folder of this window (`airkctl scope default`): a coding agent uses it when a call names no indexes or index sets and its workspace is inside one of these folders. It takes effect on the agent's next call; clearing the scope clears the default. Agents can always name indexes or index sets on a call instead. Selecting indexes does not create them or start indexing.
 
 Create and delete indexes in Index library. Organize reusable selections in Index sets. Help me choose indexes contains optional recommendations for the current selection; recommendations do not start an evidence query or source scan.
 

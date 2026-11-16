@@ -60,7 +60,7 @@ impl HttpReadLimits {
             (1..=airk_core::service::MAX_FRAME_BYTES).contains(&self.request_bytes)
                 && (airk_core::service::MAX_FRAME_BYTES..=4 * 1024 * 1024)
                     .contains(&self.response_bytes)
-                && (1..=32).contains(&self.sessions_per_client)
+                && (1..=128).contains(&self.sessions_per_client)
                 && !self.handshake_timeout.is_zero()
                 && self.handshake_timeout <= Duration::from_secs(60)
                 && !self.idle_timeout.is_zero()

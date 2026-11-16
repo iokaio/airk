@@ -4,8 +4,7 @@
 use airk_core::{
     identity::Incarnation,
     service::{ControlMethod, ControlResponse},
-    service_http::{HttpConnectionInfo, HttpSelection},
-    usage::ClientFamily,
+    service_http::EndpointDescriptor,
 };
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
@@ -44,56 +43,131 @@ impl std::fmt::Display for HttpRefused {
 }
 impl std::error::Error for HttpRefused {}
 
+/// U110: the per-call scope this fixture names on every read. The HTTPS MCP
+/// endpoint takes no credential; every session is the service's local agent
+/// session, and a read names `index_ids`/`index_set_ids` (ids or names) or a
+/// `workspace`. `Scope::none()` names nothing, so a read is refused
+/// `scope_required` unless the call itself names a scope.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scope {
+    pub index_ids: Vec<String>,
+    pub index_set_ids: Vec<String>,
+}
+impl Scope {
+    pub fn none() -> Self {
+        Self::default()
+    }
+    pub fn indexes<T: ToString>(ids: impl IntoIterator<Item = T>) -> Self {
+        Self {
+            index_ids: ids.into_iter().map(|id| id.to_string()).collect(),
+            index_set_ids: Vec::new(),
+        }
+    }
+    pub fn sets<T: ToString>(ids: impl IntoIterator<Item = T>) -> Self {
+        Self {
+            index_ids: Vec::new(),
+            index_set_ids: ids.into_iter().map(|id| id.to_string()).collect(),
+        }
+    }
+    /// The M3 open selection reading this same scope through the pipe
+    /// (`airkctl tools call --index/--set` takes the same service path).
+    pub fn open_selection(&self) -> airk_core::service::ToolSelection {
+        airk_core::service::ToolSelection::Open {
+            index_ids: self.index_ids.clone(),
+            index_set_ids: self.index_set_ids.clone(),
+            connection_id: None,
+            workspace: None,
+        }
+    }
+    /// The `airkctl tools call` selector arguments naming this scope.
+    pub fn cli_arguments(&self) -> Vec<String> {
+        self.index_ids
+            .iter()
+            .flat_map(|id| ["--index".to_owned(), id.clone()])
+            .chain(
+                self.index_set_ids
+                    .iter()
+                    .flat_map(|id| ["--set".to_owned(), id.clone()]),
+            )
+            .collect()
+    }
+    /// Name this scope in a `tools/call` request unless the call already
+    /// names `index_ids`, `index_set_ids` or `workspace`. `list_scopes`
+    /// takes no selection and is left unchanged, as is every other method.
+    fn inject(&self, value: &mut Value) {
+        if self.index_ids.is_empty() && self.index_set_ids.is_empty() {
+            return;
+        }
+        if value.get("method").and_then(Value::as_str) != Some("tools/call") {
+            return;
+        }
+        let Some(params) = value.get_mut("params").and_then(Value::as_object_mut) else {
+            return;
+        };
+        if params.get("name").and_then(Value::as_str) == Some("list_scopes") {
+            return;
+        }
+        let Some(arguments) = params
+            .entry("arguments")
+            .or_insert_with(|| Value::Object(Default::default()))
+            .as_object_mut()
+        else {
+            return;
+        };
+        if ["index_ids", "index_set_ids", "workspace"]
+            .iter()
+            .any(|key| arguments.contains_key(*key))
+        {
+            return;
+        }
+        if !self.index_ids.is_empty() {
+            arguments.insert("index_ids".into(), json!(self.index_ids));
+        }
+        if !self.index_set_ids.is_empty() {
+            arguments.insert("index_set_ids".into(), json!(self.index_set_ids));
+        }
+    }
+}
+
 pub struct HttpMcpSession {
     commands: Option<mpsc::Sender<Command>>,
     thread: Option<thread::JoinHandle<()>>,
     pending: VecDeque<Value>,
-    pub connection: HttpConnectionInfo,
-    client: ClientFamily,
+    /// The service endpoint this transport verified (no connection, no token).
+    pub endpoint: EndpointDescriptor,
+    /// The scope injected into every read this session sends.
+    pub scope: Scope,
     mode: Option<String>,
 }
 impl HttpMcpSession {
-    /// Enrollment/TLS only. The caller explicitly sends initialize/initialized.
-    pub fn start(control: &Path, selection: HttpSelection) -> Result<Self> {
-        Self::start_for_client(control, selection, ClientFamily::Unknown)
+    /// TLS only: no enrollment and no credential. The caller explicitly sends
+    /// initialize/initialized; its `clientInfo` names the client family.
+    pub fn start(control: &Path, scope: Scope) -> Result<Self> {
+        Self::start_with_mode(control, scope, Some("full"))
     }
-    pub fn start_for_client(
-        control: &Path,
-        selection: HttpSelection,
-        client: ClientFamily,
-    ) -> Result<Self> {
-        Self::start_with_mode(control, selection, client, Some("full"))
+    pub fn start_with_mode(control: &Path, scope: Scope, mode: Option<&str>) -> Result<Self> {
+        Self::start_inner(control, scope, mode, None)
     }
-    pub fn start_with_mode(
-        control: &Path,
-        selection: HttpSelection,
-        client: ClientFamily,
-        mode: Option<&str>,
-    ) -> Result<Self> {
-        Self::start_inner(control, selection, client, mode, None)
-    }
-    /// Explicit fresh TLS/MCP transport after an observed catalog boundary.
-    /// Reuse the existing protected credential; never re-enroll or replay a read.
+    /// Explicit fresh TLS/MCP transport after an observed catalog boundary on
+    /// the same endpoint. Never replays a read.
     pub fn reconnect(&self, control: &Path) -> Result<Self> {
         let fresh = Self::start_inner(
             control,
-            self.connection.selection.clone(),
-            self.client,
+            self.scope.clone(),
             self.mode.as_deref(),
-            Some(self.connection.clone()),
+            Some(self.endpoint.clone()),
         )?;
         ensure!(
-            fresh.connection == self.connection,
-            "explicit reconnect changed credential references or frozen authority"
+            fresh.endpoint == self.endpoint,
+            "explicit reconnect changed the HTTPS endpoint"
         );
         Ok(fresh)
     }
     fn start_inner(
         control: &Path,
-        selection: HttpSelection,
-        client: ClientFamily,
+        scope: Scope,
         mode: Option<&str>,
-        existing: Option<HttpConnectionInfo>,
+        existing: Option<EndpointDescriptor>,
     ) -> Result<Self> {
         ensure!(
             mode.is_none_or(|mode| matches!(mode, "full" | "terse")),
@@ -118,11 +192,7 @@ impl HttpMcpSession {
                     }
                 };
                 let opened = runtime.block_on(async {
-                    tokio::time::timeout(
-                        TIMEOUT,
-                        Wire::open(&control, selection, client, mode, existing),
-                    )
-                    .await?
+                    tokio::time::timeout(TIMEOUT, Wire::open(&control, mode, existing)).await?
                 });
                 let mut wire = match opened {
                     Ok(wire) => wire,
@@ -131,7 +201,7 @@ impl HttpMcpSession {
                         return;
                     }
                 };
-                if ready.send(Ok(wire.info.clone())).is_err() {
+                if ready.send(Ok(wire.endpoint.clone())).is_err() {
                     return;
                 }
                 while let Ok(command) = incoming.recv() {
@@ -185,12 +255,12 @@ impl HttpMcpSession {
                 }
             })?;
         match initialized.recv_timeout(TIMEOUT + Duration::from_secs(5)) {
-            Ok(Ok(connection)) => Ok(Self {
+            Ok(Ok(endpoint)) => Ok(Self {
                 commands: Some(commands),
                 thread: Some(worker),
                 pending: VecDeque::new(),
-                connection,
-                client,
+                endpoint,
+                scope,
                 mode: saved_mode,
             }),
             Ok(Err(error)) => {
@@ -214,7 +284,8 @@ impl HttpMcpSession {
         receiver.recv_timeout(TIMEOUT + Duration::from_secs(5))??;
         Ok(())
     }
-    pub fn send_until(&mut self, value: Value, deadline: Instant) -> Result<()> {
+    pub fn send_until(&mut self, mut value: Value, deadline: Instant) -> Result<()> {
+        self.scope.inject(&mut value);
         let replies = submit_until(
             self.commands.as_ref().context("HTTPS fixture closed")?,
             value,
@@ -310,8 +381,9 @@ struct Wire {
     sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
     task: tokio::task::JoinHandle<Result<(), hyper::Error>>,
     tls_config: Arc<rustls::ClientConfig>,
-    info: HttpConnectionInfo,
-    token: String,
+    endpoint: EndpointDescriptor,
+    /// A fixture-local label naming this transport's retained failure evidence.
+    label: Incarnation,
     session: Option<String>,
     initialized: bool,
     protocol: String,
@@ -322,82 +394,56 @@ struct Wire {
 impl Wire {
     async fn open(
         control: &Path,
-        selection: HttpSelection,
-        client: ClientFamily,
         mode: Option<String>,
-        existing: Option<HttpConnectionInfo>,
+        existing: Option<EndpointDescriptor>,
     ) -> Result<Self> {
-        selection.validate()?;
         let ControlResponse::Health {
             observation: health,
         } = airk_cli::service_runtime::request(control, ControlMethod::Health).await?
         else {
             anyhow::bail!("native fixture health unavailable")
         };
-        let info = if let Some(info) = existing {
+        // U110: the endpoint and its issuer come from the service's endpoint
+        // read; nothing is enrolled and no credential exists.
+        let deadline = Instant::now() + TIMEOUT;
+        let endpoint = loop {
             let response = airk_cli::service_runtime::request_for_instance(
                 control,
                 ControlMethod::HttpEndpoint,
                 health.instance,
             )
             .await?;
-            let ControlResponse::HttpEndpoint {
-                endpoint: Some(endpoint),
-            } = response
-            else {
-                anyhow::bail!("existing HTTPS endpoint unavailable during explicit reconnect");
-            };
-            ensure!(
-                *endpoint == info.endpoint,
-                "endpoint changed; this reconnect is limited to a catalog boundary"
-            );
-            Box::new(info)
-        } else {
-            let mut random = [0u8; 16];
-            SystemRandom::new()
-                .fill(&mut random)
-                .map_err(|_| anyhow::anyhow!("fixture connection identity unavailable"))?;
-            let id = Incarnation::from_bytes(random);
-            let response = airk_cli::service_runtime::request_for_instance(
-                control,
-                ControlMethod::HttpEnroll {
-                    connection_id: id,
-                    selection: Box::new(selection.clone()),
-                    client,
-                    explorer_descriptor: None,
-                    reattach_connection_id: None,
-                },
-                health.instance,
-            )
-            .await?;
-            let ControlResponse::HttpConnection { connection: info } = response else {
-                anyhow::bail!(
-                    "native HTTPS enrollment refused: {}",
-                    serde_json::to_string(&response)?
-                )
-            };
-            ensure!(
-                info.connection_id == id,
-                "enrollment changed connection identity"
-            );
-            info
+            match response {
+                ControlResponse::HttpEndpoint {
+                    endpoint: Some(endpoint),
+                } => break *endpoint,
+                // The endpoint owner starts after the control plane; wait
+                // for it under the fixture deadline (not after a reconnect).
+                ControlResponse::HttpEndpoint { endpoint: None }
+                    if existing.is_none() && Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                other => anyhow::bail!(
+                    "HTTPS endpoint unavailable: {}",
+                    serde_json::to_string(&other)?
+                ),
+            }
         };
-        let id = info.connection_id;
-        info.validate()?;
+        endpoint.validate()?;
         ensure!(
-            info.endpoint.namespace == selection.namespace()
-                && info.endpoint.service_instance == health.instance
-                && info.endpoint.user == health.user
-                && info.endpoint.executable_sha256.to_string() == health.executable_sha256,
+            existing
+                .as_ref()
+                .is_none_or(|existing| existing == &endpoint),
+            "endpoint changed; this reconnect is limited to a catalog boundary"
+        );
+        ensure!(
+            endpoint.service_instance == health.instance
+                && endpoint.user == health.user
+                && endpoint.executable_sha256.to_string() == health.executable_sha256,
             "HTTPS fixture native identity changed"
         );
-        same_authority(&selection, &info.selection)?;
         let root = control.join("http-1");
-        ensure!(
-            Path::new(&info.ca_certificate_file) == root.join("ca.pem")
-                && Path::new(&info.credential_file) == root.join(format!("credential-{id}.token")),
-            "HTTPS fixture private references changed"
-        );
         ensure!(root.is_dir(), "HTTPS fixture private root missing");
         airk_cli::local_ipc::prepare_root(&root)?;
         let path = root.join("ca.pem");
@@ -425,7 +471,7 @@ impl Wire {
         ensure!(
             certificates.len() == 1
                 && Sha256::digest(certificates[0].as_ref()).as_slice()
-                    == info.endpoint.ca_sha256.as_bytes(),
+                    == endpoint.ca_sha256.as_bytes(),
             "fixture issuer differs from native control"
         );
         // This isolated native fixture pins its reviewed local issuer. It never
@@ -440,15 +486,17 @@ impl Wire {
             .with_root_certificates(roots)
             .with_no_client_auth(),
         );
-        let (sender, task) = Self::connect(&info, config.clone()).await?;
-        // Bearer bytes are read only after TLS/IP/issuer/leaf verification.
-        let token = airk_cli::http_endpoint::read_client_token(&root, id)?;
+        let (sender, task) = Self::connect(&endpoint, config.clone()).await?;
+        let mut random = [0u8; 16];
+        SystemRandom::new()
+            .fill(&mut random)
+            .map_err(|_| anyhow::anyhow!("fixture evidence label unavailable"))?;
         Ok(Self {
             sender,
             task,
             tls_config: config,
-            info: *info,
-            token,
+            endpoint,
+            label: Incarnation::from_bytes(random),
             session: None,
             initialized: false,
             protocol: "2025-11-25".into(),
@@ -458,17 +506,15 @@ impl Wire {
         })
     }
     async fn connect(
-        info: &HttpConnectionInfo,
+        endpoint: &EndpointDescriptor,
         config: Arc<rustls::ClientConfig>,
     ) -> Result<(
         hyper::client::conn::http1::SendRequest<Full<Bytes>>,
         tokio::task::JoinHandle<Result<(), hyper::Error>>,
     )> {
-        let socket = tokio::net::TcpStream::connect((
-            std::net::Ipv4Addr::LOCALHOST,
-            info.endpoint.url.port(),
-        ))
-        .await?;
+        let socket =
+            tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, endpoint.url.port()))
+                .await?;
         let tls = tokio_rustls::TlsConnector::from(config)
             .connect(ServerName::try_from("127.0.0.1")?, socket)
             .await?;
@@ -479,7 +525,7 @@ impl Wire {
             .and_then(|certificates| certificates.first())
             .context("fixture TLS peer certificate missing")?;
         ensure!(
-            Sha256::digest(peer.as_ref()).as_slice() == info.endpoint.certificate_sha256.as_bytes(),
+            Sha256::digest(peer.as_ref()).as_slice() == endpoint.certificate_sha256.as_bytes(),
             "fixture TLS peer differs from native control"
         );
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
@@ -487,7 +533,7 @@ impl Wire {
         Ok((sender, task))
     }
     async fn fresh_tcp(&mut self) -> Result<()> {
-        let (sender, task) = Self::connect(&self.info, self.tls_config.clone()).await?;
+        let (sender, task) = Self::connect(&self.endpoint, self.tls_config.clone()).await?;
         self.task.abort();
         self.sender = sender;
         self.task = task;
@@ -516,17 +562,13 @@ impl Wire {
         protocol: Option<String>,
     ) -> Result<Vec<Value>> {
         let method_name = method.to_string();
-        let authority = format!("127.0.0.1:{}", self.info.endpoint.url.port());
+        let authority = format!("127.0.0.1:{}", self.endpoint.url.port());
         let mut request = http::Request::builder()
             .method(method)
             .uri("/mcp")
             .header(http::header::HOST, authority)
             .header(http::header::CONTENT_TYPE, "application/json")
-            .header(http::header::ACCEPT, "application/json, text/event-stream")
-            .header(
-                http::header::AUTHORIZATION,
-                format!("Bearer {}", self.token),
-            );
+            .header(http::header::ACCEPT, "application/json, text/event-stream");
         for (name, value) in standard_headers(&bytes, protocol.as_deref())? {
             request = request.header(name, value);
         }
@@ -573,7 +615,7 @@ impl Wire {
                     status.as_u16(),content_type,bytes.len(),Sha256::digest(&bytes),
                     String::from_utf8_lossy(&bytes[..bytes.len().min(96)]));
                 if error.downcast_ref::<HttpRefused>().is_none()
-                    && let Err(saved)=retain_http_failure(&self.evidence,self.info.connection_id,self.sequence,&context,&bytes) {
+                    && let Err(saved)=retain_http_failure(&self.evidence,self.label,self.sequence,&context,&bytes) {
                         return error.context(format!("{context}; failure evidence unavailable: {saved:#}"));
                 }
                 error.context(context)
@@ -613,7 +655,6 @@ impl Wire {
             Ok(Vec::new())
         };
         self.task.abort();
-        self.token.clear();
         result
     }
 }
@@ -805,33 +846,48 @@ fn retain_http_failure(
     Ok(())
 }
 
-fn same_authority(expected: &HttpSelection, observed: &HttpSelection) -> Result<()> {
-    fn normalize(mut value: Value) -> Value {
-        if let Some(selection) = value.get_mut("selection").and_then(Value::as_object_mut) {
-            selection.remove("expected_catalog_revision");
-            if let Some(members) = selection
-                .get_mut("selections")
-                .and_then(Value::as_array_mut)
-            {
-                for member in members {
-                    if let Some(member) = member.as_object_mut() {
-                        member.remove("expected_catalog_revision");
-                    }
-                }
-            }
-        }
-        value
-    }
-    ensure!(
-        normalize(serde_json::to_value(expected)?) == normalize(serde_json::to_value(observed)?),
-        "HTTPS fixture enrollment changed immutable authority"
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod response_tests {
     use super::*;
+    #[test]
+    fn scope_names_every_read_unless_the_call_names_its_own() {
+        let scope = Scope::indexes(["a", "b"]);
+        let mut read =
+            json!({"method":"tools/call","params":{"name":"search","arguments":{"query":"q"}}});
+        scope.inject(&mut read);
+        assert_eq!(read["params"]["arguments"]["index_ids"], json!(["a", "b"]));
+        assert!(read["params"]["arguments"].get("index_set_ids").is_none());
+        let mut bare = json!({"method":"tools/call","params":{"name":"status"}});
+        scope.inject(&mut bare);
+        assert_eq!(bare["params"]["arguments"], json!({"index_ids":["a","b"]}));
+        for own in [
+            json!({"index_ids":["c"]}),
+            json!({"index_set_ids":["s"]}),
+            json!({"workspace":"/w"}),
+        ] {
+            let mut named =
+                json!({"method":"tools/call","params":{"name":"search","arguments":own.clone()}});
+            scope.inject(&mut named);
+            assert_eq!(named["params"]["arguments"], own);
+        }
+        for unchanged in [
+            json!({"method":"tools/call","params":{"name":"list_scopes","arguments":{}}}),
+            json!({"method":"tools/list","params":{}}),
+        ] {
+            let mut value = unchanged.clone();
+            scope.inject(&mut value);
+            assert_eq!(value, unchanged);
+        }
+        let mut unscoped = read.clone();
+        unscoped["params"]["arguments"] = json!({"query":"q"});
+        let before = unscoped.clone();
+        Scope::none().inject(&mut unscoped);
+        assert_eq!(unscoped, before);
+        assert_eq!(
+            Scope::sets(["s"]).cli_arguments(),
+            vec!["--set".to_owned(), "s".to_owned()]
+        );
+    }
     #[test]
     fn request_budget_is_absolute_before_submission_and_during_delivery() -> Result<()> {
         let (send, receive) = mpsc::channel();

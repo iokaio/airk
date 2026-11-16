@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""A bounded actual HTTPS MCP test client, never a deployed proxy or config writer."""
+"""A bounded actual HTTPS MCP test client, never a deployed proxy or config writer.
+
+U110 (split-plan §2.1, contracts §2.11): the service's loopback HTTPS endpoint
+takes no credential. This client connects with the native endpoint record and
+the installation's AIRK CA only, keeps strict TLS and peer pinning, and never
+sends Authorization. Every session is the service's built-in local agent
+session, so read tools name their scope per call (index_ids, index_set_ids or
+workspace); McpClient can attach a fixed per-call scope for that.
+"""
 import base64
 import hashlib
 import http.client
@@ -47,8 +55,39 @@ def parity_envelope(envelope):
     return parity_value(value)
 
 
+def endpoint_of(record):
+    """The endpoint descriptor of a tokenless endpoint record, or of a legacy
+    (pre-U110) connection record that embeds one. No credential is read."""
+    if isinstance(record, dict) and isinstance(record.get("endpoint"), dict):
+        return record["endpoint"]
+    if not isinstance(record, dict):
+        raise ValueError("HTTP fixture endpoint record is not an object")
+    return record
+
+
+ENDPOINT_URL = r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp"
+MAX_ENDPOINT_BYTES = 65_536
+
+
+def checked_endpoint(record):
+    endpoint = endpoint_of(record)
+    matched = re.fullmatch(ENDPOINT_URL, endpoint.get("url") or "")
+    if (endpoint.get("schema") != 1 or not matched or not 0 < int(matched[1]) <= 65535
+            or endpoint.get("state") != "ready"):
+        raise ValueError("HTTP fixture endpoint identity is invalid or unavailable")
+    return endpoint, int(matched[1])
+
+
+def read_endpoint(control):
+    """Discovery without a connection: the owner-private `<control>/http-1/endpoint.json`."""
+    private = Path(control) / "http-1"
+    endpoint = json.loads(private_bytes(private / "endpoint.json", control, MAX_ENDPOINT_BYTES))
+    checked_endpoint(endpoint)
+    return endpoint
+
+
 def validate_native_identity(connection, health):
-    endpoint = connection["endpoint"]
+    endpoint = endpoint_of(connection)
     if (endpoint["service_instance"] != health["instance"] or endpoint["user"] != health["user"]
             or endpoint["executable_sha256"] != health["executable_sha256"]
             or endpoint["namespace"] != health["catalog_clock"]["namespace"]):
@@ -56,7 +95,8 @@ def validate_native_identity(connection, health):
 
 
 def validate_enrollment(connection, control, selection, connection_id, *, reference_resolver=None):
-    """Check bare native CLI metadata without discarding immutable authority."""
+    """Legacy (pre-U110) enrollment metadata check, kept for callers that have
+    not moved to read_endpoint. McpClient never reads the credential it names."""
     if connection.get("schema") != 1 or connection.get("connection_id") != connection_id:
         raise ValueError("native HTTPS enrollment identity changed")
     def same(wanted, actual):
@@ -85,7 +125,8 @@ def validate_enrollment(connection, control, selection, connection_id, *, refere
 
 
 def enroll_native(run, install, control, selection, connection_id, client="unknown", *, deadline=None):
-    """Submit once via the installer. run follows Fixture.run's argument API.
+    """Legacy (pre-U110): submit once via the installer. run follows Fixture.run's argument API.
+    Since U110 no read needs this; use read_endpoint and a per-call scope.
 
     Returns bare HttpConnectionInfo, not the private control response envelope.
     The native reply has no client field; attribution is the exact supplied CLI
@@ -308,13 +349,48 @@ def standard_headers(value, protocol):
     return headers
 
 
+# U110: tools that take no index scope. help reads no index, list_scopes
+# refuses index selectors, and the assistance/template tools are not native
+# evidence reads. Every other tool call is an evidence read that names a scope.
+UNSCOPED_TOOLS = frozenset({
+    "help", "list_scopes", "list_templates", "get_template", "validate_draft", "proposal_status",
+    "get_handoff", "draft_search", "draft_strategy", "draft_plan", "suggest_view"})
+SCOPE_KEYS = ("index_ids", "index_set_ids", "workspace")
+
+
+def scope_value(index_ids=None, index_set_ids=None, workspace=None):
+    """A per-call U110 scope: named indexes/index sets (ids or names) or one absolute workspace."""
+    scope = {}
+    for key, values in (("index_ids", index_ids), ("index_set_ids", index_set_ids)):
+        if values:
+            if (not isinstance(values, (list, tuple)) or len(values) > 32
+                    or not all(isinstance(item, str) and 0 < len(item) <= 256 for item in values)):
+                raise ValueError("HTTP fixture scope " + key + " is invalid")
+            scope[key] = list(values)
+    if workspace is not None:
+        if not isinstance(workspace, str) or not os.path.isabs(workspace):
+            raise ValueError("HTTP fixture scope workspace must be an absolute folder")
+        scope["workspace"] = workspace
+    return scope
+
+
+def scoped_arguments(tool, arguments, scope):
+    """Add scope to a read's arguments unless the call already names one or takes none."""
+    if not scope or not isinstance(arguments, dict) or not isinstance(tool, str):
+        return arguments
+    if tool.removeprefix("airk_") in UNSCOPED_TOOLS or any(key in arguments for key in SCOPE_KEYS):
+        return arguments
+    return {**arguments, **json.loads(json.dumps(scope))}
+
+
 class McpClient:
     def response_error(self, status, data, response_headers, method, value, path, *, failure="http_response", truncated=False):
-        """Bound and redact error evidence before it can enter any receipt."""
+        """Bound and redact error evidence before it can enter any receipt.
+
+        U110: no credential is held or sent; MCP session ids stay redacted."""
         session_values = [self.session] if self.session else []
         session_values.extend(item for name, item in response_headers if name.lower() == "mcp-session-id")
-        secrets = [(self._token, "[REDACTED_FIXTURE_CREDENTIAL]")]
-        secrets.extend((item, "[REDACTED_FIXTURE_SESSION]") for item in session_values if item)
+        secrets = [(item, "[REDACTED_FIXTURE_SESSION]") for item in session_values if item]
         secrets.sort(key=lambda pair: len(pair[0]), reverse=True)
         def redact(item):
             for secret, replacement in secrets:
@@ -346,7 +422,7 @@ class McpClient:
         except ValueError:
             body = redacted_data.decode("utf-8", errors="replace")
         encoded = None if value is None else json.dumps(value, separators=(",", ":")).encode()
-        request = {"http_method": method, "path": path, "connection_id": self._connection_id,
+        request = {"http_method": method, "path": path,
                    "session_sha256": hashlib.sha256(self.session.encode()).hexdigest() if self.session is not None else None,
                    "jsonrpc_method": value.get("method") if isinstance(value, dict) else None,
                    "jsonrpc_id": value.get("id") if isinstance(value, dict) else None,
@@ -357,33 +433,44 @@ class McpClient:
                           failure=failure, body_truncated=truncated,
                           submission="uncertain" if truncated else "observed")
 
-    def __init__(self, connection, control_root, timeout=60):
-        endpoint = connection["endpoint"]
-        matched = re.fullmatch(r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint["url"])
-        if (connection.get("schema") != 1 or endpoint.get("schema") != 1 or not matched
-                or not 0 < int(matched[1]) <= 65535 or endpoint.get("state") != "ready"
-                or connection["selection"]["selection"]["namespace"] != endpoint["namespace"]):
+    def __init__(self, endpoint, control_root, timeout=60, *, scope=None):
+        """endpoint: the tokenless endpoint record (`<control>/http-1/endpoint.json`,
+        `airkctl agents endpoint`), or a legacy connection record embedding one.
+        The CA is the record's ca_certificate_file when present, else
+        `<control>/http-1/ca.pem`; either must be an owner-private file under
+        control_root. No credential file is read. scope: optional per-call
+        scope (scope_value keywords) attached to evidence reads that name none;
+        a legacy scoped connection record defaults it to its enrolled index."""
+        record = endpoint
+        endpoint, port = checked_endpoint(record)
+        legacy = record is not endpoint
+        selection = record.get("selection") if legacy else None
+        if (isinstance(selection, dict) and isinstance(selection.get("selection"), dict)
+                and selection["selection"].get("namespace") != endpoint.get("namespace")):
             raise ValueError("HTTP fixture endpoint identity is invalid or unavailable")
-        ca = private_bytes(connection["ca_certificate_file"], control_root, 8192).decode("ascii")
+        reference = record.get("ca_certificate_file") if legacy else None
+        ca_file = reference if reference is not None else Path(control_root) / "http-1" / "ca.pem"
+        ca = private_bytes(ca_file, control_root, 8192).decode("ascii")
         if ca.count("-----BEGIN CERTIFICATE-----") != 1 or ca.count("-----END CERTIFICATE-----") != 1:
             raise ValueError("HTTP fixture needs exactly one reviewed issuer")
         if hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca)).hexdigest() != endpoint["ca_sha256"]:
             raise ValueError("HTTP fixture issuer differs from native control")
-        token = private_bytes(connection["credential_file"], control_root, 103).decode("ascii")
-        if not re.fullmatch(r"airk1\." + re.escape(connection["connection_id"]) + r"\.[0-9a-f]{64}", token):
-            raise ValueError("HTTP fixture credential identity is invalid")
+        if scope is None and isinstance(selection, dict) and selection.get("kind") == "scoped" \
+                and isinstance(selection["selection"].get("index_id"), str):
+            # Bridge for pre-U110 callers that still pass an enrolled
+            # single-index connection: read the index it was enrolled for.
+            scope = {"index_ids": [selection["selection"]["index_id"]]}
+        self.scope = scope_value(**scope) if scope else {}
         context = ssl.create_default_context()
         # Exercise the strict checks even on Python releases where they are not the default.
         context.verify_flags |= ssl.VERIFY_X509_STRICT
         context.load_verify_locations(cadata=ca)  # Add the local issuer; preserve normal roots/hostname checks.
-        self.connection = http.client.HTTPSConnection("127.0.0.1", int(matched[1]), context=context, timeout=timeout)
+        self.connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=timeout)
         self._certificate_sha256 = endpoint["certificate_sha256"]
-        self.connection.connect()  # Verify TLS and the native leaf before sending any bearer bytes.
+        self.connection.connect()  # Verify TLS and the native leaf before sending any request bytes.
         if hashlib.sha256(self.connection.sock.getpeercert(binary_form=True)).hexdigest() != endpoint["certificate_sha256"]:
             self.connection.close()
             raise ValueError("HTTP fixture peer differs from native control")
-        self._token = token
-        self._connection_id = connection["connection_id"]
         self.session = None
         self.initialized = False
         self.protocol = "2025-11-25"
@@ -394,7 +481,8 @@ class McpClient:
         encoded = None if value is None else json.dumps(value, separators=(",", ":")).encode()
         if encoded is not None and len(encoded) > 65_536:
             raise ValueError("HTTP fixture request exceeds native frame bound")
-        headers = {"Authorization": "Bearer " + self._token, "Accept": "application/json, text/event-stream",
+        # U110: never Authorization; the gateway would strip it anyway.
+        headers = {"Accept": "application/json, text/event-stream",
                    "Content-Type": "application/json",
                    "X-AIRK-Response-Mode": "full"}
         protocol = request_protocol(value, self.initialized, self.protocol)
@@ -408,7 +496,7 @@ class McpClient:
             self.connection.connect()
         if hashlib.sha256(self.connection.sock.getpeercert(binary_form=True)).hexdigest() != self._certificate_sha256:
             self.connection.close()
-            raise ValueError("HTTP fixture peer changed before authentication")
+            raise ValueError("HTTP fixture peer changed before the request")
         self.connection.request(method, path, encoded, headers)
         response = self.connection.getresponse()
         data = response.read(MAX_RESPONSE_BYTES + 1)
@@ -462,13 +550,28 @@ class McpClient:
     def api_catalog(self):
         return self._request("GET", path="/api/v1/tools")
 
-    def api_read(self, tool, arguments):
+    def api_read(self, tool, arguments, *, scoped=True):
+        """scoped=False sends the arguments unchanged (for example, to observe scope_required)."""
         if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", tool):
             raise ValueError("HTTP fixture API tool name is invalid")
+        if scoped:
+            arguments = scoped_arguments(tool, arguments, self.scope)
         return self._request("POST", arguments, "/api/v1/tools/" + tool)
 
-    def send(self, value):
-        response = self._request("POST", value)
+    def with_scope(self, value):
+        """The JSON-RPC request with this client's scope on a tools/call that names none."""
+        params = value.get("params") if isinstance(value, dict) and value.get("method") == "tools/call" else None
+        if not self.scope or not isinstance(params, dict) or not isinstance(params.get("arguments", {}), dict):
+            return value
+        arguments = params.get("arguments", {})
+        scoped = scoped_arguments(params.get("name"), arguments, self.scope)
+        if scoped is arguments:
+            return value
+        return {**value, "params": {**params, "arguments": scoped}}
+
+    def send(self, value, *, scoped=True):
+        """scoped=False sends the request unchanged (for example, to observe scope_required)."""
+        response = self._request("POST", self.with_scope(value) if scoped else value)
         if "id" in value:
             if not isinstance(response, dict) or response.get("id") != value["id"] or "error" in response:
                 raise ValueError("HTTP fixture received a mismatched or failed JSON-RPC reply")
@@ -493,4 +596,3 @@ class McpClient:
                 self._request("DELETE")
         finally:
             self.connection.close()
-            self._token = ""

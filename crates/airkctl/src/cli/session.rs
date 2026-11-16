@@ -92,6 +92,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--index",
     "--set",
     "--connection",
+    "--workspace",
 ];
 
 /// Wakes the session loop (a manual clock calls it after advancing).

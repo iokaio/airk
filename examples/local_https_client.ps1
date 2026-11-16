@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 #requires -Version 7.4
-# PowerShell 7.4+ on Windows: read the local JSON API from protected native metadata.
+# PowerShell 7.4+ on Windows: read the local JSON API from the native endpoint and CA files.
+# No token (U110); TLS with the AIRK CA is required and reads need a scope:
+# -Index/-Set (arrays such as -Index a,b when run with &; one value each under
+# pwsh -File) or -Workspace. -ControlDir is the service control directory that
+# holds http-1/endpoint.json and http-1/ca.pem.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Connection,
+    [Parameter(Mandatory = $true)][string]$ControlDir,
     [string]$Tool,
     [string]$Arguments = '{}',
-    [string]$ArgumentsFile
+    [string]$ArgumentsFile,
+    [string[]]$Index,
+    [string[]]$Set,
+    [string]$Workspace
 )
 $ErrorActionPreference = 'Stop'
 try {
@@ -47,7 +54,7 @@ public static class AirkLocalHttpsExample {
         }
     }
     public sealed class Reply { public int Status; public string Body; }
-    public static Reply Query(int port, byte[] pem, string token, string tool, string arguments) {
+    public static Reply Query(int port, byte[] pem, string tool, string arguments) {
         using(var ca=X509Certificate2.CreateFromPem(Encoding.ASCII.GetString(pem)))
         using(var handler=new HttpClientHandler { UseProxy=false, AllowAutoRedirect=false, AutomaticDecompression=DecompressionMethods.None, MaxResponseHeadersLength=64 }) {
             handler.ServerCertificateCustomValidationCallback=(request,certificate,chain,errors)=> {
@@ -72,7 +79,7 @@ public static class AirkLocalHttpsExample {
                 bool readTool=!String.IsNullOrEmpty(tool);
                 string route="/api/v1/tools"+(readTool?"/"+tool:"");
                 using(var request=new HttpRequestMessage(readTool?HttpMethod.Post:HttpMethod.Get,new Uri("https://127.0.0.1:"+port+route))) {
-                    request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",token);
+                    // U110: no Authorization header.
                     if(readTool) request.Content=new StringContent(arguments,Encoding.UTF8,"application/json");
                     using(var response=client.Send(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token))
                     using(var stream=response.Content.ReadAsStream(deadline.Token))
@@ -110,30 +117,51 @@ public static class AirkLocalHttpsExample {
         if ($after.LinkType -or $after.Length -ne $item.Length -or $after.LastWriteTimeUtc -ne $item.LastWriteTimeUtc) { throw 'Protected file changed' }
         return ,$bytes
     }
-    $info = [Text.Encoding]::UTF8.GetString((Read-NativePrivate $Connection 61440)) | ConvertFrom-Json -AsHashtable -Depth 100
-    if ($info.schema -ne 1 -or $info.endpoint.schema -ne 1 -or $info.endpoint.state -cne 'ready') { throw 'Obtain current ready native connection' }
-    if ($info.endpoint.url -cnotmatch '^https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp$') { throw 'Invalid loopback endpoint' }
+    if (-not [IO.Path]::IsPathFullyQualified($ControlDir)) { throw 'Expected the absolute service control directory' }
+    $native = Join-Path $ControlDir 'http-1'
+    $endpoint = [Text.Encoding]::UTF8.GetString((Read-NativePrivate (Join-Path $native 'endpoint.json') 65536)) | ConvertFrom-Json -AsHashtable -Depth 100
+    if ($endpoint.schema -ne 1 -or $endpoint.state -cne 'ready') { throw 'The native endpoint is not ready; start the AIRK service' }
+    if ($endpoint.url -cnotmatch '^https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp$') { throw 'Invalid loopback endpoint' }
     $port = [int]$Matches[1]
     if ($port -gt 65535) { throw 'Invalid loopback port' }
-    $pem = Read-NativePrivate $info.ca_certificate_file 8192
-    if (([regex]::Matches([Text.Encoding]::ASCII.GetString($pem), '-----BEGIN CERTIFICATE-----')).Count -ne 1 -or [AirkLocalHttpsExample]::CaHash($pem) -cne $info.endpoint.ca_sha256) { throw 'Native CA identity changed' }
-    $token = [Text.Encoding]::ASCII.GetString((Read-NativePrivate $info.credential_file 103))
-    if ($token -cnotmatch '^airk1\.([0-9a-f]{32})\.[0-9a-f]{64}$' -or $Matches[1] -cne $info.connection_id) { throw 'Invalid native credential identity' }
+    $pem = Read-NativePrivate (Join-Path $native 'ca.pem') 8192
+    if (([regex]::Matches([Text.Encoding]::ASCII.GetString($pem), '-----BEGIN CERTIFICATE-----')).Count -ne 1 -or [AirkLocalHttpsExample]::CaHash($pem) -cne $endpoint.ca_sha256) { throw 'Native CA identity changed' }
     $selectedTool = $null
     if ($ArgumentsFile) {
         if ($PSBoundParameters.ContainsKey('Arguments')) { throw 'Choose one argument input' }
         $Arguments = [Text.Encoding]::UTF8.GetString((Read-NativePrivate $ArgumentsFile 65536))
     }
+    $scoped = $Index.Count -gt 0 -or $Set.Count -gt 0 -or $PSBoundParameters.ContainsKey('Workspace')
+    if ($scoped -and -not $PSBoundParameters.ContainsKey('Tool')) { throw 'Scope options need -Tool' }
     if ($PSBoundParameters.ContainsKey('Tool')) {
-        if ($Tool -cnotmatch '^[A-Za-z0-9_]{1,64}$' -or ($Arguments | ConvertFrom-Json -AsHashtable -Depth 100) -isnot [Collections.IDictionary] -or [Text.Encoding]::UTF8.GetByteCount($Arguments) -gt 65536) { throw 'Use an advertised tool and bounded JSON argument object' }
+        $parsed = $Arguments | ConvertFrom-Json -AsHashtable -Depth 100
+        if ($Tool -cnotmatch '^[A-Za-z0-9_]{1,64}$' -or $parsed -isnot [Collections.IDictionary]) { throw 'Use an advertised tool and JSON argument object' }
+        if ($scoped) {
+            # U110: merge per-call scope selectors into the tool arguments.
+            foreach ($pair in @(@('index_ids', $Index), @('index_set_ids', $Set))) {
+                $values = @($pair[1] | Where-Object { $null -ne $_ })
+                if ($values.Count -eq 0) { continue }
+                # Assign directly: an if-expression would unroll a one-item list.
+                $existing = @()
+                if ($parsed.Contains($pair[0])) { $existing = $parsed[$pair[0]] }
+                if ($existing -isnot [Array]) { throw ($pair[0] + ' must be a list') }
+                $parsed[$pair[0]] = @($existing) + @($values | Where-Object { $existing -cnotcontains $_ })
+            }
+            if ($PSBoundParameters.ContainsKey('Workspace')) {
+                if (-not [IO.Path]::IsPathFullyQualified($Workspace) -or ($parsed.Contains('workspace') -and $parsed['workspace'] -cne $Workspace)) { throw 'Use one absolute workspace folder' }
+                $parsed['workspace'] = $Workspace
+            }
+            $Arguments = ConvertTo-Json -InputObject $parsed -Depth 100 -Compress
+        }
+        if ([Text.Encoding]::UTF8.GetByteCount($Arguments) -gt 65536) { throw 'Request exceeds transport budget' }
         $selectedTool = $Tool
     }
-    $reply = [AirkLocalHttpsExample]::Query($port, $pem, $token, $selectedTool, $Arguments)
+    $reply = [AirkLocalHttpsExample]::Query($port, $pem, $selectedTool, $Arguments)
     $result = $reply.Body | ConvertFrom-Json -AsHashtable -Depth 100
     [Console]::Out.WriteLine($reply.Body) # Complete raw JSON, including refusals.
     if ($reply.Status -ne 200 -or $result.isError -eq $true) { exit 1 }
     exit 0
 } catch {
-    [Console]::Error.WriteLine('AIRK local HTTPS read failed; obtain current verified connection metadata and inspect native status.')
+    [Console]::Error.WriteLine('AIRK local HTTPS read failed; check the service control directory, AIRK CA and native status.')
     exit 1
 }

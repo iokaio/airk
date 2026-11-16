@@ -87,18 +87,59 @@ fn semantic_positive_body(reply: &Value, index: IndexId, label: &str) -> Result<
     );
     Ok(value)
 }
+
+/// U110: one tokenless MCP read, compared in full with the same open read
+/// through the pipe. An `index_ids` argument names the call's scope (MCP
+/// takes it as the selector); otherwise the session's scope applies. A
+/// combined session's `project_ids` has no open equivalent and is dropped.
 #[cfg(feature = "local-inference")]
-fn semantic_positive_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
-    airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
+async fn open_mcp_read(
+    f: &Fixture,
+    label: &str,
+    mcp: &mut McpSession,
+    id: u64,
+    tool: &str,
+    args: &Value,
+) -> Result<Value> {
+    let mut args = args.clone();
+    let fields = args.as_object_mut().context("object arguments")?;
+    fields.remove("project_ids");
+    let named = fields.get("index_ids").cloned();
+    let scope = match named.as_ref() {
+        // A one-index open read takes the single-index backend, which has no
+        // member availability (combined selectors are refused there).
+        Some(ids) if ids.as_array().is_some_and(|ids| ids.len() == 1) => {
+            fields.remove("member_availability");
+            http::Scope::indexes(
+                ids.as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|id| id.as_str().map(str::to_owned).context("index id"))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        }
+        Some(ids) => http::Scope::indexes(
+            ids.as_array()
+                .context("index_ids is not an array")?
+                .iter()
+                .map(|id| id.as_str().map(str::to_owned).context("index id"))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        None => mcp.transport.scope.clone(),
+    };
+    let wire = mcp.call(id, tool, args.clone())?;
     ensure!(
         wire.get("error").is_none(),
-        "{label} RPC error; complete bounded reply: {wire}"
+        "{label}: MCP RPC failed: {wire}"
     );
-    let reply = wire
-        .get("result")
-        .filter(|value| value.is_object())
-        .with_context(|| format!("{label} RPC result absent or malformed: {wire}"))?;
-    semantic_positive_body(reply, index, label)
+    if let Some(fields) = args.as_object_mut() {
+        fields.remove("index_ids");
+    }
+    let piped = pipe_read(f, scope.open_selection(), tool, &args)
+        .await?
+        .map_err(|refused| anyhow::anyhow!("{label}: open pipe read refused: {refused}"))?;
+    assert_parity(label, &body(&piped)?, &body(&wire["result"])?)?;
+    Ok(wire)
 }
 
 async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
@@ -816,16 +857,19 @@ async fn provider_cutover_with_retirement(
                 .is_empty(),
         "actual native provider did not serve original: {warm}"
     );
-    let warm_mcp = old_mcp.call(10, "airk_search", vector.clone())?;
+    let warm_mcp = open_mcp_read(
+        &f,
+        "pre-split actual provider open pipe/MCP",
+        &mut old_mcp,
+        10,
+        "airk_search",
+        &vector,
+    )
+    .await?;
     ensure!(
         warm_mcp["result"]["isError"] != true,
         "warm MCP provider refused: {warm_mcp}"
     );
-    assert_parity(
-        "pre-split actual provider MCP",
-        &body(&warm)?,
-        &body(&warm_mcp["result"])?,
-    )?;
     let ControlResponse::Worker {
         identity: Some(warmed_worker),
         restarting: false,
@@ -1058,44 +1102,6 @@ async fn provider_cutover_with_retirement(
         .await
         .context("old native transport failed unexpectedly instead of returning scoped refusal")?;
     scope_refusal(&old_reply, &f.session)?;
-    // HTTP owns an immutable catalog delivery ticket for its whole TLS socket.
-    // A restrictive commit forbids every old-ticket write, including sanitized
-    // scope errors. Observe that closure once; never replay the evidence read.
-    super::permanent_trim::deleted_source_recovery::require_catalog_fenced_socket(
-        old_mcp.request(
-            11,
-            "tools/call",
-            json!({"name":"airk_search","arguments":vector}),
-        ),
-    )?;
-    // Reconnect using the SAME saved credential and frozen selection. Native
-    // authentication must now refuse the retired authority, without enrollment,
-    // a narrowed selection, or a fresh grant being substituted.
-    let original_connection = old_mcp.transport.connection.clone();
-    let credential = Path::new(&original_connection.credential_file);
-    let credential_digest = airk_cli::runtime_pair::digest_file(credential)?;
-    let mut reconnected = old_mcp.transport.reconnect(&f.control)?;
-    ensure!(
-        reconnected.connection == original_connection,
-        "post-split reconnect changed original credential or authority"
-    );
-    let refused = reconnected.request(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))
-        .err().context("fresh old-authority HTTPS connection initialized after restrictive split")?;
-    let Some(refusal) = refused.downcast_ref::<http::HttpRefused>() else {
-        return Err(refused
-            .context("fresh old-authority HTTPS connection failed without a typed scope refusal"));
-    };
-    ensure!(
-        refusal.status == 403
-            && refusal.body
-                == json!({"schema":"airk.local-api-error/1","error":{"code":"native_grant_refused"}}),
-        "fresh old-authority HTTPS connection refused for a different reason: {refusal}"
-    );
-    ensure!(
-        airk_cli::runtime_pair::digest_file(credential)? == credential_digest,
-        "post-split old-authority check rotated its credential"
-    );
-    drop(reconnected);
     old.close();
     old.shutdown().await?;
     drop(old_mcp);
@@ -1127,11 +1133,24 @@ async fn provider_cutover_with_retirement(
         let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":16384,"verification":"off","response_mode":"full","project_ids":[f.projects[2]],"index_ids":[destination],"member_availability":"require"});
         let native = native_read(backend.as_ref(), "airk_search", &args).await?;
         let cli = f.cli("airk_search", &args).await?;
-        let wire = mcp.call(19, "airk_search", args)?;
+        let wire = open_mcp_read(
+            &f,
+            "actual paid semantic destination open pipe/MCP",
+            &mut mcp,
+            19,
+            "airk_search",
+            &args,
+        )
+        .await?;
         let result = semantic_positive_body(&native, destination, "semantic destination native")?;
         let cli_result = semantic_positive_body(&cli, destination, "semantic destination CLI")?;
-        let mcp_result =
-            semantic_positive_mcp_body(&wire, destination, "semantic destination MCP")?;
+        // U110: the destination named alone is a single-index open read: its
+        // body is the index's own result, not a combined member wrapper.
+        ensure!(
+            wire["result"]["isError"] != true,
+            "semantic destination MCP refused: {wire}"
+        );
+        let mcp_result = body(&wire["result"])?;
         let ranking = result["ranking"]
             .as_array()
             .context("semantic destination ranking absent")?;
@@ -1149,7 +1168,12 @@ async fn provider_cutover_with_retirement(
             );
         }
         assert_parity("actual paid semantic destination CLI", &result, &cli_result)?;
-        assert_parity("actual paid semantic destination MCP", &result, &mcp_result)?;
+        ensure!(
+            mcp_result["hits"]
+                .as_array()
+                .is_some_and(|hits| !hits.is_empty()),
+            "ready destination produced no MCP vector evidence: {mcp_result}"
+        );
     }
     for (tool, args) in [
         (
@@ -1168,7 +1192,15 @@ async fn provider_cutover_with_retirement(
             "post-split evidence refused: {native}"
         );
         let cli = f.cli(tool, &args).await?;
-        let mcp_reply = mcp.call(20, tool, args)?;
+        let mcp_reply = open_mcp_read(
+            &f,
+            &format!("post-split {tool} open pipe/MCP"),
+            &mut mcp,
+            20,
+            tool,
+            &args,
+        )
+        .await?;
         ensure!(
             cli["isError"] != true && mcp_reply["result"]["isError"] != true,
             "parity transport returned an error instead of evidence: CLI={cli};MCP={mcp_reply}"
@@ -1191,11 +1223,6 @@ async fn provider_cutover_with_retirement(
             "native combined result omitted/added a selected member"
         );
         assert_parity("post-split full CLI", &body(&native)?, &body(&cli)?)?;
-        assert_parity(
-            "post-split full MCP",
-            &body(&native)?,
-            &body(&mcp_reply["result"])?,
-        )?;
         if tool == "airk_list_files" {
             let body = body(&native)?;
             let mut partition = std::collections::BTreeMap::new();
@@ -1285,7 +1312,15 @@ async fn provider_cutover_with_retirement(
         let args = json!({"path":path,"project_ids":[f.projects[2]],"index_ids":[index],"verification":"off","response_mode":"full"});
         let native = native_read(backend.as_ref(), "airk_file_info", &args).await?;
         let cli = f.cli("airk_file_info", &args).await?;
-        let reply = mcp.call(21, "airk_file_info", args)?;
+        let reply = open_mcp_read(
+            &f,
+            "split source location open pipe/MCP",
+            &mut mcp,
+            21,
+            "airk_file_info",
+            &args,
+        )
+        .await?;
         ensure!(
             native["isError"] != true
                 && cli["isError"] != true
@@ -1309,11 +1344,6 @@ async fn provider_cutover_with_retirement(
             "split changed exported original native source coordinates: {member}"
         );
         assert_parity("split source location CLI", &result, &body(&cli)?)?;
-        assert_parity(
-            "split source location MCP",
-            &result,
-            &body(&reply["result"])?,
-        )?;
     }
     backend.close();
     backend.shutdown().await?;

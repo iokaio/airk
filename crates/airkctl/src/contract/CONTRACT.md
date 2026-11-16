@@ -112,9 +112,26 @@ installed-process startup journey; that qualification uses the matched pair.
   stays unchanged. Unknown fields, missing identity fields/status, unknown enums
   and noncanonical connection IDs are refused. The explicit `status: null`
   observation remains valid. Native custom keys and container paths are carried
-  unchanged, including keys recognized through a proven helper or launcher.
+  unchanged, including custom keys recognized through a legacy AIRK credential
+  marker (U110) or a verified launcher.
   The contract landed before the handler. The served handler advertises
   `agents-entry-remove/1`; consumers require it from the verified CLI.
+- **Agent connect (U110):** `agents connect --client <claude|codex|vscode>
+  [--project <folder> | --user] [--server-key <airk…>]` writes an entry naming
+  only the live loopback endpoint URL and `X-AIRK-Response-Mode: terse`, and
+  prints `{"schema":1,"client","scope","file","serverKey","url","changed"}`.
+  It enrolls no connection: `--connection-id` and `--selection-file` are
+  refused, `--open` is accepted and is the default. `agents repair` rewrites
+  entries that name another endpoint or carry legacy credential fields to the
+  URL-only form and ignores `--connection-id`. Its actions and `agents remove`
+  actions keep their existing fields, `connectionId` included (the id a legacy
+  credential field names, else null).
+- **Workspace defaults (U110):** `scope default --workspace <absolute folder>…
+  [--index <id|name>]… [--set <id|name>]…` stores the default scope of each
+  folder in the service (no selector clears it); `scope defaults` lists them.
+  Both print `{"schema":1,"entries":[{"folder","index_ids","index_set_ids",
+  "applied_unix_ms"}]}` with every stored default. The documents are not
+  schema roots of the generated I2 schema.
 - **Session protocol 2** (`SessionRequest`/`SessionResponse`/`SessionEventFrame`):
   4-byte big-endian length then JSON (the shared codec). Replies keep the
   protocol 1 `{id, outcome}` shape; events are `{event:{kind,…}}`. Budgets are
@@ -185,8 +202,9 @@ Private agent-edit retention records have a separate
 unchanged. Connect file errors use nonretryable `agent_config_edit_refused`,
 `agent_config_edit_conflict_retained`, or `agent_config_edit_outcome_unknown`;
 the latter uses the existing outcome-unknown exit class. Conflict explicitly
-discloses that proposed bytes may be published. The selected connection
-identity and private manual-recovery location remain visible on later failure.
+discloses that proposed bytes may be published. Under U110 connect names no
+connection; the private manual-recovery location remains visible on later
+failure.
 Repair/remove preserve per-action errors. No restore/discard capability is
 advertised; record fixtures do not qualify native publication by themselves.
 

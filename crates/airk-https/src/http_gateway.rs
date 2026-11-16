@@ -2,7 +2,7 @@
 //! Bounded HTTPS ingress. Credentials and native grants are checked for every request.
 use airk_catalog_control::catalog_admission::{IssueTicket, NativeCatalogAdmission};
 use airk_core::{identity::Incarnation, service_http::EndpointDescriptor};
-use airk_endpoint::http_endpoint::{AuthenticatedCredential, BoundEndpoint, CredentialStore};
+use airk_endpoint::http_endpoint::{AuthenticatedCredential, BoundEndpoint};
 use airk_mcp::{
     read_attempt::ReadAttemptContext,
     remote::{
@@ -70,6 +70,8 @@ const AUTH_TASKS: usize = 16;
 const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FRAME: usize = 1024 * 1024;
 const STREAM_SECONDS: u64 = 120;
+/// Concurrent MCP sessions across every agent (U110: all share one client).
+const SESSIONS: usize = 128;
 
 struct CachedService {
     delivery: Arc<Mutex<CredentialDelivery>>,
@@ -82,7 +84,6 @@ struct CachedService {
 }
 struct State {
     authority: String,
-    credentials: Arc<Mutex<CredentialStore>>,
     validate: ValidateRequest,
     checkpoint_closed: AdmissionClosed,
     factory: ReadSessionFactory,
@@ -91,7 +92,6 @@ struct State {
     delivery_cells: Mutex<CredentialDeliveryRegistry>,
     connections: Arc<Semaphore>,
     handshakes: Arc<Semaphore>,
-    authentication: Arc<Semaphore>,
     validation: Arc<Semaphore>,
     output: Arc<Semaphore>,
     tls: watch::Receiver<tokio_rustls::TlsAcceptor>,
@@ -102,6 +102,8 @@ struct State {
     delivery_guard_factory: airk_mcp::read_attempt::ReadDeliveryGuardFactory,
     /// The listener's port (the exact `Host` and `Origin` of `/admin`).
     port: u16,
+    /// U110: the endpoint's catalog namespace, the local agent session's.
+    namespace: Incarnation,
     /// The `/admin` plane (split Phase 5); set once by the service owner.
     admin: std::sync::OnceLock<Arc<crate::admin_plane::AdminPlane>>,
 }
@@ -110,7 +112,6 @@ pub struct Gateway(Arc<State>);
 impl Gateway {
     pub fn new(
         endpoint: &EndpointDescriptor,
-        credentials: Arc<Mutex<CredentialStore>>,
         tls: watch::Receiver<tokio_rustls::TlsAcceptor>,
         validate: ValidateRequest,
         native: NativeAdmission,
@@ -118,16 +119,14 @@ impl Gateway {
         endpoint.validate()?;
         Ok(Self(Arc::new(State {
             authority: format!("127.0.0.1:{}", endpoint.url.port()),
-            credentials,
             validate,
             checkpoint_closed: native.closed,
             factory: ReadSessionFactory::default(),
-            sessions: HttpSessionBudget::new(128)?,
+            sessions: HttpSessionBudget::new(SESSIONS)?,
             clients: Mutex::new(HashMap::new()),
             delivery_cells: Mutex::new(CredentialDeliveryRegistry::default()),
             connections: Arc::new(Semaphore::new(CONNECTIONS)),
             handshakes: Arc::new(Semaphore::new(HANDSHAKES)),
-            authentication: Arc::new(Semaphore::new(AUTH_TASKS)),
             validation: Arc::new(Semaphore::new(AUTH_TASKS)),
             output: Arc::new(Semaphore::new(OUTPUT_BYTES)),
             tls,
@@ -137,6 +136,7 @@ impl Gateway {
             settle: native.settle,
             delivery_guard_factory: native.delivery_guard_factory,
             port: endpoint.url.port(),
+            namespace: endpoint.namespace,
             admin: std::sync::OnceLock::new(),
         })))
     }
@@ -433,37 +433,10 @@ impl Gateway {
         if airk_endpoint::admin_contract::bearer_plane_cookie(&cookies).is_some() {
             return Err(error(StatusCode::FORBIDDEN, "cookie_on_bearer_plane"));
         }
-        if request
-            .headers()
-            .get_all(http::header::AUTHORIZATION)
-            .iter()
-            .count()
-            != 1
-        {
-            return Err(error(StatusCode::UNAUTHORIZED, "credential_required"));
-        }
-        let token = request
-            .headers_mut()
-            .remove(http::header::AUTHORIZATION)
-            .and_then(|header| {
-                header
-                    .to_str()
-                    .ok()
-                    .and_then(|value| value.strip_prefix("Bearer "))
-                    .filter(|value| value.len() <= 103)
-                    .map(str::to_owned)
-            })
-            .ok_or_else(|| error(StatusCode::UNAUTHORIZED, "credential_required"))?;
-        let permit = self
-            .0
-            .authentication
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "authentication_busy"))?;
-        let store = self.0.credentials.clone();
-        // Capture before asynchronous ledger authentication. Revocation can
-        // reclaim its map slot only because an older authentication epoch can
-        // never create a new delivery cell afterward.
+        // U110: `/mcp` takes no credential. Any `Authorization` header is
+        // stripped unread; every request is the built-in local agent session,
+        // an open session with no stored default (scope is named per call).
+        request.headers_mut().remove(http::header::AUTHORIZATION);
         let authentication_epoch = self
             .0
             .delivery_cells
@@ -475,30 +448,7 @@ impl Gateway {
                 )
             })?
             .epoch;
-        let authentication_context = context.clone();
-        let task = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            // The bounded blocking pool owns this wait; normal simultaneous
-            // authentication must not masquerade as invalid credentials.
-            let store = store.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-            if authentication_context.cancellation().is_cancelled()
-                || Instant::now() >= authentication_context.deadline()
-            {
-                return Err(StatusCode::GATEWAY_TIMEOUT);
-            }
-            store
-                .authenticate(&token, now_ms())
-                .map_err(|_| StatusCode::UNAUTHORIZED)
-        });
-        let authenticated = tokio::select! {_=context.cancellation().cancelled()=>return Err(error(StatusCode::SERVICE_UNAVAILABLE,"request_canceled")),
-        result=tokio::time::timeout_at(tokio::time::Instant::from_std(context.deadline()),task)=>match result {
-            Ok(Ok(Ok(authenticated)))=>authenticated,
-            Ok(Ok(Err(StatusCode::UNAUTHORIZED)))=>return Err(error(StatusCode::UNAUTHORIZED,"credential_refused")),
-            Ok(Ok(Err(StatusCode::GATEWAY_TIMEOUT)))=>return Err(error(StatusCode::GATEWAY_TIMEOUT,"request_deadline_exhausted")),
-            Ok(Ok(Err(status)))=>return Err(error(status,"authentication_unavailable")),
-            Ok(Err(_))=>return Err(error(StatusCode::SERVICE_UNAVAILABLE,"authentication_unavailable")),
-            Err(_)=>{context.cancellation().cancel();return Err(error(StatusCode::GATEWAY_TIMEOUT,"request_deadline_exhausted"));}
-        }};
+        let authenticated = local_agent_session(self.0.namespace);
         delivery
             .capture(&authenticated.selection)
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
@@ -660,7 +610,12 @@ impl Gateway {
                 },
                 self.0.authority.clone(),
                 vec![],
-                HttpReadLimits::default(),
+                // U110: every agent shares the one local agent session, so its
+                // per-client bound is the gateway's global session bound.
+                HttpReadLimits {
+                    sessions_per_client: SESSIONS,
+                    ..HttpReadLimits::default()
+                },
             )
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_scope_unavailable"))?;
             let read_delivery = ReadDeliveryCell::default();
@@ -1401,6 +1356,28 @@ fn is_admin_target<B>(request: &Request<B>) -> bool {
             airk_endpoint::admin_contract::PathMatch::NotAdmin
         )
 }
+/// U110: the built-in local agent session: the reserved connection id, an
+/// open selection of the endpoint's namespace, agent choice on and no stored
+/// default. It never expires and is never revoked.
+fn local_agent_session(namespace: Incarnation) -> AuthenticatedCredential {
+    AuthenticatedCredential {
+        client: airk_core::usage::ClientFamily::Unknown,
+        connection_id: airk_core::service_http::LOCAL_AGENT_CONNECTION,
+        generation: 1,
+        selection: airk_core::service_http::HttpSelection::Open {
+            selection: airk_core::service_http::OpenHttpSelection { namespace },
+        },
+        expires_unix_ms: u64::MAX,
+        explorer_descriptor: None,
+        open: Some(airk_core::agent_connection::OpenConnectionState {
+            defaults_revision: 1,
+            default_index_ids: Vec::new(),
+            default_index_set_ids: Vec::new(),
+            agent_choice: airk_core::agent_connection::AgentChoice::On,
+        }),
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

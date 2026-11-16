@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-// The removal-only recognizer (plan §6.4, §8.4; U12, U92) against the shared
+// The removal-only recognizer (plan §6.4, §8.4; U12, U92, U110) against the shared
 // cases the Rust `airkctl agents` implementation is tested with
-// (fixtures/split/agents/config_cases.json): recognition of project entries
+// (fixtures/split/agents/config_cases.json): recognition of every entry
 // and every reviewed `remove` expectation, byte for byte.
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { declarations, recognize, remove, removeAll, type Agent, type Scope } from '../airkctl/agents/recognizer';
-import { connectionUrl, inputCredential, reportedConnections, retiredStdioWithoutIndex, sweepWithoutService, type SweepFileSystem } from '../airkctl/agents';
+import { containerOf, declarations, recognize, remove, removeAll, type Agent, type Scope } from '../airkctl/agents/recognizer';
+import { connectArgv, connectionUrl, defaultFor, inputCredential, retiredStdioWithoutIndex, scopeDefaultArgv, sweepWithoutService, workspaceDefaultEntries, type SweepFileSystem } from '../airkctl/agents';
 
 const repo = path.resolve(__dirname, '../../../..');
 interface ConfigCase {
@@ -34,13 +34,15 @@ for (const item of fixture.cases.filter(entry => entry.remove)) {
     });
 }
 
-test('project recognition equals the reviewed entries of every readable project case', () => {
+test('recognition equals the reviewed entries of every readable case (U110: by URL plus AIRK key or credential marker)', () => {
     let compared = 0;
     for (const item of fixture.cases) {
-        if (item.scope !== 'project' || item.source === null || !item.entries) { continue; }
+        if (item.source === null || !item.entries) { continue; }
         let rows;
         try { rows = declarations(item.agent, item.source); } catch { assert.deepEqual(item.entries, [], item.name); continue; }
-        const recognized = rows.filter(row => recognize(item.agent, 'project', row, item.observations.verifiedLaunchers))
+        // Project files are read only at the agent's own container (classify.rs).
+        const own = (row: { container: string[] }) => item.scope === 'user' || (row.container.length === 1 && row.container[0] === containerOf(item.agent));
+        const recognized = rows.filter(row => own(row) && recognize(item.agent, item.scope, row, item.observations.verifiedLaunchers))
             .map(row => JSON.stringify([row.container, row.serverKey])).sort();
         const expected = item.entries.map(entry => JSON.stringify([entry.containerPath, entry.serverKey])).sort();
         assert.deepEqual(recognized, expected, item.name); compared++;
@@ -50,7 +52,7 @@ test('project recognition equals the reviewed entries of every readable project 
 
 test('the no-service sweep removes recognized project entries only and keeps every other byte', async () => {
     const claude = fixture.cases.find(item => item.name === 'claude: stdio AIRK entries are retired; an absent launcher is reported')!;
-    const foreign = fixture.cases.find(item => item.name === 'claude: pre-split helper and bare token entries are not AIRK-owned')!;
+    const foreign = fixture.cases.find(item => item.name === 'claude: loopback servers under other keys without an AIRK credential marker are not AIRK entries')!;
     const files = new Map<string, string>([[path.join('/w', '.mcp.json'), claude.source!], [path.join('/x', '.mcp.json'), foreign.source!]]);
     const fsys: SweepFileSystem = {
         lstat: async file => files.has(file) ? { directory: false, link: false } : [path.resolve('/w'), path.resolve('/x')].includes(path.resolve(file)) ? { directory: true, link: false } : undefined,
@@ -67,7 +69,7 @@ test('the no-service sweep removes recognized project entries only and keeps eve
 
 test('with a service, only retired stdio entries whose folder has no index are removed', async () => {
     const stdio = fixture.cases.find(item => item.name === 'claude: stdio AIRK entries are retired; an absent launcher is reported')!;
-    const https = fixture.cases.find(item => item.name === 'claude: U92 entry is ok and connect is idempotent')!;
+    const https = fixture.cases.find(item => item.name === 'claude: U110 entry is ok and connect is idempotent')!;
     const run = async (indexed: string[]) => {
         const files = new Map<string, string>([[path.join('/w', '.mcp.json'), stdio.source!], [path.join('/y', '.mcp.json'), https.source!]]);
         const fsys: SweepFileSystem = {
@@ -88,7 +90,7 @@ test('with a service, only retired stdio entries whose folder has no index are r
     assert.deepEqual(await run(['/w', '/work/proj']), []);
 });
 
-test('credential input, connection URL and reported connections are strict', async () => {
+test('credential input and the endpoint URL are strict', async () => {
     const airkctl = { oneShot: async (argv: string[]) => {
         assert.deepEqual(argv, ['agents', 'credential', '--connection-id', '01'.repeat(16), '--format', 'header-json']);
         return { exitCode: 0, class: 'success', stdout: '{"Authorization":"Bearer abcdefghijklmnopqrstuvwxyz012345"}', stderr: '' };
@@ -98,5 +100,34 @@ test('credential input, connection URL and reported connections are strict', asy
     await assert.rejects(inputCredential(airkctl, { connection_id: 'NOT-AN-ID' }), /invalid_http_credential_arguments/);
     assert.equal(connectionUrl({ endpoint: { url: 'https://127.0.0.1:57421/mcp' } }), 'https://127.0.0.1:57421/mcp');
     assert.equal(connectionUrl({ endpoint: { url: 'https://example.com/mcp' } }), undefined);
-    assert.deepEqual(reportedConnections({ entries: [{ connectionId: '01'.repeat(16) }, { connectionId: '01'.repeat(16) }, { connectionId: 'x' }] }), ['01'.repeat(16)]);
+    assert.equal(connectionUrl({ url: 'https://127.0.0.1:61021/mcp', state: 'ready' }), 'https://127.0.0.1:61021/mcp', 'an agents endpoint answer');
+});
+
+test('U110 agents connect and scope default argv: URL-only connect, one --workspace per folder, no selectors clears', () => {
+    assert.deepEqual(connectArgv('codex', '/work/app'), ['agents', 'connect', '--client', 'codex', '--project', '/work/app']);
+    const idx = 'idx_' + '12'.repeat(16), set = 'prj_' + '34'.repeat(16);
+    assert.deepEqual(scopeDefaultArgv(['/work/app', '/work/docs'], { index_ids: [idx], project_ids: [set] }),
+        ['scope', 'default', '--workspace', '/work/app', '--workspace', '/work/docs', '--index', idx, '--set', set]);
+    assert.deepEqual(scopeDefaultArgv(['C:\\work\\app'], null), ['scope', 'default', '--workspace', 'C:\\work\\app']);
+    assert.deepEqual(scopeDefaultArgv(['/work/app'], { index_ids: [], project_ids: [] }), ['scope', 'default', '--workspace', '/work/app']);
+    assert.throws(() => scopeDefaultArgv([], null));
+});
+
+test('U110 workspace defaults: strict document, and the most specific stored folder containing the workspace applies', () => {
+    const doc = { schema: 1, entries: [
+        { folder: 'C:\\Work', index_ids: ['idx_a'], index_set_ids: [], applied_unix_ms: 1 },
+        { folder: 'C:\\Work\\App', index_ids: [], index_set_ids: ['prj_b'], applied_unix_ms: 2 },
+        { folder: '/srv/code', index_ids: ['idx_c'], index_set_ids: [], applied_unix_ms: 3 },
+    ] };
+    const entries = workspaceDefaultEntries(doc);
+    assert.deepEqual(entries, doc.entries);
+    assert.equal(defaultFor(entries, 'c:/work/app/src', true)?.folder, 'C:\\Work\\App', 'Windows: case-insensitive, / and \\ equal, most specific wins');
+    assert.equal(defaultFor(entries, 'C:\\Work\\Apple', true)?.folder, 'C:\\Work', 'a name prefix is not a containing folder');
+    assert.equal(defaultFor(entries, 'C:\\Other', true), undefined);
+    assert.equal(defaultFor(entries, '/srv/code/', false)?.folder, '/srv/code');
+    assert.equal(defaultFor(entries, '/SRV/code', false), undefined, 'POSIX paths are case-sensitive');
+    for (const bad of [null, { schema: 2, entries: [] }, { schema: 1 }, { schema: 1, entries: [{ folder: 1, index_ids: [], index_set_ids: [], applied_unix_ms: 1 }] },
+        { schema: 1, entries: [{ folder: '/a', index_ids: [1], index_set_ids: [], applied_unix_ms: 1 }] }]) {
+        assert.throws(() => workspaceDefaultEntries(bad), JSON.stringify(bad));
+    }
 });

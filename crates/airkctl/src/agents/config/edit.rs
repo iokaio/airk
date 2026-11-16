@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Pure edits of recognized AIRK entries: `connect` inserts the HTTPS entry
-//! `httpServerFields` (model.ts) renders, with the U92 helper; `repair`
-//! rewrites the URL, helper and credential reference of a recognized HTTPS
-//! entry; `remove` deletes a recognized entry and, for VS Code, its
-//! credential input (agentConfig.ts `syncVscodeHttpInput`). Anything AIRK
-//! did not provably write is refused, so other servers, comments, disabled
-//! states and tool/approval policies are never rewritten.
+//! Pure edits of recognized AIRK entries (U110): `connect` inserts the HTTPS
+//! entry with only the endpoint URL and the `X-AIRK-Response-Mode` header;
+//! `repair` points a recognized HTTPS entry at the live endpoint and strips
+//! its legacy credential fields (`Authorization`, `headersHelper`,
+//! `http_headers_helper`, `bearer_token_env_var`) and, for VS Code, the
+//! credential input nothing references any more; `remove` deletes a
+//! recognized entry and, for VS Code, that input (agentConfig.ts
+//! `syncVscodeHttpInput`). Anything AIRK did not provably write is refused, so
+//! other servers, comments, disabled states and tool/approval policies are
+//! never rewritten.
 use super::jsonc::{self, Kind, Out};
 use super::recognize::{self, Declaration, MAX_BYTES, Parser, Recognized};
 use super::{Agent, Scope, toml};
@@ -14,18 +17,8 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 const MODE: &str = "X-AIRK-Response-Mode";
-/// The VS Code command the extension registers to resolve the input.
+/// The VS Code command the extension registered to resolve legacy inputs.
 const VSCODE_COMMAND: &str = "airk.httpCredential";
-
-/// The connection an entry should name.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Connection<'a> {
-    pub(crate) id: Incarnation,
-    /// The live endpoint, `https://127.0.0.1:<port>/mcp`.
-    pub(crate) url: &'a str,
-    /// The installed `airkctl` the helper names.
-    pub(crate) airkctl: &'a str,
-}
 
 /// One server declaration in one file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,19 +27,8 @@ pub(crate) struct Target {
     pub(crate) server_key: String,
 }
 
-fn env_header(id: Incarnation) -> String {
-    format!(
-        "Bearer ${{AIRK_MCP_TOKEN_{}}}",
-        id.to_string().to_ascii_uppercase()
-    )
-}
-
 fn input_id(id: Incarnation) -> String {
     format!("airkToken_{id}")
-}
-
-fn input_header(id: Incarnation) -> String {
-    format!("Bearer ${{input:{}}}", input_id(id))
 }
 
 fn text(value: &str) -> Out {
@@ -62,6 +44,7 @@ fn object(fields: Vec<(&str, Out)>) -> Out {
     )
 }
 
+/// The legacy credential input the extension wrote for connection `id`.
 fn input(id: Incarnation) -> Out {
     object(vec![
         ("id", Out::Str(input_id(id))),
@@ -78,46 +61,22 @@ fn unverified(agent: Agent) -> String {
     format!("http_client_compatibility_unverified: {}", agent.name())
 }
 
-fn checked(connection: &Connection<'_>) -> Result<(), String> {
-    if recognize::http_url(connection.url) {
+fn checked(url: &str) -> Result<(), String> {
+    if recognize::http_url(url) {
         Ok(())
     } else {
-        Err(format!("invalid AIRK HTTPS endpoint {:?}", connection.url))
+        Err(format!("invalid AIRK HTTPS endpoint {url:?}"))
     }
 }
 
-/// The JSON server fields of `httpServerFields`, helper per U92.
-fn json_fields(agent: Agent, connection: &Connection<'_>) -> Result<Out, String> {
-    let url = text(connection.url);
+/// The U110 JSON server fields: the endpoint URL and the response-mode
+/// header, no `Authorization` and no `headersHelper`.
+fn json_fields(agent: Agent, url: &str) -> Result<Out, String> {
     match agent {
-        Agent::Claude => Ok(object(vec![
+        Agent::Claude | Agent::Copilot => Ok(object(vec![
             ("type", text("http")),
-            ("url", url),
-            (
-                "headers",
-                object(vec![
-                    ("Authorization", Out::Str(env_header(connection.id))),
-                    (MODE, text("terse")),
-                ]),
-            ),
-            (
-                "headersHelper",
-                Out::Str(recognize::helper_command(
-                    connection.airkctl,
-                    connection.id,
-                )?),
-            ),
-        ])),
-        Agent::Copilot => Ok(object(vec![
-            ("type", text("http")),
-            ("url", url),
-            (
-                "headers",
-                object(vec![
-                    ("Authorization", Out::Str(input_header(connection.id))),
-                    (MODE, text("terse")),
-                ]),
-            ),
+            ("url", text(url)),
+            ("headers", object(vec![(MODE, text("terse"))])),
         ])),
         other => Err(unverified(other)),
     }
@@ -160,15 +119,24 @@ fn owned(
     Ok((row.clone(), recognized))
 }
 
-/// Write the HTTPS entry `server_key` into the agent's top-level container.
-/// `source` is `None` for an absent file. An existing recognized entry is
-/// repaired in place; any other entry with that key is refused.
+/// Whether the declaration's `table` already names the response mode.
+fn has_mode(row: &Declaration, table: &str) -> bool {
+    row.fields
+        .get(table)
+        .and_then(Value::as_object)
+        .is_some_and(|headers| headers.keys().any(|key| key.eq_ignore_ascii_case(MODE)))
+}
+
+/// Write the HTTPS entry `server_key` for the endpoint `url` into the
+/// agent's top-level container. `source` is `None` for an absent file. An
+/// existing recognized entry is repaired in place; any other entry with that
+/// key is refused.
 pub(crate) fn connect(
     agent: Agent,
     scope: Scope,
     source: Option<&str>,
     server_key: &str,
-    connection: &Connection<'_>,
+    url: &str,
 ) -> Result<String, String> {
     if !agent.connectable() {
         return Err(unverified(agent));
@@ -178,7 +146,7 @@ pub(crate) fn connect(
             "AIRK server keys start with airk; {server_key:?} is not one."
         ));
     }
-    checked(connection)?;
+    checked(url)?;
     let target = Target {
         container_path: vec![agent.container().to_string()],
         server_key: server_key.to_string(),
@@ -187,98 +155,86 @@ pub(crate) fn connect(
     let source = source.unwrap_or(empty);
     let rows = recognize::declarations(agent.parser(), source)?;
     if find(&rows, &target).is_some() {
-        return repair(agent, scope, source, &target, connection);
+        return repair(agent, scope, source, &target, url);
     }
     let result = if agent == Agent::Codex {
-        let helper = recognize::helper_command(connection.airkctl, connection.id)?;
-        toml::append_server(source, server_key, connection.url, &helper)
+        toml::append_server(source, server_key, url)
     } else {
-        let fields = json_fields(agent, connection)?;
-        let result = jsonc::insert_member(source, &target.container_path, server_key, &fields)?;
-        if agent == Agent::Copilot {
-            sync_input(&result, connection.id, false)?
-        } else {
-            result
-        }
+        let fields = json_fields(agent, url)?;
+        jsonc::insert_member(source, &target.container_path, server_key, &fields)?
     };
     bounded(result)
 }
 
-/// Point a recognized HTTPS entry at `connection`: its URL, its helper
-/// (Claude Code, Codex) and its credential reference. Other fields stay.
+/// Point a recognized HTTPS entry at the endpoint `url` and strip its legacy
+/// credential fields (U110); add the response-mode header when the entry has
+/// none. Other fields stay.
 pub(crate) fn repair(
     agent: Agent,
     scope: Scope,
     source: &str,
     target: &Target,
-    connection: &Connection<'_>,
+    url: &str,
 ) -> Result<String, String> {
     if !agent.connectable() {
         return Err(unverified(agent));
     }
-    checked(connection)?;
+    checked(url)?;
     let (row, recognized) = owned(agent, scope, source, target)?;
-    let Recognized::Https { id: previous, .. } = recognized else {
+    let Recognized::Https { id, stale, .. } = recognized else {
         return Err(
             "Retired stdio AIRK entries are not repaired; remove the entry and connect again."
                 .into(),
         );
     };
-    let mut path = target.container_path.clone();
-    path.push(target.server_key.clone());
-    let at = |fields: &[&str]| -> Vec<String> {
-        path.iter()
-            .cloned()
-            .chain(fields.iter().map(|f| f.to_string()))
-            .collect()
-    };
-    let result = match agent {
-        Agent::Claude => {
-            let helper = recognize::helper_command(connection.airkctl, connection.id)?;
-            let mut result = jsonc::set_string(source, &at(&["url"]), connection.url)?;
-            result = jsonc::set_string(&result, &at(&["headersHelper"]), &helper)?;
-            let authorization = row
-                .fields
-                .get("headers")
-                .and_then(|headers| headers.get("Authorization"));
-            if authorization.is_some() {
-                result = jsonc::set_string(
-                    &result,
-                    &at(&["headers", "Authorization"]),
-                    &env_header(connection.id),
-                )?;
-            }
-            result
+    let result = if agent.parser() == Parser::Codex {
+        if target.container_path != ["mcp_servers"] {
+            return Err("AIRK edits Codex servers only in the top-level mcp_servers table.".into());
         }
-        Agent::Copilot => {
-            let mut result = jsonc::set_string(source, &at(&["url"]), connection.url)?;
-            result = jsonc::set_string(
-                &result,
-                &at(&["headers", "Authorization"]),
-                &input_header(connection.id),
-            )?;
-            if previous != connection.id {
-                result = sync_input(&result, previous, true)?;
-            }
-            sync_input(&result, connection.id, false)?
+        let key = &target.server_key;
+        let mut result = toml::set_string(source, key, None, "url", url)?;
+        for field in &stale {
+            result = match field.as_slice() {
+                [name] => toml::remove_field(&result, key, None, name)?,
+                [table, name] => toml::remove_field(&result, key, Some(table.as_str()), name)?,
+                _ => return Err("Unexpected AIRK credential field; review it manually.".into()),
+            };
         }
-        Agent::Codex => {
-            if target.container_path != ["mcp_servers"] {
-                return Err(
-                    "AIRK edits Codex servers only in the top-level mcp_servers table.".into(),
-                );
-            }
-            let helper = recognize::helper_command(connection.airkctl, connection.id)?;
-            let result = toml::set_string(source, &target.server_key, "url", connection.url)?;
-            toml::set_string(&result, &target.server_key, "http_headers_helper", &helper)?
+        if !has_mode(&row, "http_headers") {
+            result = toml::set_string(&result, key, Some("http_headers"), MODE, "terse")?;
         }
-        other => return Err(unverified(other)),
+        result
+    } else {
+        let mut server = target.container_path.clone();
+        server.push(target.server_key.clone());
+        let at = |fields: &[&str]| -> Vec<String> {
+            server
+                .iter()
+                .cloned()
+                .chain(fields.iter().map(|f| f.to_string()))
+                .collect()
+        };
+        let mut result = jsonc::set_string(source, &at(&["url"]), url)?;
+        for field in &stale {
+            let (name, parent) = field
+                .split_last()
+                .ok_or("Unexpected AIRK credential field; review it manually.")?;
+            let parent: Vec<String> = server.iter().chain(parent).cloned().collect();
+            result = jsonc::remove_member(&result, &parent, name)?;
+        }
+        if !has_mode(&row, "headers") {
+            result = jsonc::set_string(&result, &at(&["headers", MODE]), "terse")?;
+        }
+        match id {
+            Some(id) if agent == Agent::Copilot => drop_input(&result, id)?,
+            _ => result,
+        }
     };
     bounded(result)
 }
 
 /// Delete a recognized entry (HTTPS or retired stdio) and, for VS Code, its
-/// credential input once nothing references it.
+/// legacy credential input once nothing references it.
 pub(crate) fn remove(
     agent: Agent,
     scope: Scope,
@@ -294,7 +250,9 @@ pub(crate) fn remove(
     }
     let result = jsonc::remove_member(source, &target.container_path, &target.server_key)?;
     match recognized {
-        Recognized::Https { id, .. } if agent == Agent::Copilot => sync_input(&result, id, true),
+        Recognized::Https { id: Some(id), .. } if agent == Agent::Copilot => {
+            drop_input(&result, id)
+        }
         _ => Ok(result),
     }
 }
@@ -311,10 +269,10 @@ fn references(value: &Value, marker: &str) -> usize {
     }
 }
 
-/// `syncCredentialInput`: add the connection's input when exactly one
-/// Authorization field references it, or remove it once none does. An
-/// ambiguous or conflicting `inputs` array is refused.
-fn sync_input(source: &str, id: Incarnation, remove: bool) -> Result<String, String> {
+/// `syncCredentialInput` for removal: drop the legacy input `airkToken_<id>`
+/// once nothing references it. An ambiguous or conflicting `inputs` array is
+/// refused.
+fn drop_input(source: &str, id: Incarnation) -> Result<String, String> {
     let tree = jsonc::parse(source)?;
     let inputs_path = ["inputs".to_string()];
     let items = match tree.at(&inputs_path) {
@@ -353,19 +311,8 @@ fn sync_input(source: &str, id: Incarnation, remove: bool) -> Result<String, Str
         return Err("Conflicting AIRK credential input; existing configuration preserved.".into());
     }
     let count = references(&tree.value(), &format!("${{input:{wanted_id}}}"));
-    if remove {
-        return match existing {
-            Some((index, _)) if count == 0 => jsonc::remove_element(source, &inputs_path, index),
-            _ => Ok(source.to_string()),
-        };
+    match existing {
+        Some((index, _)) if count == 0 => jsonc::remove_element(source, &inputs_path, index),
+        _ => Ok(source.to_string()),
     }
-    if count != 1 {
-        return Err(
-            "AIRK credential input must belong to exactly one HTTP Authorization field.".into(),
-        );
-    }
-    if existing.is_some() {
-        return Ok(source.to_string());
-    }
-    jsonc::append_element(source, &inputs_path, &input(id))
 }

@@ -16,7 +16,7 @@ const CONTRACTS = ['src/adminUiContract.ts', 'src/explorerContracts.ts', 'src/ui
 const PILOT_RUNTIME_SOURCES = ['packages/ui/src/nativePilot.ts', 'packages/ui/src/pilotContract.ts', 'packages/vscode/src/uiPilotContract.ts', 'packages/vscode/scripts/build-explorer.cjs'];
 const SHARED_MANAGEMENT_INPUTS = [
     ...['activity.tsx', 'activityRequests.ts', 'agents.tsx', 'api.ts', 'app.tsx', 'arbiter.tsx', 'bundledHelp.tsx',
-        'catalogRequests.ts', 'concurrencyNote.tsx', 'envelope.ts', 'folderPicker.tsx', 'generatedActions.ts', 'help.tsx',
+        'catalogRequests.ts', 'concurrencyNote.tsx', 'dataRootDefault.ts', 'envelope.ts', 'folderPicker.tsx', 'generatedActions.ts', 'help.tsx',
         'indexLibrary.tsx', 'operations.ts', 'pages.tsx', 'pageVisibility.ts', 'pilotPane.tsx', 'preparedActions.tsx', 'preparedMutations.ts',
         'progress.tsx', 'render.tsx', 'SearchScreen.tsx', 'scopeConcurrency.ts', 'session.ts', 'usage.tsx',
         'EvidenceToolsScreen.tsx', 'ReviewScreen.tsx', 'StrategiesScreen.tsx', 'browserEvidenceRoutes.ts', 'browserReview.ts',
@@ -129,14 +129,63 @@ function helpPlugin(catalog) {
     } };
 }
 
+// The browser Admin's own palette and page rules. Embedded in the Explorer they
+// would override its VS Code theme tokens (a fixed white panel in a dark editor,
+// and prefers-color-scheme follows the OS app setting, not the VS Code theme).
+const ADMIN_PAGE_RULES = [/^:root$/, /^@media\s*\(prefers-color-scheme:\s*dark\)$/, /^body$/];
+// The Admin's --airk-* tokens, taken from the VS Code theme in the Explorer.
+const EMBEDDED_ADMIN_TOKENS = `.airk-shared-management {
+  --airk-bg: var(--vscode-editor-background);
+  --airk-surface: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --airk-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --airk-text: var(--vscode-foreground);
+  --airk-muted: var(--vscode-descriptionForeground);
+  --airk-accent: var(--vscode-button-background);
+  --airk-accent-text: var(--vscode-button-foreground);
+  --airk-danger: var(--vscode-errorForeground);
+  --airk-danger-text: var(--vscode-button-foreground);
+  --airk-ok: var(--vscode-testing-iconPassed);
+  --airk-warn: var(--vscode-editorWarning-foreground);
+  --airk-code-bg: var(--vscode-textCodeBlock-background);
+  --airk-ctl-bg: var(--vscode-inputValidation-warningBackground);
+  --airk-mono: var(--vscode-editor-font-family, monospace);
+  --airk-sans: var(--vscode-font-family, sans-serif);
+  color: var(--airk-text);
+  font: inherit;
+}`;
+
+/** `css` without its top-level rules whose prelude matches `drop` (brace-balanced). */
+function withoutTopLevelRules(css, drop) {
+    let output = '', at = 0;
+    while (at < css.length) {
+        const open = css.indexOf('{', at);
+        if (open < 0) { output += css.slice(at); break; }
+        let depth = 0, close = open;
+        for (; close < css.length; close++) {
+            if (css[close] === '{') depth++;
+            else if (css[close] === '}' && --depth === 0) break;
+        }
+        const prelude = css.slice(at, open);
+        const selector = prelude.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        if (!drop.some(pattern => pattern.test(selector))) output += css.slice(at, close + 1);
+        else output += prelude.slice(0, prelude.length - prelude.trimStart().length);
+        at = close + 1;
+    }
+    return output;
+}
+
+function embeddedAdminCss(source) {
+    const css = withoutTopLevelRules(source, ADMIN_PAGE_RULES);
+    const fixed = css.match(/#[0-9a-fA-F]{3,8}\b|prefers-color-scheme|(^|[\s,{]):root\b|(^|[\s,}])body\b/m);
+    if (fixed) throw new Error(`embedded Admin CSS keeps a page palette rule (${fixed[0].trim()}); theme it with VS Code tokens`);
+    return `${EMBEDDED_ADMIN_TOKENS}\n@scope (.airk-shared-management) {\n${css}\n}\n.airk-shared-management .layout { min-height: auto; grid-template-columns: minmax(0, 1fr); }`;
+}
+
 function sharedAdminStylePlugin() {
     return { name: 'airk-shared-admin-style', setup(build) {
         build.onResolve({ filter: /^airk-shared-admin-css$/ }, () => ({ path: 'scoped', namespace: 'airk-shared-admin-css' }));
-        build.onLoad({ filter: /.*/, namespace: 'airk-shared-admin-css' }, () => {
-            const css = fs.readFileSync(path.resolve(root, '../admin/src/app.css'), 'utf8')
-                .replace(/^(\s*):root\b/gm, '$1:scope').replace(/^body\b/gm, ':scope');
-            return { contents: `@scope (.airk-shared-management) {\n${css}\n}\n.airk-shared-management .layout { min-height: auto; grid-template-columns: minmax(0, 1fr); }`, loader: 'css' };
-        });
+        build.onLoad({ filter: /.*/, namespace: 'airk-shared-admin-css' }, () => ({
+            contents: embeddedAdminCss(fs.readFileSync(path.resolve(root, '../admin/src/app.css'), 'utf8')), loader: 'css' }));
     } };
 }
 
@@ -222,7 +271,7 @@ async function build() {
     fs.writeFileSync(path.join(root, 'out/help-manifest.json'), sharedBytes);
 }
 
-module.exports = { helpCatalog, engineTopics, engineGuides, nativeHelpContent, sharedHelpManifest, pilotRuntimeSourceSeal, sharedAdminStylePlugin, JAVASCRIPT_SUPPORTED,
+module.exports = { helpCatalog, engineTopics, engineGuides, nativeHelpContent, sharedHelpManifest, pilotRuntimeSourceSeal, sharedAdminStylePlugin, embeddedAdminCss, JAVASCRIPT_SUPPORTED,
     checkInputs, CONTRACTS, SHARED_MANAGEMENT_INPUTS };
 if (require.main === module) {
     build().catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

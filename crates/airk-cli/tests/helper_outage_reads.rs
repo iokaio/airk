@@ -143,6 +143,17 @@ impl Fixture {
     fn command(&self) -> common::ctl::Ctl {
         common::scoped_command(&self.root, &self.data, COLLECTION)
     }
+    /// U110: the open read of this fixture's one index (`airkctl tools call
+    /// --index`), the service path an HTTPS MCP read takes.
+    fn open_command(&self) -> common::ctl::Ctl {
+        let mut command = common::ctl::Ctl::new();
+        command
+            .arg("--service-runtime-dir")
+            .arg(&self.control)
+            .env("AIRK_MCP_RESPONSE_MODE", "full")
+            .env("AIRK_USAGE_MODE", "disabled");
+        command
+    }
     fn admin_command(&self) -> common::ctl::Ctl {
         common::command(&self.root, &self.data, COLLECTION)
     }
@@ -304,8 +315,7 @@ impl Session {
     fn start(fixture: &Fixture, terse: bool) -> Result<Self> {
         let mut inner = common::http::HttpMcpSession::start_with_mode(
             &fixture.control,
-            fixture.service.http_selection(),
-            airk_core::usage::ClientFamily::Unknown,
+            fixture.service.open_scope(),
             Some(if terse { "terse" } else { "full" }),
         )?;
         inner.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"provider-outage-parity","version":"1"}}}))?;
@@ -374,7 +384,20 @@ fn plan_comparable(mut value: Value) -> Value {
 }
 
 fn command_value(fixture: &Fixture, args: &[&str]) -> Result<(bool, Value)> {
-    let output = common::read_retry::output(fixture.command().args(args))?;
+    output_value(fixture.command().args(args))
+}
+
+/// U110: `airkctl tools call <tool> --index <fixture index> --args <args>`,
+/// the open read an HTTPS MCP read of the same scope takes.
+fn open_value(fixture: &Fixture, tool: &str, args: &Value) -> Result<(bool, Value)> {
+    let mut line = vec!["tools".to_owned(), "call".to_owned(), tool.to_owned()];
+    line.extend(fixture.service.open_scope().cli_arguments());
+    line.extend(["--args".to_owned(), args.to_string()]);
+    output_value(fixture.open_command().args(&line))
+}
+
+fn output_value(command: &mut common::ctl::Ctl) -> Result<(bool, Value)> {
+    let output = common::read_retry::output(command)?;
     ensure!(
         matches!(output.status.code(), Some(0 | 1)),
         "native client exited unexpectedly: {output:?}"
@@ -463,9 +486,14 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
                 &["tools", "call", "airk_search", "--args", &args.to_string()],
             )?;
             ensure!(success == allowed, "{tools}");
-            for actual in [convenience, tools, shell_value(&fixture, &args)?] {
-                assert_eq!(comparable(actual)?, comparable(expected.clone())?);
+            // U110: the scoped CLI transports agree with each other; the HTTPS
+            // MCP read agrees with the open CLI read of the same index.
+            for actual in [convenience, shell_value(&fixture, &args)?] {
+                assert_eq!(comparable(actual)?, comparable(tools.clone())?);
             }
+            let (success, open) = open_value(&fixture, "airk_search", &args)?;
+            ensure!(success == allowed, "{open}");
+            assert_eq!(comparable(open)?, comparable(expected.clone())?);
             assert_eq!(expected["publication"], publication);
             assert_eq!(expected["semantic_readiness"]["state"], "ready");
             if allowed {
@@ -507,15 +535,18 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
                 ],
             )?;
             ensure!(!success, "{actual}");
-            assert_eq!(comparable(actual)?, comparable(expected.clone())?);
-            let (success, actual) = command_value(
+            let (success, tools) = command_value(
                 &fixture,
                 &["tools", "call", "airk_search", "--args", &args.to_string()],
             )?;
-            ensure!(!success, "{actual}");
-            assert_eq!(comparable(actual)?, comparable(expected)?);
+            ensure!(!success, "{tools}");
+            assert_eq!(comparable(actual)?, comparable(tools)?);
+            let (success, open) = open_value(&fixture, "airk_search", &args)?;
+            ensure!(!success, "{open}");
+            assert_eq!(comparable(open)?, comparable(expected)?);
         }
-        let semantic = mcp.read(25, "search", json!({"query":"authenticate","semantic":true,"verification":"off","response_mode":"full"}))?;
+        let semantic_args = json!({"query":"authenticate","semantic":true,"verification":"off","response_mode":"full"});
+        let semantic = mcp.read(25, "search", semantic_args.clone())?;
         ensure!(semantic["isError"] == true, "{semantic}");
         let semantic = payload(&semantic)?;
         let (success, cli_semantic) = command_value(
@@ -530,7 +561,21 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
         )?;
         ensure!(!success, "{cli_semantic}");
         assert_eq!(semantic["requested_mode"], "vector");
-        assert_eq!(comparable(cli_semantic)?, comparable(semantic)?);
+        let (success, tools_semantic) = command_value(
+            &fixture,
+            &[
+                "tools",
+                "call",
+                "airk_search",
+                "--args",
+                &semantic_args.to_string(),
+            ],
+        )?;
+        ensure!(!success, "{tools_semantic}");
+        assert_eq!(comparable(cli_semantic)?, comparable(tools_semantic)?);
+        let (success, open_semantic) = open_value(&fixture, "airk_search", &semantic_args)?;
+        ensure!(!success, "{open_semantic}");
+        assert_eq!(comparable(open_semantic)?, comparable(semantic)?);
         // native read: a whole plan executes once; helper outages never authorize replay.
         let plan_args = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","response_mode":"full",
             "plan":{"steps":[{"id":"search","tool":"search","args":{"query":"authenticate","verification":"off"}}]}});
@@ -562,7 +607,8 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
         assert_eq!(cli_plan["status"], plan["status"]);
         assert_eq!(cli_plan["completeness"], plan["completeness"]);
         assert_eq!(cli_plan["evidence"], plan["evidence"]);
-        assert_eq!(plan_comparable(cli_plan), plan_comparable(plan.clone()));
+        let (_, open_plan) = open_value(&fixture, "airk_parse", &plan_args)?;
+        assert_eq!(plan_comparable(open_plan), plan_comparable(plan.clone()));
         let step = &plan["steps"][0];
         if allowed {
             assert_eq!(
@@ -598,18 +644,22 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
             assert_eq!(failed["publication"], publication);
             assert_eq!(failed["hits"], lexical["hits"]);
             let required_json = required.to_string();
-            for args in [
-                vec!["search", "authenticate", "--verification", "require"],
-                vec!["tools", "call", "airk_search", "--args", &required_json],
-            ] {
-                let (success, actual) = command_value(&fixture, &args)?;
-                ensure!(!success, "{actual}");
-                assert_eq!(comparable(actual)?, comparable(failed.clone())?);
+            let (success, tools) = command_value(
+                &fixture,
+                &["tools", "call", "airk_search", "--args", &required_json],
+            )?;
+            ensure!(!success, "{tools}");
+            let (success, convenience) = command_value(
+                &fixture,
+                &["search", "authenticate", "--verification", "require"],
+            )?;
+            ensure!(!success, "{convenience}");
+            for actual in [convenience, shell_value(&fixture, &required)?] {
+                assert_eq!(comparable(actual)?, comparable(tools.clone())?);
             }
-            assert_eq!(
-                comparable(shell_value(&fixture, &required)?)?,
-                comparable(failed)?
-            );
+            let (success, open) = open_value(&fixture, "airk_search", &required)?;
+            ensure!(!success, "{open}");
+            assert_eq!(comparable(open)?, comparable(failed)?);
             assert_eq!(
                 fs::read(fixture.root.join("evidence.txt"))?,
                 b"intentionally changed fixture bytes\n"

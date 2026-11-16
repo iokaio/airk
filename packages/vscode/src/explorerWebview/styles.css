@@ -408,9 +408,8 @@ body.vscode-light:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .a
 .indexing-scope-list small.description { white-space: pre-line; }
 .description-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 0 28px; }
 .description-edit { margin-left: 28px; }
-.agent-connection { margin: 6px 0 12px 16px; }
-.agent-connection > label { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.agent-connection input[type="checkbox"] { width: auto; }
+.agent-endpoint code { overflow-wrap: anywhere; }
+.manage-agents details.card > summary { cursor: pointer; font-weight: 600; }
 .indexing-scope-list input[type="checkbox"] { width: auto; margin-top: 3px; flex: 0 0 auto; }
 .indexing-scope-list label span { display: flex; flex-direction: column; gap: 4px; }
 .indexing-scope-list small { color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }

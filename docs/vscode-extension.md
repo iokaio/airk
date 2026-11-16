@@ -7,8 +7,8 @@
 > unsigned `airkctl` only in development and test modes), checks the version
 > handshake, and reaches the service only through `airkctl`: one `airkctl
 > session --owner-watch` per window (protocol 2) and one-shot commands. Reads
-> use `airkctl tools call`; the VS Code MCP definition resolves its bearer with
-> `airkctl agents credential`; agent entries are listed, repaired and removed
+> use `airkctl tools call`; since U110 the VS Code MCP definition carries only
+> the endpoint URL and mode header (no bearer); agent entries are listed, repaired and removed
 > with `airkctl agents …`, and without a service a removal-only recognizer
 > sweeps the workspace's pre-split entries. Management screens moved to the
 > admin pages (**Open AIRK Admin**). **Not yet:** window-scope reads (W4),
@@ -243,7 +243,9 @@ resolution. The built-in HTTP provider supplies the same protected credential
 through the API. Recognized manual configuration owns its policy and suppresses
 a duplicate provider definition.
 
-This credential path needs no Code environment reload. It requires the AIRK
+Since U110 this credential path is retired: `/mcp` takes no token, and
+Connect or `airkctl agents repair` rewrites entries to the URL-only form. The
+rest of this paragraph is historical. This credential path needs no Code environment reload. It requires the AIRK
 extension and a harness that supports command inputs. Portable/forwarded MCP
 harnesses which reject input variables remain unqualified. Since 1.8.22,
 Codex and Claude Code instead get a one-shot credential helper

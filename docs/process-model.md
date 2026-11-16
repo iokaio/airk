@@ -5,8 +5,9 @@
 > **Split Phase 4 (non-shippable interim).** The one-resident-process rule is
 > unchanged. `airk` is now the service only: `airk` with no arguments, or
 > `airkctl service start`, starts it detached as a private role. `airkctl` is
-> the CLI, so typed commands and the Claude Code and Codex credential helpers
-> (`airkctl agents credential`) are `airkctl` one-shots. The per-window helper
+> the CLI, so typed commands are `airkctl` one-shots. Since U110 agents start
+> no AIRK process at all: `/mcp` takes no token, so agent entries carry no
+> credential helper. The per-window helper
 > becomes `airkctl session`; on this branch the extension still starts the
 > retired `airk service session` until split Phase 6. The table below keeps the
 > 1.8.22 names. See the [split plan](split/split-plan.md) §4.3 and §5.
@@ -25,9 +26,9 @@ its own service, so a machine with two installations has two services.
 
 | Process | Purpose | Owner and lifetime |
 |---|---|---|
-| The service (`airk __airk_role service-login` from login startup, or started on demand by `airk` with no arguments or `airkctl service start`) | HTTPS MCP endpoint, metadata broker, durable jobs, resource admission, connection grants and shared MiniLM inference. It also hosts every project owner, cleanup owner and the source watcher. | One per installation. It never exits when idle in HTTPS mode, keeps running after VS Code closes and starts again at sign-in. A second `serve`, `managed-serve`, `foreground` or `host` start is refused with a `service_already_running:` message (JSON `code` `operation_failed`). |
+| The service (`airk __airk_role service-login` from login startup, or started on demand by `airk` with no arguments or `airkctl service start`) | HTTPS MCP endpoint, metadata broker, durable jobs, resource admission, workspace default scopes and shared MiniLM inference. It also hosts every project owner, cleanup owner and the source watcher. | One per installation. It never exits when idle in HTTPS mode, keeps running after VS Code closes and starts again at sign-in. A second `serve`, `managed-serve`, `foreground` or `host` start is refused with a `service_already_running:` message (JSON `code` `operation_failed`). |
 | `airkctl session` | The window's native helper. It relays control requests and runs allowlisted CLI commands in-process, so a window starts one process instead of one per operation. | One per VS Code window. It exits when its window's extension host ends (see the exception below). |
-| `airkctl` and installer one-shots | Commands that a user types, and installer steps. Claude Code and Codex credential helpers (`airkctl agents credential … --format header-json`) are one-shots too. | Exit when the command finishes. |
+| `airkctl` and installer one-shots | Commands that a user types, and installer steps. Since U110 coding agents run no credential helper. | Exit when the command finishes. |
 | PDF parser child | Isolated extraction of one PDF document. | At most one for the whole service, described below. |
 | `airkctl tools shell` | Interactive terminal tool. | Opened and closed by the user. |
 

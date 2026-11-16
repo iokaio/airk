@@ -140,6 +140,9 @@ For a relationship investigation, a returned type/impl ID may provide bounded as
 - [airkctl refs](#airkctl-refs)
 - [airkctl relationships](#airkctl-relationships)
 - [airkctl resume](#airkctl-resume)
+- [airkctl scope](#airkctl-scope)
+- [airkctl scope default](#airkctl-scope-default)
+- [airkctl scope defaults](#airkctl-scope-defaults)
 - [airkctl search](#airkctl-search)
 - [airkctl service](#airkctl-service)
 - [airkctl service abandon-lifecycle](#airkctl-service-abandon-lifecycle)
@@ -214,7 +217,7 @@ Usage: airkctl agents [OPTIONS] <COMMAND>
 
 **Purpose:** Write an AIRK entry for Claude Code, Codex or VS Code, enrolling a reviewed selection (--selection-file with a new --connection-id), a new open connection (--open) or reusing an existing connection.
 
-**Behavior and developer use:** Writes the project's file, or the user-level file with --user. Credential helpers in the written entry name this airkctl, or --airkctl. Only AIRK's own entry is touched. `--open` (1.8.35, U105) enrolls a new **open** connection with a new id: its token admits the agent to the MCP endpoint without a reviewed grant, agent choice is off and the default scope is empty until `agents default` (or the Explorer's Management › Agents) sets it; until then reads refuse `agent_default_scope_unset`. Existing grant-bound connections keep working unchanged.
+**Behavior and developer use:** Writes the project's file, or the user-level file with --user (`--project F` names the project folder). Since U110 the entry holds only the endpoint URL and `X-AIRK-Response-Mode: terse`: no `Authorization`, no `headersHelper`/`http_headers_helper` and no connection is created, because `/mcp` takes no token. Only AIRK's own entry is touched. `--connection-id` and `--selection-file` are refused; `--open` is accepted and ignored. Agents name their scope per call (`index_ids`, `index_set_ids` or `workspace`); see [`airkctl scope`](#airkctl-scope).
 
 ```text
 Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
@@ -226,7 +229,7 @@ Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
 **Purpose:** Print an existing, unrevoked connection's bearer header for an agent's header helper.
 
-**Behavior and developer use:** Offline: reads only the owner-private credential files; never starts the service, enrolls, rotates or logs the token. `--format header-json` prints `{"Authorization":"Bearer <token>"}`. Entries written by `agents connect` name this command as their helper.
+**Behavior and developer use:** Offline: reads only the owner-private credential files; never starts the service, enrolls, rotates or logs the token. `--format header-json` prints `{"Authorization":"Bearer <token>"}`. Since U110 the endpoint ignores `Authorization` and `agents connect` writes no helper, so this command no longer matters for agents; it remains until the unused credential machinery is removed. `agents repair` strips older helper entries.
 
 ```text
 Usage: airkctl agents credential [OPTIONS] --connection-id <CONNECTION_ID> --format <FORMAT>
@@ -238,7 +241,7 @@ Usage: airkctl agents credential [OPTIONS] --connection-id <CONNECTION_ID> --for
 
 **Purpose:** Set an open connection's default scope and agent choice; the agent's next call uses it.
 
-**Behavior and developer use:** `--index` and `--set` take ids (`idx_…`, `prj_…`) or names (exact, then unique case-insensitive) and replace the whole default scope; `--clear` empties it. A named index is read whole (all of its enabled sources); a set is read as its member indexes, each whole. `--agent-choice off|on` (off by default): off, a call naming nothing reads the whole assigned set (default indexes plus the members of default sets), a call may narrow to part of it, anything outside is refused `agent_scope_choice_disabled` and `list_indexes` is not offered; on, the agent may name indexes and sets per call (ids or exact names, union, at most 32 each) and call `list_indexes`. With choice on, any agent holding that token can read every index of this OS user. Without `--expected-revision` the current defaults revision is read first. No new credential or configuration rewrite is needed; a change applies to the next call. Prints `{"schema":1,"connectionId":…,"open":{…}}`.
+**Behavior and developer use:** Sets a connection's stored default scope and agent choice. Since U110 every MCP session is the built-in local agent session, which has no stored connection default, so this command no longer affects agents; use [`airkctl scope default`](#airkctl-scope-default) for the workspace default an agent reads. It remains until the unused connection machinery is removed. Prints `{"schema":1,"connectionId":…,"open":{…}}`.
 
 ```text
 Usage: airkctl agents default [OPTIONS] --connection-id <CONNECTION_ID>
@@ -262,7 +265,7 @@ Usage: airkctl agents endpoint [OPTIONS]
 
 **Purpose:** Read an existing connection's verified references without issuing credentials.
 
-**Behavior and developer use:** Prints the document `runtime http-connection-info` printed for --connection-id.
+**Behavior and developer use:** Prints the document `runtime http-connection-info` printed for --connection-id. Since U110 connections no longer matter for agents.
 
 ```text
 Usage: airkctl agents info [OPTIONS] --connection-id <CONNECTION_ID>
@@ -274,7 +277,7 @@ Usage: airkctl agents info [OPTIONS] --connection-id <CONNECTION_ID>
 
 **Purpose:** Start Claude Code, Codex or VS Code on this connection in the foreground.
 
-**Behavior and developer use:** The credential goes only into the client's environment and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Arguments after `--` go to the client. Exits with the client's status.
+**Behavior and developer use:** Since U110 this no longer matters for agents (the endpoint takes no token); it remains until the unused credential machinery is removed. The credential goes only into the client's environment and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Arguments after `--` go to the client. Exits with the client's status.
 
 ```text
 Usage: airkctl agents launch [OPTIONS] --client <CLIENT> --connection-id <CONNECTION_ID> [-- <ARGS>...]
@@ -286,7 +289,7 @@ Usage: airkctl agents launch [OPTIONS] --client <CLIENT> --connection-id <CONNEC
 
 **Purpose:** Classify AIRK's entries in agent configuration files; read-only.
 
-**Behavior and developer use:** Checks the given --project folders (default: the current directory) and, unless --no-user, this user's files. With --connection-id it reports only whether this installation owns that connection.
+**Behavior and developer use:** Checks the given --project folders (default: the current directory) and, unless --no-user, this user's files. With --connection-id it reports only whether this installation owns that connection. Since U110 an entry that still carries a token, a credential helper or a `<connection-id>` placeholder is reported as needing repair; `agents repair` strips those fields.
 
 ```text
 Usage: airkctl agents list [OPTIONS]
@@ -310,7 +313,7 @@ Usage: airkctl agents remove [OPTIONS]
 
 **Purpose:** Rewrite AIRK entries whose endpoint or helper is stale; --connection-id replaces an unknown connection.
 
-**Behavior and developer use:** Uses the same project/user file selection as `agents list`. Only recognized AIRK entries are rewritten.
+**Behavior and developer use:** Uses the same project/user file selection as `agents list`. Only recognized AIRK entries are rewritten: it points them at the live endpoint and strips legacy `Authorization`, `headersHelper`, `http_headers_helper` and `bearer_token_env_var` fields (and the unused VS Code credential input).
 
 ```text
 Usage: airkctl agents repair [OPTIONS]
@@ -322,7 +325,7 @@ Usage: airkctl agents repair [OPTIONS]
 
 **Purpose:** Revoke one local HTTPS connection while preserving its original receipt.
 
-**Behavior and developer use:** Prints the document `runtime http-revoke` printed. Configuration entries naming the connection remain until `agents remove` removes them.
+**Behavior and developer use:** Prints the document `runtime http-revoke` printed. Since U110 revoking a connection does not stop agent access: `/mcp` takes no token.
 
 ```text
 Usage: airkctl agents revoke [OPTIONS] --connection-id <CONNECTION_ID>
@@ -334,7 +337,7 @@ Usage: airkctl agents revoke [OPTIONS] --connection-id <CONNECTION_ID>
 
 **Purpose:** Probe the service's own MCP endpoint with a connection's stored credential.
 
-**Behavior and developer use:** Checks one --connection-id against the running service.
+**Behavior and developer use:** Checks one --connection-id against the running service. Since U110 the endpoint ignores credentials, so this no longer tests agent access.
 
 ```text
 Usage: airkctl agents verify [OPTIONS] --connection-id <CONNECTION_ID>
@@ -733,6 +736,42 @@ Usage: airkctl resume [OPTIONS]
 
 **Implementation:** [cli.rs](../crates/airkctl/src/cli.rs). Full options: [parser reference](cli-reference.md#airkctl-resume).
 
+## airkctl scope
+
+**Purpose:** Workspace default scopes agents read when a call names no index or index set (U110).
+
+**Behavior and developer use:** Command group: `default` and `defaults`. Defaults are stored by the running service (`agent-workspace-defaults.json` in its private HTTP directory) and survive restarts and closed windows. The Explorer's applied search scope sets the default of every folder of its window through the same path.
+
+```text
+Usage: airkctl scope [OPTIONS] <COMMAND>
+```
+
+**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md).
+
+## airkctl scope default
+
+**Purpose:** Set the default scope of each --workspace folder; with no --index and no --set, clear it.
+
+**Behavior and developer use:** `--workspace` (absolute, repeatable, required), `--index` and `--set` (ids or names, repeatable). An agent read that names no index or index set and passes `workspace` (or whose client offers MCP roots) reads the default of the most specific stored folder containing it (Windows: case-insensitive, `/` and `\` equal). Prints `{"schema":1,"entries":[{folder,index_ids,index_set_ids,applied_unix_ms}]}` with every stored default.
+
+```text
+Usage: airkctl scope default [OPTIONS] --workspace <WORKSPACES>
+```
+
+**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md).
+
+## airkctl scope defaults
+
+**Purpose:** Print every stored workspace default: `{"schema":1,"entries":[...]}`.
+
+**Behavior and developer use:** Read-only; same document as `scope default`.
+
+```text
+Usage: airkctl scope defaults [OPTIONS]
+```
+
+**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md).
+
 ## airkctl search
 
 **Purpose:** Search indexed evidence; results carry file, line and revision citations.
@@ -1101,7 +1140,7 @@ Usage: airkctl tools [OPTIONS] <COMMAND>
 
 **Purpose:** Invoke an MCP tool and print its unchanged result envelope as JSON
 
-**Behavior and developer use:** Accepts one JSON object through --args or --args-file (maximum 64 KiB) and returns the unchanged unified tool envelope. Use public names such as `search`; historical native aliases such as `airk_search` remain accepted. Proposal tools retain their connection and user-review requirements and do not execute proposed work. `--index` and `--set` (repeatable, at most 32 indexes) read whole indexes and index sets through the open read path an agent uses; names resolve by id (`idx_…`, `prj_…`), then exact name, then a unique case-insensitive name. `--connection ID` applies that open connection's default scope and agent choice exactly as its MCP calls do: with choice off, `--index`/`--set` may only narrow inside its assigned set. `list_indexes` always takes that path. For a read over several indexes, `limit_per_index` (1–100) goes in `--args` (for example `{"query":"…","limit_per_index":5}`); every index then gets exactly that many results and `limit` is the overall cap. Members report `index_name` and `elapsed_ms`.
+**Behavior and developer use:** Accepts one JSON object through --args or --args-file (maximum 64 KiB) and returns the unchanged unified tool envelope. Use public names such as `search`; historical native aliases such as `airk_search` remain accepted. Proposal tools retain their connection and user-review requirements and do not execute proposed work. `--index` and `--set` (repeatable, at most 32 indexes) read whole indexes and index sets through the open read path an agent uses; names resolve by id (`idx_…`, `prj_…`), then exact name, then a unique case-insensitive name. `--workspace <abs folder>` follows the MCP resolution (U110): with no `--index`/`--set`, the workspace default of the most specific stored folder containing it applies, else the read is refused `scope_required`. `list_scopes` always takes that path. `--connection ID` applies a connection's stored default, which agents no longer use. For a read over several indexes, `limit_per_index` (1–100) goes in `--args` (for example `{"query":"…","limit_per_index":5}`); every index then gets exactly that many results and `limit` is the overall cap. Members report `index_name` and `elapsed_ms`.
 
 ```text
 Usage: airkctl tools call [OPTIONS] <TOOL>
@@ -1125,7 +1164,7 @@ Usage: airkctl tools help [OPTIONS] <TOOL>
 
 **Purpose:** List the connection's unified tools; `--json` includes complete schemas and annotations.
 
-**Behavior and developer use:** Served by the running service. Lists the same 29 public definitions as MCP for the selected session, including combined selector and discovery inputs when configured. The 19 native operations are an internal subset. With `--connection ID`, it lists the catalog that open connection sees: the `index_ids`/`index_set_ids` selectors and `list_indexes` appear only while its agent choice is on. Assistance tools are in this unified catalog; separate `airkctl explorer` commands retain their documented offline-file or trusted-window workflows.
+**Behavior and developer use:** Served by the running service. Lists the same 29 public definitions as MCP for the selected session, including combined selector and discovery inputs when configured. The 19 native operations are an internal subset. Agent reads carry the `index_ids`/`index_set_ids`/`workspace` selectors and `list_scopes` (U110). `--connection ID` lists the catalog a stored connection would see, which agents no longer use. Assistance tools are in this unified catalog; separate `airkctl explorer` commands retain their documented offline-file or trusted-window workflows.
 
 ```text
 Usage: airkctl tools list [OPTIONS]

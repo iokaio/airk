@@ -251,7 +251,7 @@ session frame, on stdout or in logs [P].
 | W3 | `WindowClose { window_id, lease }` | `WindowClosed` | Drops queue, handoffs and scope grant |
 | W4 | `WindowScopeGrant { window_id, lease, selection: { namespace, expected_catalog_revision, index_ids, project_ids } }` [P, replaces `Catalog{ScopedConnectRequest} \| Combined{..}`] | `WindowScopeGranted { scope_identity, catalog_revision, expires_at_ms }` | U77: selects existing indexes only; never creates or changes indexes, index sets or agent grants; carries no catalog `GrantId` (Q6 closed by the ledger row "P0.6": an in-memory grant bound to the lease). Unknown index or stale revision → `scoped_read_unavailable` [V code]. A new grant replaces the old one. Revoked by close, lease expiry or restart, never re-granted automatically. Reads use M3 `selection: Window{..}`; without a grant → `window_scope_not_granted` [P]; no bearer leaves the service |
 | W4b | `WindowScopeRelease { window_id, lease }` [P] | `WindowScopeReleased` | Idempotent; session frame `scope_release` |
-| W5 | `AssistanceWindows {}` | `AssistanceWindows { windows: [{window_id, label, accepting, queued}] }` | Readable by owner pipe and by `/mcp` Explorer tools with a valid bearer [P] |
+| W5 | `AssistanceWindows {}` | `AssistanceWindows { windows: [{window_id, label, accepting, queued}] }` | Readable by owner pipe and by `/mcp` Explorer tools (with a valid bearer before U110; `/mcp` takes none since) [P] |
 | W6 | `AssistanceSubmit { window_id, kind, draft: Value, submitter: ClientFamily }` | `AssistanceQueued { draft_id, queued }` | Per window ≤ 16 drafts and ≤ 1 MiB; draft ≤ 256 KiB; full → `assistance_queue_full` (never drops silently) |
 | W7 | `AssistanceDrain { window_id, lease, ack_through: Option<u64>, limit ≤ 8 }` | `AssistanceDrained { drafts: [{sequence, draft_id, kind, draft}], next }` | Only the owning lease drains; ack removes |
 | W8 | `HandoffPublish { window_id, lease, handoff: Value, ttl_ms ≤ 600000 }` | `HandoffPublished { handoff_id, expires_at_ms }` | ≤ 32 per window, ≤ 64 KiB each; read by M12 |
@@ -380,6 +380,14 @@ S2b): the admin plane's injected `SelectionReader` runs the same
 | W8, M12 | 128 KiB / 64 KiB (W8 request), 64 KiB / 128 KiB (M12 response) (3f.1) | A 64 KiB handoff and its fields |
 
 ### 2.9 Open agent access (U105/U106) [served: service, CLI, HTTPS MCP]
+
+> **Superseded in part by U110 (§2.11).** HTTPS MCP no longer authenticates
+> agents or reads a connection's stored defaults or agent choice: every MCP
+> session is the built-in local agent session, and `list_indexes` is renamed
+> `list_scopes`. The open-read path, name resolution, descriptions, combined
+> open basis and refusal codes below remain the read path; the ledger
+> `Record.open`, `AgentConnectionDefaults` and `ToolsCatalog.connection_id`
+> rows stay compiled but are unused by agents.
 
 Spec: `docs/split/open-agent-access.md` step 1. D8 is recorded by U105 and
 U106: these are wire, persisted-record, catalog-field and provenance
@@ -556,6 +564,24 @@ min(the read's remaining deadline, its allocation), measured from the read's
 one start; the verification window opens at the first member that verifies.
 An expired continuation in canonical order ends the read before later
 members start. The composed result shape is unchanged.
+
+### 2.11 No MCP credential and per-call scope (U110) [served: service, CLI, HTTPS MCP]
+
+Decision: split-plan §2.1 U110 (15 November 2026). New file and wire
+additions only; existing encodings are unchanged when the new parts are
+absent.
+
+| Addition | Owner | Shape | State |
+|---|---|---|---|
+| No `/mcp` credential | `airk-https` gateway | Any `Authorization` header is removed unread; Host, `Origin` and admin-cookie (`cookie_on_bearer_plane`) refusals are unchanged. Every request is the local agent session: reserved connection id `00000000000000000000000000000000` (never issued), an open selection of the endpoint's namespace with no stored default | Served. `credential_required`, `credential_refused` and `authentication_busy` are no longer emitted on the bearer plane. Credential issuance, revoke and the ledger stay compiled but unused until a separate removal step |
+| `ToolSelection::Open.workspace` | `airk_core::service` | optional absolute path (`default` + `skip_serializing_if`, `null` refused, `agent_workspace::validate_path`) | Served by `service_runtime::open_reads`; `airkctl tools call --workspace` |
+| Scope resolution | `service_runtime::open_reads` | named `index_ids`/`index_set_ids` (ids or names, union, ≤ 32 each); else the workspace default of the most specific stored folder containing `workspace` (Windows: case-insensitive, `/` and `\` equal); else refused `scope_required` (`service_http::SCOPE_REQUIRED`), whose message names `list_scopes` and `workspace` | Served |
+| Result scope | read results | `structuredContent.read_scope` (and a JSON text copy; not on a receipt-bound multi-index body, which names its scope in `selection.scope_identity`) = `{source: "named"\|"workspace_default", workspace_folder?, index_ids}` | Served |
+| `list_scopes` | `airk_mcp::open::list_scopes_tool` | renamed from `list_indexes`; optional `workspace` argument; first page adds `workspace_defaults` (every stored default) and, with `workspace`, `workspace_default` (the match or `null`) | Served |
+| Workspace defaults file | `airk_core::agent_workspace` | `agent-workspace-defaults.json` in the service's private HTTP directory: `{schema: 1, namespace, entries: [{folder, index_ids, index_set_ids, applied_unix_ms}]}`, ≤ 256 entries, ≤ 4 MiB | New file; no existing format changes |
+| `ControlMethod::WorkspaceScopeDefault` / `WorkspaceScopeDefaults` → `ControlResponse::WorkspaceScopeDefaults` | `airk_core::service` | `{folders, index_ids, index_set_ids}` (no ids clears) / `{}` → `{entries}` | Served; `airkctl scope default --workspace <folder>… [--index id]… [--set id]…` and `airkctl scope defaults` print `{"schema":1,"entries":[…]}`. The Explorer sets the default of every folder of its window from its applied search scope |
+| MCP roots | HTTPS MCP session | When a read names no selectors and no `workspace` and the client declared `roots`, the session sends `roots/list` (once per session after initialization, refreshed on `notifications/roots/list_changed`, bounded 2 s wait) and uses the first `file:` root as `workspace`; no roots leaves the call unchanged | Served. Roots are deprecated by SEP-2577 in newer MCP protocol versions; explicit `workspace` is the primary path |
+| Agent configuration | `airkctl::agents::config` | `agents connect` writes only the URL and `X-AIRK-Response-Mode: terse`; entries are recognized by URL. `agents list` classifies an entry still carrying `Authorization`, `headersHelper`, `http_headers_helper` or `bearer_token_env_var` as `https_unknown_connection` with a repair detail; `agents repair` strips those fields and the unused VS Code credential input. `--connection-id`/`--selection-file` on connect are refused; `--open` is accepted and ignored | Served |
 
 ## 3. I2 — `airkctl` command contract
 
@@ -735,7 +761,7 @@ The crate that owns these OS adapters under U27's edge limit is Q3.
 |---|---|---|---|
 | 1 | Read the install pointer and record | §5 files | Owner, link and size checks before parsing |
 | 2 | Start `airk` detached | Record's `airk` path and digest | Verified image; owner-private start request (§5.6); explicit vs automatic mode decided by the service, so `airkctl` never reads the registry's Stop flag |
-| 3 | Credential helper reads the token file | Owner-private token file | Never starts the service or enrolls; `agents launch` reuses this path to place the credential in the client's environment (P0 decision) |
+| 3 | Credential helper reads the token file | Owner-private token file | Never starts the service or enrolls; `agents launch` reuses this path to place the credential in the client's environment (P0 decision). Unused by agents since U110 (§2.11); kept until the credential machinery is removed |
 | 4 | Read logs while the service is down | Log location from the record | Bounded reads |
 | 5 | Delegate `service uninstall` | Setup operation file (§5.5) | One-shot only; hand off, then exit |
 
@@ -1279,7 +1305,8 @@ has a final visible error path instead of leaving the loading view indefinitely.
 - Planes stay separate: any `Authorization` header on `/admin` → 401
   `admin_bearer_refused`; an admin cookie on `/mcp` or `/api/v1` →
   `cookie_on_bearer_plane`; their existing `Origin` refusal and bearer rules
-  stay byte-for-byte [V `http_gateway.rs:358-394`].
+  stay byte-for-byte [V `http_gateway.rs:358-394`]. Since U110 the bearer
+  plane takes no credential and strips `Authorization` (§2.11).
 - Admin read grant: the browser's index selection becomes a W4-style grant
   bound to the session id and instance; never sent to the browser; revoked at
   logout, expiry or restart. Q6 applies. Landed as A2 (§2.7 amendment):

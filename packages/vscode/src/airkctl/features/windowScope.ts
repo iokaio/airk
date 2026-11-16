@@ -121,10 +121,10 @@ interface Active {
     readonly chosenIndexIds: readonly string[]; readonly chosenProjectIds: readonly string[];
     /** Granted automatically for the workspace index (never remembered as the user's choice). */
     readonly auto?: { readonly binding: string };
-    /** (U105) The default scope a following open agent connection receives for this grant. */
+    /** (U105, U110) The scope this grant stores as the workspace default of the window's folders. */
     readonly agent: AgentDefaultScope;
 }
-/** (U105) A change of the scope that following open agent connections receive. `scope` null: the user cleared
+/** (U105, U110) A change of the scope stored as the window folders' workspace default. `scope` null: the user cleared
  * the window scope. `user`: the user applied or cleared it (an automatic or restored grant is not). */
 export interface AgentScopeChange { readonly scope: AgentDefaultScope | null; readonly user: boolean }
 /** `resolved`: the index sets were derived from picked indexes, so they are derived again on restore.
@@ -202,7 +202,7 @@ export class WindowScope {
     private agentScopeChanged(change: AgentScopeChange): void {
         for (const listener of [...this.agentListeners]) { try { listener(change); } catch { /* Listener failures stay local. */ } }
     }
-    /** (U105) The default scope for open agent connections: the user's checked index sets and indexes (union),
+    /** (U105, U110) The workspace default scope: the user's checked index sets and indexes (union),
      * the granted indexes of an exact choice, or the window's index for the automatic scope; undefined without a scope. */
     agentDefaultScope(): AgentDefaultScope | undefined {
         const current = this.active ? this.current : undefined;

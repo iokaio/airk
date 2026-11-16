@@ -3,21 +3,21 @@ id: assistance-tools
 title: Work with an AI agent
 route:
 area: guidance
-aliases: AI agent, MCP, explorer assistance tools, template discovery, validation, proposals, navigation, setup, codex, claude, copilot
+aliases: AI agent, MCP, explorer assistance tools, template discovery, validation, proposals, navigation, setup, codex, claude, copilot, list_scopes, workspace default, mcp roots
 related_airk_help: explorer, roles, agent-setup, mcp, workflows, arbiter
 ---
 # Work with an AI agent
 
-AIRK agents connect directly to the native service over authenticated loopback HTTPS. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.
+AIRK agents connect directly to the native service over loopback HTTPS; the endpoint needs no token or credential. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.
 
-Connect one MCP server named airk with an explicitly selected default scope or a reviewed grant-bound selection. Its tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.
+Connect one MCP server named airk; agents choose which indexes they read on each call. Its tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.
 
 ## Steps
 
-1. Apply a scope in Indexes > Search scope, then in Agents choose the agent and **Connect**. This writes an open HTTPS connection and assigns its default scope. The native writer preserves unrelated servers, comments, disabled states and client policies. Changed files, unsafe ownership and unsaved edits produce a refusal with recovery information; they are not permission to overwrite the file.
+1. In Agents choose the agent and **Connect**. This writes the agent's entry with only the endpoint URL and the X-AIRK-Response-Mode header. The native writer preserves unrelated servers, comments, disabled states and client policies. Changed files, unsafe ownership and unsaved edits produce a refusal with recovery information; they are not permission to overwrite the file.
 2. Load the changed entry in the agent and complete that client's trust controls. Claude Code may need its MCP reconnect action, Codex a restart, and VS Code a server restart. A native configuration report does not prove that a running external agent loaded it.
 3. Call status and capabilities before using indexed evidence. status returns lightweight published readiness; use diagnostics for runtime identities, jobs and diagnostics.explorer attachment details. Use help with query to discover UI/engine guides and topic_id to read one; help with topic or command explains native usage.
-4. An open connection reads its stored default scope. A connection configured to follow this window updates that default when its search scope changes; clearing the default refuses reads with agent_default_scope_unset. **Let the agent choose indexes** is off by default: narrowing is allowed inside the assigned set, and outside choices refuse agent_scope_choice_disabled. Turning it on exposes all indexes and index sets of this OS user. Grant-bound connections keep their reviewed selection. Results retain each index's full provenance and failures.
+4. Scope is a parameter of every read: index_ids and index_set_ids (ids or names, a union) and workspace (an absolute folder path). list_scopes lists the indexes and index sets with their descriptions and the stored workspace defaults. A call that names no indexes uses the workspace default of the most specific stored folder containing workspace; the search scope applied in Indexes > Search scope is the workspace default of every folder of that window. Without a default the call is refused with scope_required. When the agent supports MCP roots and passes no workspace, its first workspace root is used automatically. Results report which scope was used and retain each index's full provenance and failures.
 5. Search returns cited evidence now. draft_search only queues a form in Suggestions. Review proposal_status and wait for the user to apply it; applied never means executed.
 
 ## Templates and validation
@@ -38,12 +38,12 @@ UI_NOT_ATTACHED means no matching trusted window; open the project in VS Code an
 
 The attachment uses the configured project's canonical root to find a matching trusted window. Check the current selected project before proposing work in a multi-root window. Configure remote agents on the remote extension host; local-agent connectivity is not established by copying remote paths.
 
-New entries use the discovered HTTPS endpoint and the native credential/trust flow. Stdio MCP and the stable launcher are retired. The one-shot airkctl agents credential helper supplies credentials where the supported agent requires it; tokens remain native-held. Reads never create an index or expand a grant. Use airkctl agents --help and the actual native reports for headless setup and repair. Agent-choice changes apply to later calls, but a client may need to refresh its cached tools list.
+New entries use the discovered HTTPS endpoint and AIRK's local certificate trust; no token or credential helper is written. Stdio MCP and the stable launcher are retired. Reads never create an index. Use airkctl agents --help, airkctl scope --help and the actual native reports for headless setup and repair. A changed workspace default applies to later calls; a client may need to refresh its cached tools list after an upgrade.
 
 A status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.
 
 ## Questions and contextual evidence
 
-The `answer` tool gathers a bounded cited evidence packet for a question; `context` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the connection's native scope.
+The `answer` tool gathers a bounded cited evidence packet for a question; `context` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the scope the call names or its workspace default.
 
-The approved optional design has independent Arbiter Focus ranking plus Arbiter Context Compact/Large gathering. Focus can assist ordinary retrieval with Context off; neither stage grants an agent extra index permissions. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification.
+The approved optional design has independent Arbiter Focus ranking plus Arbiter Context Compact/Large gathering. Focus can assist ordinary retrieval with Context off; neither stage widens the scope a call names. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification.

@@ -163,7 +163,7 @@
           {
             "id": "airk.setupAgentStep",
             "title": "Connect a coding agent",
-            "description": "Write an AIRK entry for Claude Code, Codex or VS Code with an existing connection; new connections are created in AIRK Admin.\n[Connect Coding Agent](command:airk.setupAgent)",
+            "description": "Write an AIRK entry (the endpoint URL only; no token) for Claude Code, Codex or VS Code in this folder.\n[Connect Coding Agent](command:airk.setupAgent)",
             "media": {
               "image": "images/local-evidence.png",
               "altText": "Several coding agents connect to the same AIRK Service."

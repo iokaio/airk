@@ -574,7 +574,8 @@ struct Table {
     header: usize,
     start: usize,
     end: usize,
-    nested: bool,
+    /// The subtable name (`http_headers`, …); `None` for the server table.
+    nested: Option<String>,
 }
 
 /// The tables of top-level server `key`. Inline, dotted or custom-subtable
@@ -596,8 +597,8 @@ fn server_tables(source: &str, key: &str) -> Result<(Vec<Statement>, Vec<Table>)
             continue;
         }
         let nested = match keys.len() {
-            2 => false,
-            3 if NESTED.contains(&keys[2].as_str()) => true,
+            2 => None,
+            3 if NESTED.contains(&keys[2].as_str()) => Some(keys[2].clone()),
             _ => {
                 return Err(
                     "Custom AIRK TOML subtables require review; existing file preserved.".into(),
@@ -614,7 +615,7 @@ fn server_tables(source: &str, key: &str) -> Result<(Vec<Statement>, Vec<Table>)
             nested,
         });
     }
-    if !tables.iter().any(|table| !table.nested) {
+    if !tables.iter().any(|table| table.nested.is_none()) {
         return Err(
             "Inline or dotted AIRK TOML requires manual review; existing file preserved.".into(),
         );
@@ -622,21 +623,42 @@ fn server_tables(source: &str, key: &str) -> Result<(Vec<Statement>, Vec<Table>)
     Ok((statements, tables))
 }
 
-/// Set string `field` of `[mcp_servers.<key>]`: replace a single-line value,
-/// or add `field = "…"` after the table's last assignment.
+/// A TOML key: bare when it is a plain identifier, quoted otherwise (as
+/// `"X-AIRK-Response-Mode"`).
+fn field_key(field: &str) -> String {
+    if !field.is_empty()
+        && field
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        field.to_string()
+    } else {
+        quoted(field)
+    }
+}
+
+/// Set string `field` of `[mcp_servers.<key>]` (or of its `nested`
+/// subtable): replace a single-line value, or add `field = "…"` after the
+/// table's last assignment. An absent subtable is appended after the
+/// server's last table.
 pub(super) fn set_string(
     source: &str,
     key: &str,
+    nested: Option<&str>,
     field: &str,
     value: &str,
 ) -> Result<String, String> {
     let (statements, tables) = server_tables(source, key)?;
-    let Some(main) = tables.iter().find(|table| !table.nested) else {
-        return Err("AIRK TOML table missing".into());
+    let Some(table) = tables
+        .iter()
+        .find(|table| table.nested.as_deref() == nested)
+    else {
+        let nested = nested.ok_or("AIRK TOML table missing")?;
+        return append_subtable(source, &statements, &tables, key, nested, field, value);
     };
-    let mut last = &statements[main.header];
-    for statement in &statements[main.header + 1..] {
-        if statement.start >= main.end {
+    let mut last = &statements[table.header];
+    for statement in &statements[table.header + 1..] {
+        if statement.start >= table.end {
             break;
         }
         if statement.text.is_empty() {
@@ -679,11 +701,97 @@ pub(super) fn set_string(
         eol
     };
     Ok(format!(
-        "{}{gap}{field} = {}{eol}{}",
+        "{}{gap}{} = {}{eol}{}",
         &source[..at],
+        field_key(field),
         quoted(value),
         &source[at..]
     ))
+}
+
+/// Append `[mcp_servers.<key>.<nested>]` with one string field after the
+/// last assignment of the server's last table, after one blank line. The
+/// result is parsed again so an inline spelling of the same subtable is
+/// refused, not duplicated.
+fn append_subtable(
+    source: &str,
+    statements: &[Statement],
+    tables: &[Table],
+    key: &str,
+    nested: &str,
+    field: &str,
+    value: &str,
+) -> Result<String, String> {
+    let last = tables
+        .iter()
+        .max_by_key(|table| table.start)
+        .ok_or("AIRK TOML table missing")?;
+    let at = statements[last.header..]
+        .iter()
+        .take_while(|statement| statement.start < last.end)
+        .filter(|statement| !statement.text.is_empty())
+        .last()
+        .map_or(last.end, |statement| statement.end);
+    let eol = eol(source);
+    let header = if bare(key) {
+        key.to_string()
+    } else {
+        quoted(key)
+    };
+    let before = &source[..at];
+    let gap = if before.is_empty() || before.ends_with('\n') {
+        ""
+    } else {
+        eol
+    };
+    let out = format!(
+        "{before}{gap}{eol}[mcp_servers.{header}.{nested}]{eol}{} = {}{eol}{}",
+        field_key(field),
+        quoted(value),
+        &source[at..]
+    );
+    declarations(&out)?;
+    Ok(out)
+}
+
+/// Remove the single-line assignment `field` of `[mcp_servers.<key>]` (or of
+/// its `nested` subtable). Comments on earlier lines stay; a field in an
+/// inline table or spanning several lines needs manual review.
+pub(super) fn remove_field(
+    source: &str,
+    key: &str,
+    nested: Option<&str>,
+    field: &str,
+) -> Result<String, String> {
+    let (statements, tables) = server_tables(source, key)?;
+    let manual =
+        || format!("The AIRK TOML field {field} needs manual review; existing file preserved.");
+    let table = tables
+        .iter()
+        .find(|table| table.nested.as_deref() == nested)
+        .ok_or_else(manual)?;
+    for statement in &statements[table.header + 1..] {
+        if statement.start >= table.end {
+            break;
+        }
+        if statement.text.is_empty() {
+            continue;
+        }
+        let mut cursor = Cursor::new(&statement.text);
+        if cursor.keys()? != [field] {
+            continue;
+        }
+        let (begin, _) = statement
+            .raw
+            .filter(|(begin, end)| source[*begin..*end] == statement.text)
+            .ok_or_else(manual)?;
+        let line = source[..begin].rfind('\n').map_or(0, |at| at + 1);
+        if !source[line..begin].trim().is_empty() {
+            return Err(manual());
+        }
+        return Ok(format!("{}{}", &source[..line], &source[statement.end..]));
+    }
+    Err(manual())
 }
 
 /// Remove `[mcp_servers.<key>]` and its AIRK subtables. Comments inside them
@@ -708,9 +816,9 @@ pub(super) fn remove_server(source: &str, key: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// Append the HTTPS server table `serializeServers` renders for Codex, after
-/// one blank line.
-pub(super) fn append_server(source: &str, key: &str, url: &str, helper: &str) -> String {
+/// Append the U110 HTTPS server table for Codex (the endpoint URL and the
+/// response-mode header only), after one blank line.
+pub(super) fn append_server(source: &str, key: &str, url: &str) -> String {
     let eol = eol(source);
     let header = if bare(key) {
         key.to_string()
@@ -727,9 +835,8 @@ pub(super) fn append_server(source: &str, key: &str, url: &str, helper: &str) ->
         }
     }
     out.push_str(&format!(
-        "[mcp_servers.{header}]{eol}url = {}{eol}http_headers_helper = {}{eol}{eol}[mcp_servers.{header}.http_headers]{eol}\"X-AIRK-Response-Mode\" = \"terse\"{eol}",
-        quoted(url),
-        quoted(helper)
+        "[mcp_servers.{header}]{eol}url = {}{eol}{eol}[mcp_servers.{header}.http_headers]{eol}\"X-AIRK-Response-Mode\" = \"terse\"{eol}",
+        quoted(url)
     ));
     out
 }

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Node 24+: read AIRK's local JSON API from fresh, protected native metadata.
+// Node 24+: read AIRK's local JSON API from the native endpoint and CA files.
+// No token (U110); TLS with the AIRK CA is required and reads need a scope:
+// --index/--set (repeatable) or --workspace.
 'use strict';
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -26,18 +28,34 @@ async function privateBytes(filename, maximum) {
     } finally { await file.close(); }
 }
 
-async function query(connectionFile, tool, arguments_ = {}) {
-    const connection = JSON.parse((await privateBytes(connectionFile, 60 * 1024)).toString('utf8'));
-    const endpoint = connection.endpoint;
-    if (connection.schema !== 1 || endpoint?.schema !== 1 || endpoint.state !== 'ready') throw new Error('Obtain a current ready connection from native AIRK setup');
+function scoped(arguments_, indexes = [], sets = [], workspace) {
+    // U110: merge per-call scope selectors into the tool arguments.
+    if (!arguments_ || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error('Use a JSON argument object');
+    const merged = { ...arguments_ };
+    for (const [key, values] of [['index_ids', indexes], ['index_set_ids', sets]]) {
+        if (!values.length) continue;
+        const existing = merged[key] ?? [];
+        if (!Array.isArray(existing)) throw new Error(key + ' must be a list');
+        merged[key] = [...existing, ...values.filter(value => !existing.includes(value))];
+    }
+    if (workspace !== undefined) {
+        if (!path.isAbsolute(workspace) || (merged.workspace !== undefined && merged.workspace !== workspace)) throw new Error('Use one absolute workspace folder');
+        merged.workspace = workspace;
+    }
+    return merged;
+}
+
+async function query(controlDir, tool, arguments_ = {}) {
+    if (typeof controlDir !== 'string' || !path.isAbsolute(controlDir)) throw new Error('Expected the absolute service control directory');
+    const native = path.join(controlDir, 'http-1');
+    const endpoint = JSON.parse((await privateBytes(path.join(native, 'endpoint.json'), 64 * 1024)).toString('utf8'));
+    if (endpoint?.schema !== 1 || endpoint.state !== 'ready') throw new Error('The native endpoint is not ready; start the AIRK service');
     const match = /^https:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/.exec(endpoint.url);
     if (!match || Number(match[1]) > 65535) throw new Error('Invalid loopback endpoint');
-    const pem = await privateBytes(connection.ca_certificate_file, 8192);
+    const pem = await privateBytes(path.join(native, 'ca.pem'), 8192);
     if ((pem.toString('ascii').match(/-----BEGIN CERTIFICATE-----/g) || []).length !== 1) throw new Error('Expected one native CA certificate');
     const ca = new X509Certificate(pem);
     if (!ca.ca || createHash('sha256').update(ca.raw).digest('hex') !== endpoint.ca_sha256) throw new Error('Native CA identity changed');
-    const token = (await privateBytes(connection.credential_file, 103)).toString('ascii');
-    if (!/^airk1\.[0-9a-f]{32}\.[0-9a-f]{64}$/.test(token) || token.split('.')[1] !== connection.connection_id) throw new Error('Invalid native credential identity');
     let route = '/api/v1/tools', body;
     if (tool !== undefined) {
         if (!/^[A-Za-z0-9_]{1,64}$/.test(tool) || !arguments_ || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error('Use an advertised tool and JSON argument object');
@@ -50,7 +68,7 @@ async function query(connectionFile, tool, arguments_ = {}) {
         // configured enterprise roots. IP/name/validity checks remain enabled.
         const request = https.request({ hostname: '127.0.0.1', port: Number(match[1]), path: route, method: body ? 'POST' : 'GET',
             ca: [...tls.getCACertificates('default'), pem], rejectUnauthorized: true, agent: false, maxHeaderSize: 65536,
-            headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {}) } });
+            headers: body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {} }); // U110: no Authorization header.
         const timer = setTimeout(() => request.destroy(new Error('Request deadline exhausted')), 125000);
         const done = (error, result) => { clearTimeout(timer); if (error) reject(error); else resolve(result); };
         request.once('error', error => done(error));
@@ -60,21 +78,32 @@ async function query(connectionFile, tool, arguments_ = {}) {
             response.once('error', error => done(error));
             response.once('end', () => { try { done(undefined, { status: response.statusCode, result: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch (error) { done(error); } });
         });
-        // HTTPS waits for authenticated TLS before sending these headers. No
+        // HTTPS waits for authenticated TLS before sending the request. No
         // proxy, redirect following, automatic retry or MCP session is involved.
         request.end(body);
     });
 }
 
 async function main(argv) {
-    const options = {};
-    for (let i = 0; i < argv.length; i += 2) { if (!['--connection', '--tool', '--arguments', '--arguments-file'].includes(argv[i]) || argv[i + 1] === undefined || options[argv[i]] !== undefined) throw new Error('Invalid arguments'); options[argv[i]] = argv[i + 1]; }
-    if (!options['--connection']) throw new Error('Expected --connection <protected-native-JSON>');
+    const options = {}, indexes = [], sets = [];
+    for (let i = 0; i < argv.length; i += 2) {
+        const [flag, value] = [argv[i], argv[i + 1]];
+        if (value === undefined) throw new Error('Invalid arguments');
+        if (flag === '--index') indexes.push(value);
+        else if (flag === '--set') sets.push(value);
+        else if (['--control-dir', '--tool', '--arguments', '--arguments-file', '--workspace'].includes(flag) && options[flag] === undefined) options[flag] = value;
+        else throw new Error('Invalid arguments');
+    }
+    if (!options['--control-dir']) throw new Error('Expected --control-dir <absolute service control directory>');
     if (options['--arguments'] && options['--arguments-file']) throw new Error('Choose one argument input');
+    const scope = indexes.length || sets.length || options['--workspace'] !== undefined;
+    if (scope && options['--tool'] === undefined) throw new Error('Scope options need --tool');
     const arguments_ = options['--arguments-file'] ? (await privateBytes(options['--arguments-file'], 65536)).toString('utf8') : options['--arguments'] || '{}';
-    const { status, result } = await query(options['--connection'], options['--tool'], JSON.parse(arguments_));
+    const parsed = JSON.parse(arguments_);
+    const sent = options['--tool'] === undefined ? parsed : scoped(parsed, indexes, sets, options['--workspace']);
+    const { status, result } = await query(options['--control-dir'], options['--tool'], sent);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     return status === 200 && !result?.isError ? 0 : 1;
 }
-module.exports = { query };
-if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; }, () => { process.stderr.write('AIRK local HTTPS read failed; obtain current verified connection metadata and inspect native status.\n'); process.exitCode = 1; });
+module.exports = { query, scoped };
+if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; }, () => { process.stderr.write('AIRK local HTTPS read failed; check the service control directory, AIRK CA and native status.\n'); process.exitCode = 1; });

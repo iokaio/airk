@@ -2004,9 +2004,57 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
     Ok(())
 }
 
+/// U110: the literal roster of the local agent session's `tools/list` (the
+/// unified catalog without `projects`, plus `list_scopes`), kept separate
+/// from producer definitions.
+fn assert_local_agent_catalog_names(tools: &[serde_json::Value]) -> Result<()> {
+    let expected = [
+        "answer",
+        "capabilities",
+        "changes",
+        "code_facts",
+        "context",
+        "diagnostics",
+        "document_facts",
+        "draft_plan",
+        "draft_search",
+        "draft_strategy",
+        "file_info",
+        "get_handoff",
+        "get_template",
+        "help",
+        "imports",
+        "list_files",
+        "list_scopes",
+        "list_templates",
+        "outline",
+        "parse",
+        "proposal_status",
+        "query_scope",
+        "read_file",
+        "references",
+        "relationships",
+        "search",
+        "status",
+        "suggest_view",
+        "symbols",
+        "validate_draft",
+    ];
+    let mut actual = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().context("public tool name"))
+        .collect::<Result<Vec<_>>>()?;
+    actual.sort_unstable();
+    ensure!(
+        actual == expected,
+        "complete local agent MCP catalog: {actual:?}"
+    );
+    Ok(())
+}
+
 fn probe_https_mcp(service: &common::Service) -> Result<()> {
-    let mut session =
-        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    // U110: no credential; the session names the fixture's index per read.
+    let mut session = common::http::HttpMcpSession::start(&service.control, service.open_scope())?;
     let initialized = session.request(1,"initialize", serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-original-test","version":"1"}}))?;
     ensure!(
         initialized["result"]["serverInfo"]["name"] == "airk",
@@ -2017,14 +2065,14 @@ fn probe_https_mcp(service: &common::Service) -> Result<()> {
     let tools = listed["result"]["tools"]
         .as_array()
         .context("HTTPS tool list missing")?;
-    common::assert_unified_mcp_catalog_names(tools);
+    assert_local_agent_catalog_names(tools)?;
     ensure!(
         tools
             .iter()
             .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
         "public MCP catalog is not unified"
     );
-    let canonical = serde_json::to_value(airk_mcp::unified::tools())?;
+    let canonical = serde_json::to_value(airk_mcp::open::local_catalog())?;
     ensure!(
         listed["result"]["tools"] == canonical,
         "HTTPS public catalog lost canonical schemas or annotations"
@@ -2035,21 +2083,27 @@ fn probe_https_mcp(service: &common::Service) -> Result<()> {
         .context("query scope missing")?;
     let mut expected_schema = airk_core::combined_reads::query_scope::schema();
     expected_schema["$schema"] = serde_json::json!("https://json-schema.org/draft/2020-12/schema");
-    let project = &scope["inputSchema"]["properties"]["project"];
+    let properties = &scope["inputSchema"]["properties"];
     ensure!(
-        project["type"] == "string"
-            && project["pattern"] == "^[0-9a-f]{64}$"
-            && !scope["inputSchema"]["required"]
-                .as_array()
-                .is_some_and(|fields| fields.iter().any(|field| field == "project")),
-        "query scope optional binding changed"
+        properties.get("project").is_none(),
+        "local agent session advertised a project binding"
     );
-    expected_schema["properties"]["project"] = project.clone();
+    // U110: the read names its scope; these selectors are the public delta.
+    for selector in ["index_ids", "index_set_ids", "workspace"] {
+        ensure!(
+            properties[selector].is_object(),
+            "query scope lacks the {selector} selector"
+        );
+        expected_schema["properties"][selector] = properties[selector].clone();
+    }
+    if let Some(limit) = properties.get("limit_per_index") {
+        expected_schema["properties"]["limit_per_index"] = limit.clone();
+    }
     ensure!(
         scope["annotations"]["readOnlyHint"] == true && scope["inputSchema"] == expected_schema,
         "query scope metadata diverged"
     );
-    for field in ["project_ids", "index_ids", "verification", "response_mode"] {
+    for field in ["project_ids", "verification", "response_mode"] {
         ensure!(
             scope["inputSchema"]["properties"].get(field).is_none(),
             "query scope advertised unsupported {field}"
@@ -2125,7 +2179,7 @@ fn actual_https_protocol_negotiation_preserves_legacy_fallback_and_metadata() ->
         ("2026-07-28", "2025-11-25"),
     ] {
         let mut session =
-            common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+            common::http::HttpMcpSession::start(&service.control, service.open_scope())?;
         let initialized = session.request(1, "initialize", serde_json::json!({"protocolVersion":requested,"capabilities":{},"clientInfo":{"name":"http-negotiation","version":"1"}}))?;
         ensure!(
             initialized["result"]["protocolVersion"] == negotiated,
@@ -2158,8 +2212,7 @@ fn actual_https_protocol_negotiation_preserves_legacy_fallback_and_metadata() ->
         );
         session.close()?;
     }
-    let mut mismatch =
-        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    let mut mismatch = common::http::HttpMcpSession::start(&service.control, service.open_scope())?;
     let error = mismatch.probe(serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deliberate-header-mismatch","version":"1"}}}))?).expect_err("mismatched initial header accepted");
     ensure!(
         error
@@ -2169,8 +2222,7 @@ fn actual_https_protocol_negotiation_preserves_legacy_fallback_and_metadata() ->
             == 400
     );
     mismatch.close()?;
-    let mut inline =
-        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    let mut inline = common::http::HttpMcpSession::start(&service.control, service.open_scope())?;
     let meta = serde_json::json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"http-inline-negotiation","version":"1"}});
     let discovered = inline.request(1, "server/discover", serde_json::json!({"_meta":meta}))?;
     ensure!(
@@ -2195,7 +2247,7 @@ fn actual_https_body_bound_and_malformed_requests_are_content_free() -> Result<(
     let service = common::Service::reviewed(source.path(), data.path(), "frame-bound");
     for kind in ["exact", "overflow", "malformed"] {
         let mut session =
-            common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+            common::http::HttpMcpSession::start(&service.control, service.open_scope())?;
         let initialized = session.request(1,"initialize",serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"https-bound-fixture","version":"1"}}))?;
         ensure!(initialized["result"]["serverInfo"]["name"] == "airk");
         session.send(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;

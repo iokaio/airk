@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-# Template only: use the exact configuration returned by verified native setup.
-# Codex does not substitute an environment variable into this URL field.
+# Template only: use the URL that `airkctl agents connect` or `airkctl agents
+# endpoint` reports. Codex does not substitute an environment variable into
+# this URL field. No token is needed (U110).
 [mcp_servers.airk]
-url = "REPLACE_WITH_NATIVE_CONNECTION_ENDPOINT_URL"
-bearer_token_env_var = "AIRK_MCP_TOKEN_REPLACE_WITH_NATIVE_CONNECTION_ID"
+url = "REPLACE_WITH_NATIVE_ENDPOINT_URL"
 
 [mcp_servers.airk.http_headers]
 "X-AIRK-Response-Mode" = "terse"

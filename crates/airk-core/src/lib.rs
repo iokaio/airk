@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 pub mod agent_connection;
 pub mod agent_scope;
+pub mod agent_workspace;
 pub mod binding;
 pub mod catalog_fences;
 pub mod catalog_host;

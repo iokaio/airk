@@ -1,5 +1,20 @@
 # Open agent access: specification for U105/U106
 
+> **Superseded in part by U110 (user decision, 15 November 2026).** `/mcp` now
+> takes no token: the gateway strips and ignores any `Authorization` header
+> (Host, `Origin` and admin-cookie refusals remain), and every MCP session is
+> the built-in local agent session (reserved connection id
+> `00000000000000000000000000000000`). There are no per-connection default
+> scopes, agent-choice flags or open-connection enrollment for agents: each read
+> names `index_ids`/`index_set_ids` or passes `workspace`, which resolves to the
+> service-stored workspace default of the most specific containing folder, else
+> refuses `scope_required`. `list_indexes` is renamed `list_scopes` and adds
+> `workspace_defaults`/`workspace_default`. `airkctl agents connect` writes only
+> the URL and `X-AIRK-Response-Mode`; `agents default` and `--open` no longer
+> matter for agents. Still current from this document: id/name resolution,
+> descriptions, whole-index reads, set expansion and `limit_per_index`. See
+> [agent integration](../agent-integration.md) and split-plan §2.1 U110.
+
 Status: written 13 November 2026 from a read-only source trace of `feat/split`
 (after `6fc3d356`). Decisions: split-plan §2.1 U104 (items 3-5), U105, U106.
 Line citations are from that trace; verify them before editing.

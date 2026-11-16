@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Real scoped workers, native frontend, CLI call/console/info, and stdio MCP.
+use super::changes_verification::{open_arguments, open_pipe};
 use super::*;
 
 const MAX_HELPER_OUTPUT_BYTES: usize = 1 << 20;
@@ -74,8 +75,54 @@ fn positive_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
     Ok(value)
 }
 
-fn positive_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
-    positive_body(rpc_result(wire, label)?, index, label)
+/// U110: a positive one-index open read (MCP or pipe) has no combined
+/// member wrapper: its body is the index's own result and its `scope` names
+/// exactly that index.
+fn single_index_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
+    airk_core::index_catalog::encoded_size(reply, 3 * airk_core::MAX_RESPONSE_BYTES + 4096)?;
+    ensure!(
+        reply.is_object()
+            && reply
+                .get("isError")
+                .is_none_or(|flag| flag == &json!(false)),
+        "{label} error flag true or malformed; complete bounded outer reply: {reply}"
+    );
+    let value =
+        body(reply).with_context(|| format!("{label}; complete bounded outer reply: {reply}"))?;
+    ensure!(
+        value["read_scope"]["index_ids"] == json!([index]) && value.get("members").is_none(),
+        "{label} one-index open read changed; expected {index}; complete bounded outer reply: {reply}"
+    );
+    Ok(value)
+}
+
+fn single_index_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
+    single_index_body(rpc_result(wire, label)?, index, label)
+}
+
+/// The complete family report of one file result, with its bounded rows,
+/// file identity and saved-source basis.
+fn assert_family_report(result: &Value, label: &str) -> Result<()> {
+    let report = &result["profile_families"];
+    ensure!(
+        report["families"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 18)
+            && report["file"]["path"] == "api/policy.md"
+            && report["file"]["publication"] == result["publication"]["token"]
+            && report["live_source_checked"] == false
+            // An open read names the whole index, so its collection policy
+            // is known and a pending reindex is a definite false; a selected
+            // subset (combined) cannot observe it (null).
+            && report["pending_collection_reindex"]
+                == if report["configured_collection_policy"]["state"] == "known" {
+                    json!(false)
+                } else {
+                    Value::Null
+                },
+        "{label} family report changed; complete result: {result}"
+    );
+    Ok(())
 }
 
 async fn cli_catalog(f: &Fixture) -> Result<Value> {
@@ -215,9 +262,18 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
                 .iter()
                 .find(|tool| tool["name"] == "file_info")
                 .context("MCP FileInfo absent")?;
+            // U110: the tokenless MCP session lists the local agent catalog,
+            // whose reads take a per-call scope; it is the canonical owner's
+            // complete FileInfo definition.
+            let canonical = serde_json::to_value(
+                airk_mcp::open::local_catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == "file_info")
+                    .context("canonical local FileInfo absent")?,
+            )?;
             assert_eq!(
-                cli_info, public,
-                "actual CLI and MCP must retain the complete public FileInfo definition"
+                public, &canonical,
+                "actual MCP must retain the complete local-session FileInfo definition"
             );
             let native = serde_json::to_value(
                 backend
@@ -235,32 +291,25 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
                 expected_schema
             );
             assert_eq!(cli_info["inputSchema"], native["inputSchema"]);
-            let native_keys = native["inputSchema"]["properties"]
-                .as_object()
-                .unwrap()
-                .keys()
-                .collect::<std::collections::BTreeSet<_>>();
-            let public_keys = public["inputSchema"]["properties"]
-                .as_object()
-                .unwrap()
-                .keys()
-                .collect::<std::collections::BTreeSet<_>>();
-            assert_eq!(
-                native_keys, public_keys,
-                "aliases must expose the same complete input inventory"
-            );
             let mut arguments = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":mode});
             if let Some(detail) = detail {
                 arguments["reply_detail"] = json!(detail);
             }
             let native = native_read(backend.as_ref(), "airk_file_info", &arguments).await?;
             let cli = f.cli("airk_file_info", &arguments).await?;
-            let wire = mcp.call(3, "file_info", arguments.clone())?;
+            let open = open_arguments(&arguments)?;
+            let wire = mcp.call(3, "file_info", open.clone())?;
             let native = positive_body(&native, f.indexes[0], "opted native")?;
             let cli = positive_body(&cli, f.indexes[0], "opted CLI")?;
-            let wire = positive_mcp_body(&wire, f.indexes[0], "opted MCP")?;
+            let wire = single_index_mcp_body(&wire, f.indexes[0], "opted MCP")?;
+            let piped = single_index_body(
+                &open_pipe(&f, "file_info", &open).await?,
+                f.indexes[0],
+                "opted open pipe",
+            )?;
             assert_parity("complete opted file-info CLI result", &native, &cli)?;
-            assert_parity("complete opted file-info MCP alias result", &native, &wire)?;
+            assert_parity("complete opted file-info MCP alias result", &piped, &wire)?;
+            assert_family_report(&wire, "opted MCP")?;
             let member = native["members"]
                 .as_array()
                 .and_then(|members| members.first())
@@ -362,13 +411,29 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         f.indexes[0],
         "CLI conditional",
     )?;
-    let wire = conditional_mcp.call(3, "file_info", conditional.clone())?;
+    let mut open = open_arguments(&conditional)?;
+    let wire = conditional_mcp.call(3, "file_info", open.clone())?;
+    let wire = single_index_mcp_body(&wire, f.indexes[0], "conditional MCP")?;
     assert_parity("opt-in conditional CLI representation", &native, &cli)?;
     assert_parity(
         "opt-in conditional MCP representation",
-        &native,
-        &positive_mcp_body(&wire, f.indexes[0], "conditional MCP")?,
+        &single_index_body(
+            &open_pipe(&f, "file_info", &open).await?,
+            f.indexes[0],
+            "conditional open pipe",
+        )?,
+        &wire,
     )?;
+    // The open read's legacy-validated opt-in also returns its family
+    // representation; its own opted validator then answers not-modified.
+    assert_eq!(
+        wire["read"]["status"], "content",
+        "legacy validator suppressed the requested MCP family representation"
+    );
+    assert_family_report(&wire, "conditional MCP")?;
+    open["if_evidence"] = json!(wire["read"]["validator"].as_str().with_context(|| {
+        format!("opted MCP conditional validator absent; complete bounded result: {wire}")
+    })?);
     let result = member_body(&native, &native["members"][0])?;
     assert_eq!(
         result["read"]["status"], "content",
@@ -388,13 +453,23 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         f.indexes[0],
         "CLI conditional",
     )?;
-    let wire = conditional_mcp.call(4, "file_info", conditional)?;
+    let wire = conditional_mcp.call(4, "file_info", open.clone())?;
+    let wire = single_index_mcp_body(&wire, f.indexes[0], "conditional MCP")?;
     assert_parity("unchanged conditional CLI representation", &native, &cli)?;
     assert_parity(
         "unchanged conditional MCP representation",
-        &native,
-        &positive_mcp_body(&wire, f.indexes[0], "conditional MCP")?,
+        &single_index_body(
+            &open_pipe(&f, "file_info", &open).await?,
+            f.indexes[0],
+            "conditional open pipe",
+        )?,
+        &wire,
     )?;
+    assert_eq!(wire["read"]["status"], "not_modified", "{wire}");
+    assert!(
+        wire.get("profile_families").is_none(),
+        "not-modified MCP response repeated payload: {wire}"
+    );
     let result = member_body(&native, &native["members"][0])?;
     assert_eq!(result["read"]["status"], "not_modified");
     assert!(
@@ -420,13 +495,29 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         f.indexes[2],
         "CLI full_args",
     )?;
-    let wire = mcp.call(3, "file_info", full_args.clone())?;
+    let open = open_arguments(&full_args)?;
+    let wire = mcp.call(3, "file_info", open.clone())?;
+    let wire = single_index_mcp_body(&wire, f.indexes[2], "known policy MCP")?;
     assert_parity("known collection policy CLI FileInfo", &native, &cli)?;
     assert_parity(
         "known collection policy MCP FileInfo",
-        &native,
-        &positive_mcp_body(&wire, f.indexes[2], "known policy MCP")?,
+        &single_index_body(
+            &open_pipe(&f, "file_info", &open).await?,
+            f.indexes[2],
+            "known policy open pipe",
+        )?,
+        &wire,
     )?;
+    assert_family_report(&wire, "known policy MCP")?;
+    for policy in [
+        "configured_collection_policy",
+        "published_collection_policy",
+    ] {
+        assert_eq!(
+            wire["profile_families"][policy]["state"], "known",
+            "known policy MCP {policy}: {wire}"
+        );
+    }
     let result = member_body(&native, &native["members"][0])?;
     assert_eq!(
         result["profile_families"]["configured_collection_policy"]["state"],
@@ -436,7 +527,7 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         result["profile_families"]["published_collection_policy"]["state"],
         "known"
     );
-    let mut invalid = full_args;
+    let mut invalid = open;
     invalid["include_profile_families"] = json!("true");
     let refused = mcp.call(4, "file_info", invalid)?;
     assert!(

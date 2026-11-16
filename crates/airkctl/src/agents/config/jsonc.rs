@@ -305,7 +305,6 @@ impl Reader<'_> {
 pub(super) enum Out {
     Str(String),
     Obj(Vec<(String, Out)>),
-    Arr(Vec<Out>),
 }
 
 impl Out {
@@ -318,7 +317,6 @@ impl Out {
                     .map(|(k, v)| (k.clone(), v.to_value()))
                     .collect(),
             ),
-            Out::Arr(items) => Value::Array(items.iter().map(Out::to_value).collect()),
         }
     }
 
@@ -335,14 +333,6 @@ impl Out {
                     .map(|(key, value)| {
                         format!("{inner}{}: {}", quoted(key), value.pretty(&inner, format))
                     })
-                    .collect(),
-            ),
-            Out::Arr(items) => (
-                "[",
-                "]",
-                items
-                    .iter()
-                    .map(|value| format!("{inner}{}", value.pretty(&inner, format)))
                     .collect(),
             ),
         };
@@ -661,24 +651,5 @@ pub(super) fn remove_element(
             "{} changed; existing configuration preserved.",
             path.join(".")
         )),
-    }
-}
-
-pub(super) fn append_element(source: &str, path: &[String], value: &Out) -> Result<String, String> {
-    let tree = parse(source)?;
-    match tree.at(path) {
-        Some(node) if matches!(node.kind, Kind::Array(_)) => Ok(insert_child(
-            source,
-            node,
-            &|indent: &str, format: &Format| value.pretty(indent, format),
-        )),
-        Some(_) => Err(format!(
-            "{} must be an array; existing configuration preserved.",
-            path.join(".")
-        )),
-        None => {
-            let (key, parent) = path.split_last().ok_or("configuration root missing")?;
-            insert_member(source, parent, key, &Out::Arr(vec![value.clone()]))
-        }
     }
 }

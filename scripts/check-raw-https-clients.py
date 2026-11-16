@@ -4,6 +4,14 @@
 This is a T2 campaign. It starts only a private native fixture and performs no
 OS trust enrollment. MCP GET/SSE coverage remains in native transport tests;
 this receipt qualifies the two raw API routes and explicitly selected reads.
+
+U110 (split-plan §2.1, contracts §2.11): the endpoint takes no credential.
+The examples read `<control>/http-1/endpoint.json` and `ca.pem` themselves
+(`--control-dir`/`-ControlDir`) and name the fixture index per tool call
+(`--index`/`-Index`); raw, MCP and CLI (`tools call --index`) take the same open
+read path. The receipt keeps its schema; the credential fields of `endpoints`
+(connection_id, selection, credential_sha256, credential) are gone, and it adds
+`read_scope` and one `scope_required` refusal per phase.
 """
 import argparse
 import hashlib
@@ -16,7 +24,6 @@ import socket
 import subprocess
 import sys
 import time
-import uuid
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,9 +39,10 @@ def load(name):
 clients, transport = load("check-service-clients"), load("http_fixture")
 # Same complete raw read catalog as Fixture.http_mcp; assistance mutations are
 # intentionally absent from the API's documented read-only catalog.
-READ_NAMES = {tool.removeprefix("airk_") for tool in clients.TOOLS} | {
-    "projects", "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+READ_NAMES = clients.HTTPS_API_READ_NAMES
 NONREAD_MCP_NAMES = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
+# Every case names the fixture index (U110); the escape stays refused inside it.
+SCOPE_CASE = ("search", {"query": "rawexamplemarker", "mode": "lexical", "response_mode": "full"})
 CASES = (
     ("query_scope", {"view": "projects", "response_mode": "full"}, False),
     ("list_files", {"response_mode": "full"}, False),
@@ -51,22 +59,26 @@ def commands():
     if not node or not pwsh:
         raise RuntimeError("All three actual clients are required; Node or PowerShell is missing")
     return {
-        "python": ([sys.executable, str(ROOT / "examples/local_https_client.py")], ("--connection", "--tool", "--arguments")),
-        "node": ([node, str(ROOT / "examples/local_https_client.cjs")], ("--connection", "--tool", "--arguments")),
-        "powershell": ([pwsh, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "examples/local_https_client.ps1")], ("-Connection", "-Tool", "-Arguments")),
+        "python": ([sys.executable, str(ROOT / "examples/local_https_client.py")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
+        "node": ([node, str(ROOT / "examples/local_https_client.cjs")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
+        "powershell": ([pwsh, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "examples/local_https_client.ps1")], ("-ControlDir", "-Tool", "-Arguments", "-Index", "-Workspace")),
     }
 
 
-def invoke(command, flags, connection_file, tool, arguments, token, environment):
-    argv = [*command, flags[0], str(connection_file)]
+def invoke(command, flags, control, tool, arguments, environment, *, index=None, workspace=None):
+    """One example process. Tool calls name their scope; the catalog call takes none (U110)."""
+    argv = [*command, flags[0], str(control)]
     if tool is not None:
         argv += [flags[1], tool, flags[2], json.dumps(arguments, separators=(",", ":"))]
+        if index is not None:
+            argv += [flags[3], index]
+        if workspace is not None:
+            argv += [flags[4], workspace]
+    elif index is not None or workspace is not None:
+        raise ValueError("The example catalog call takes no scope")
     started = time.monotonic()
     result = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=135,
                             env=environment, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-    # Never retain a bearer, including an accidental client diagnostic echo.
-    if token in result.stdout or token in result.stderr:
-        raise AssertionError("Example disclosed a credential; raw output withheld")
     if len(result.stdout.encode("utf-8")) > 2 << 20 or len(result.stderr.encode("utf-8")) > 65536:
         raise AssertionError("Example output exceeded evidence budget")
     body = json.loads(result.stdout)
@@ -111,57 +123,17 @@ def verify_catalog(catalog, mcp_catalog):
     return raw
 
 
-def verify_relocated(previous, current, previous_token_digest, current_token_digest):
-    before, after = previous["endpoint"], current["endpoint"]
+def verify_relocated(previous, current):
+    """The endpoint moved and restarted under the same installation authority and CA."""
+    before, after = previous, current
     if (type(before.get("generation")) is not int or type(after.get("generation")) is not int
             or before["generation"] <= 0 or after["generation"] <= before["generation"]):
         raise AssertionError("Endpoint generation did not advance across restart")
-    if (before["url"] == after["url"] or before["service_instance"] == after["service_instance"]
-            or previous_token_digest != current_token_digest
-            or previous["connection_id"] != current["connection_id"]):
-        raise AssertionError("Endpoint relocation lost credential continuity or did not restart/relocate")
-    for field in ("installation", "user", "namespace", "ca_sha256", "executable_sha256"):
+    if before["url"] == after["url"] or before["service_instance"] == after["service_instance"]:
+        raise AssertionError("Endpoint relocation did not restart/relocate")
+    for field in ("schema", "installation", "user", "namespace", "ca_sha256", "executable_sha256"):
         if before[field] != after[field]:
-            raise AssertionError("Endpoint relocation changed the enrolled native authority")
-    for field in ("schema", "ca_certificate_file", "credential_file"):
-        if previous[field] != current[field]:
-            raise AssertionError("Endpoint relocation changed protected connection references")
-    if not same_selection(previous["selection"], current["selection"]):
-        raise AssertionError("Endpoint relocation changed the complete selected scope")
-
-
-def same_selection(before, after):
-    """Only a forward native catalog clock may differ in the full authority."""
-    if isinstance(before, dict):
-        if not isinstance(after, dict) or before.keys() != after.keys():
-            return False
-        return all((type(before[key]) is int and type(after[key]) is int and after[key] >= before[key])
-                   if key == "expected_catalog_revision" else same_selection(before[key], after[key]) for key in before)
-    if isinstance(before, list):
-        return isinstance(after, list) and len(before) == len(after) and all(same_selection(a, b) for a, b in zip(before, after))
-    return type(before) is type(after) and before == after
-
-
-def credential_observation(connection, control):
-    """Fixture-only generation check; retain neither verifier nor private ledger."""
-    ledger = json.loads(transport.private_bytes(Path(control) / "http-1/credentials.json", control, 1_048_576))
-    records = [record for record in ledger["records"] if record["id"] == connection["connection_id"]]
-    if len(records) != 1 or records[0]["revoked"] or type(records[0]["generation"]) is not int or records[0]["generation"] <= 0:
-        raise AssertionError("Native fixture credential is absent, revoked or malformed")
-    return {key: records[0][key] for key in ("id", "generation", "selection", "client", "expires_unix_ms")}
-
-
-def existing_connection(fixture, selection, connection_id):
-    response = fixture.run("runtime", "http-connection-info", "--install-dir", fixture.install,
-                           "--connection-id", connection_id)
-    connection = json.loads(response.stdout)
-    return transport.validate_enrollment(connection, fixture.control, selection, connection_id)
-
-
-def private_json(path, value):
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        json.dump(value, stream)
+            raise AssertionError("Endpoint relocation changed the native authority or TLS issuer")
 
 
 def harness_identity():
@@ -202,26 +174,16 @@ def qualify(runtime, report):
                 receipt["compiled_source"] = json.loads((fixture.runtime / "airk-build.json").read_text())["source"]
                 fixture.register("raw-example", source, data)
                 fixture.job("raw-example", "index")
-                selection = {"kind": "scoped", "selection": fixture.scopes["raw-example"]}
-                connection_id = uuid.uuid4().hex
+                index = fixture.scopes["raw-example"]["index_id"]
+                receipt["read_scope"] = {"index_ids": [index]}
                 previous = None
                 for phase in ("initial", "changed_endpoint"):
-                    connection = (fixture.enroll_http(selection, connection_id, "cli") if phase == "initial"
-                                  else existing_connection(fixture, selection, connection_id))
-                    transport.validate_native_identity(connection, fixture.rpc("health")["observation"])
-                    token = transport.private_bytes(connection["credential_file"], fixture.control, 103).decode("ascii")
-                    token_digest = hashlib.sha256(token.encode()).hexdigest()
-                    credential = credential_observation(connection, fixture.control)
+                    endpoint = fixture.http_endpoint()
+                    transport.validate_native_identity(endpoint, fixture.rpc("health")["observation"])
                     if previous is not None:
-                        verify_relocated(previous["connection"], connection, previous["token_digest"], token_digest)
-                        if credential != previous["credential"]:
-                            raise AssertionError("Endpoint relocation changed credential generation or issuance authority")
-                    receipt["endpoints"].append({"phase": phase, "endpoint": connection["endpoint"],
-                                                 "connection_id": connection_id, "selection": connection["selection"],
-                                                 "credential_sha256": token_digest, "credential": credential})
-                    connection_file = fixture.control / "http-1" / (phase + "-raw-connection.json")
-                    private_json(connection_file, connection)
-                    network = transport.McpClient(connection, fixture.control)
+                        verify_relocated(previous, endpoint)
+                    receipt["endpoints"].append({"phase": phase, "endpoint": endpoint})
+                    network = transport.McpClient(endpoint, fixture.control, scope={"index_ids": [index]})
                     try:
                         network.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
                             "protocolVersion": "2025-11-25", "capabilities": {},
@@ -233,7 +195,7 @@ def qualify(runtime, report):
                         catalog = network.api_catalog()
                         schemas = verify_catalog(catalog, mcp_catalog)
                         for name, (command, flags) in selected.items():
-                            observed = invoke(command, flags, connection_file, None, None, token, fixture.environment)
+                            observed = invoke(command, flags, fixture.control, None, None, fixture.environment)
                             verify_result(observed, catalog)
                             receipt["observations"].append({"phase": phase, "client": name, "kind": "catalog", **observed})
                             save()
@@ -245,17 +207,36 @@ def qualify(runtime, report):
                                 raise AssertionError("Native positive/negative fixture assumption differs")
                             network.send({"jsonrpc": "2.0", "id": ordinal, "method": "tools/call", "params": {"name": tool, "arguments": arguments}})
                             mcp = network.receive(ordinal)["result"]
-                            cli = fixture.run(*fixture.arguments("raw-example"), "tools", "call", tool, "--args", json.dumps(arguments), check=False)
-                            cli_envelope = json.loads(cli.stdout)
+                            _, cli_envelope = fixture.open_call("raw-example", tool, arguments)
                             if not (transport.parity_envelope(baseline) == transport.parity_envelope(mcp) == transport.parity_envelope(cli_envelope)):
                                 raise AssertionError("Complete raw/MCP/CLI results differ")
                             receipt["observations"].append({"phase": phase, "kind": "canonical_parity", "tool": tool, "arguments": arguments,
                                                             "raw": baseline, "mcp": mcp, "cli": cli_envelope})
                             for name, (command, flags) in selected.items():
-                                observed = invoke(command, flags, connection_file, tool, arguments, token, fixture.environment)
+                                observed = invoke(command, flags, fixture.control, tool, arguments, fixture.environment, index=index)
                                 verify_result(observed, baseline, negative)
                                 receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": arguments, **observed})
                                 save()
+                        # U110: a workspace with no stored default is refused scope_required on every surface.
+                        tool, arguments = SCOPE_CASE
+                        workspace = str(owner)
+                        baseline = network.api_read(tool, {**arguments, "workspace": workspace})
+                        network.send({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
+                                      "params": {"name": tool, "arguments": {**arguments, "workspace": workspace}}})
+                        mcp = network.receive(30)["result"]
+                        _, cli_envelope = fixture.open_call("raw-example", tool, arguments, workspace=workspace)
+                        for envelope in (baseline, mcp, cli_envelope):
+                            clients.scope_refusal(envelope)
+                        if not (transport.parity_envelope(baseline) == transport.parity_envelope(mcp) == transport.parity_envelope(cli_envelope)):
+                            raise AssertionError("Complete raw/MCP/CLI scope_required refusals differ")
+                        receipt["observations"].append({"phase": phase, "kind": "scope_required", "tool": tool, "workspace": workspace,
+                                                        "arguments": arguments, "raw": baseline, "mcp": mcp, "cli": cli_envelope})
+                        for name, (command, flags) in selected.items():
+                            observed = invoke(command, flags, fixture.control, tool, arguments, fixture.environment, workspace=workspace)
+                            verify_result(observed, baseline, True)
+                            receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": arguments,
+                                                            "workspace": workspace, **observed})
+                            save()
                         for tool in ("missing_fixture_tool", "index"):
                             try:
                                 network.api_read(tool, {})
@@ -266,15 +247,14 @@ def qualify(runtime, report):
                             else:
                                 raise AssertionError("Unknown or mutation tool was admitted by the raw API")
                             for name, (command, flags) in selected.items():
-                                observed = invoke(command, flags, connection_file, tool, {}, token, fixture.environment)
+                                observed = invoke(command, flags, fixture.control, tool, {}, fixture.environment, index=index)
                                 verify_result(observed, baseline, True)
                                 receipt["observations"].append({"phase": phase, "client": name, "tool": tool, "arguments": {}, **observed})
                                 save()
                     finally:
                         network.close()
                     if phase == "initial":
-                        previous = {"url": connection["endpoint"]["url"], "token_digest": token_digest,
-                                    "connection": connection, "credential": credential}
+                        previous = endpoint
                         fixture.close()  # Canonical one-dispatch no-force Stop, retaining its native receipt.
                         receipt["intermediate_stop"] = fixture.managed_stop
                         with socket.socket() as occupant:
@@ -286,11 +266,12 @@ def qualify(runtime, report):
                             # report an earlier process's cleanup as this one.
                             fixture.managed_stop = None
                             fixture.managed_health = None
-                            started = fixture.run("runtime", "start", "--install-dir", fixture.install)
+                            # `runtime start` is a U93 interim operation of the service image.
+                            started = fixture.service_run("runtime", "start", "--install-dir", fixture.install)
                             receipt["ordinary_start"] = json.loads(started.stdout)
                             fixture.managed_health = fixture.rpc("health")["observation"]
-                            fresh = existing_connection(fixture, selection, connection_id)
-                            if fresh["endpoint"]["url"] == previous["url"]:
+                            fresh = fixture.http_endpoint()
+                            if fresh["url"] == previous["url"]:
                                 raise AssertionError("Occupied saved endpoint was reused")
                             occupant.setblocking(False)
                             try:
@@ -305,7 +286,8 @@ def qualify(runtime, report):
                 receipt["source_preserved"] = True
             receipt["native_stop_complete"] = fixture.managed_stop is not None
             receipt["selected_observation_count"] = len(receipt["observations"])
-            receipt["expected_observation_count"] = 2 * (len(selected) + (len(CASES) + 2) * (1 + len(selected)))
+            # Per phase: catalogs, each case, the scope_required refusal and two HTTP refusals.
+            receipt["expected_observation_count"] = 2 * (len(selected) + (len(CASES) + 3) * (1 + len(selected)))
             if receipt["selected_observation_count"] != receipt["expected_observation_count"]:
                 raise AssertionError("Raw example campaign did not execute every selected observation")
             receipt["harness_inputs_unchanged"] = inputs == harness_identity()
@@ -316,10 +298,7 @@ def qualify(runtime, report):
         receipt["failure_type"] = type(error).__name__
         if isinstance(error, transport.HttpResponseError):
             receipt["failure_evidence"] = error.evidence()
-        message = str(error)
-        if "token" in locals():
-            message = message.replace(token, "[REDACTED]")
-        receipt["failure_message"] = message[:4096]
+        receipt["failure_message"] = str(error)[:4096]
         receipt["native_stop_complete"] = fixture is not None and fixture.managed_stop is not None
         raise
     finally:

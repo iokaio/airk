@@ -7,13 +7,14 @@
 //! `serviceHttp.ts`, `globalAgentInventory.ts`) is the semantic reference.
 //! The split narrows it: pre-split migration, clean-break cleanup plans,
 //! reconnect ledgers and stdio rebinding are not ported (§9.3 owns pre-split
-//! cleanup), and only the U92 helper form proves an HTTPS entry is AIRK's.
+//! cleanup). U110 supersedes the U92 helper: `connect` writes only the
+//! endpoint URL and the `X-AIRK-Response-Mode` header, entries are recognized
+//! by URL, and legacy credential fields are reported and repaired away.
 //!
 //! Classification and edits are pure functions over file text and injected
 //! observations; `io`, retention and its eligibility/native adapters own the
 //! invoking-user file-system boundary.
 //! Unknown observations are never reported as `ok` or as foreignness.
-use airk_core::identity::Incarnation;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -34,7 +35,7 @@ mod writer_test_support;
 
 pub(crate) use crate::contract::{Agent, Class, Entry, Scope, Transport};
 pub(crate) use classify::{Classifier, FileReport, revalidate_entry};
-pub(crate) use edit::{Connection, Target, connect, remove, repair};
+pub(crate) use edit::{Target, connect, remove, repair};
 pub(crate) use edit_record::Operation as EditOperation;
 #[cfg(test)]
 pub(crate) use io::edit_file;
@@ -134,24 +135,12 @@ impl Finding {
     }
 }
 
-/// The service's answer for one connection ID (the M16 read).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Ownership {
-    /// The connection exists, belongs to this user and is served at `url`.
-    Owned { url: String },
-    /// The service answered that it does not know the connection.
-    NotOwned,
-    /// No answer (service down, refused, timed out). Never proof either way.
-    Unavailable,
-}
-
 /// Everything classification needs from outside the file text.
 pub(crate) struct Observations<'a> {
     /// The URL the running service publishes, when known.
     pub(crate) endpoint_url: Option<&'a str>,
     /// Whether this user's OS store trusts the local issuer; `None` = unknown.
     pub(crate) trust_installed: Option<bool>,
-    pub(crate) ownership: &'a dyn Fn(Incarnation) -> Ownership,
     /// `Some(false)` only for an observed absence; `None` when unknown.
     pub(crate) path_exists: &'a dyn Fn(&str) -> Option<bool>,
     /// Executables proven to belong to an AIRK installation of this user;

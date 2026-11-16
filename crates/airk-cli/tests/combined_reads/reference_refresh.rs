@@ -47,23 +47,24 @@ async fn parity(f: &Fixture, tool: &str, args: Value) -> Result<Value> {
     })
     .await??;
     let cli = f.cli(tool, &args).await?;
+    // U110: MCP reads the session's index whole as an open read and
+    // compares in full with the same open read through the pipe.
     let mut mcp = McpSession::start(f)?;
-    let wire = mcp.call(4, tool, args)?;
+    let wire = super::changes_verification::mcp_matches_open_pipe(
+        f,
+        &mut mcp,
+        4,
+        tool,
+        &args,
+        "refresh complete MCP",
+    )
+    .await?;
     airk_core::index_catalog::encoded_size(&wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
-    ensure!(
-        wire.get("error").is_none() && wire.get("result").is_some_and(Value::is_object),
-        "actual MCP failure: {wire}"
-    );
     let native = positive(&native, f.indexes[2], tool)?;
     assert_parity(
         "refresh complete CLI",
         &native,
         &positive(&cli, f.indexes[2], tool)?,
-    )?;
-    assert_parity(
-        "refresh complete MCP",
-        &native,
-        &positive(&wire["result"], f.indexes[2], tool)?,
     )?;
     backend.shutdown().await?;
     Ok(native)

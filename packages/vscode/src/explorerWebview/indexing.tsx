@@ -101,7 +101,7 @@ export function IndexingScreen(props: ScreenProps) {
         const bytes=descriptionBytes(editing.text),over=bytes>DESCRIPTION_MAX_BYTES;
         return <div class="description-editor">
             <label>Description of {String(item.name??id)}<textarea rows={3} value={editing.text} disabled={disabled} onInput={event=>{const text=event.currentTarget.value;setEditing(value=>value&&{...value,text});}}/></label>
-            <small class={over?'callout':'muted'}>{bytes} of {DESCRIPTION_MAX_BYTES} bytes. Agents with "Let the agent choose indexes" on read this description to pick indexes.</small>
+            <small class={over?'callout':'muted'}>{bytes} of {DESCRIPTION_MAX_BYTES} bytes. Coding agents read this description (list_scopes) to pick indexes.</small>
             <span class="actions"><button type="button" disabled={disabled||over||!editing.text.trim()} onClick={()=>describe(kind,id,editing.text)}>Save</button>
                 <button type="button" class="ghost" disabled={disabled||current===undefined} onClick={()=>describe(kind,id,undefined)}>Clear</button>
                 <button type="button" class="ghost" disabled={disabled} onClick={()=>setEditing(undefined)}>Cancel</button></span>
@@ -148,7 +148,7 @@ export function IndexingScreen(props: ScreenProps) {
                 </div>
                 {saveNote&&<p class="callout scope-concurrency" role="status">{saveNote}</p>}
                 <p class="muted">Save as index set creates a new index set holding the checked indexes and the indexes of the checked sets.</p>
-                <p class="muted">Coding agents connected in Management › Agents follow this window's search scope unless you turn following off there. <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button></p>
+                <p class="muted">The applied scope is also the workspace default of this window's folders: coding agents use it when a call names no indexes.<button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button></p>
             </form>}
         </article>
         <details class="card" id="recommendations"><summary>Help me choose indexes</summary><h2>Recommendations</h2>

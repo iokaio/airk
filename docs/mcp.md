@@ -1,24 +1,33 @@
 # MCP tools
 
-**Open agent connections (1.8.35 split candidate, U105–U109).** An open
-connection reads its assigned set (the default scope AIRK Service stores for
-it) when a call names nothing. Read tools accept `index_ids` and
-`index_set_ids` (id, exact name or a unique case-insensitive name; union, at
-most 32 each). With agent choice off (the default) they only narrow inside the
-assigned set; anything outside is refused `agent_scope_choice_disabled` and
-`list_indexes` is not offered. With choice on they select any index or set, and
-`list_indexes` lists every index and index set with id, name, description and
-indexed folders. Every read that takes `limit` and can span several indexes
-also takes `limit_per_index` (1–100): each index gets exactly that many results
-and `limit` becomes the overall cap. Members report `index_name` and
-`elapsed_ms` and are read concurrently up to the query concurrency.
-**Parity:** `airkctl tools call --index/--set/--connection` (with
+**Scope per call (U110, 15 November 2026).** `/mcp` takes no token; any
+`Authorization` header is stripped and ignored. Every read tool takes
+`index_ids` and `index_set_ids` (id, exact name or a unique case-insensitive
+name; union, at most 32 each) and `workspace` (an absolute folder path). Named
+selectors win; otherwise the workspace default of the most specific stored
+folder containing `workspace` applies; otherwise the call is refused
+`scope_required`, with a message to call `list_scopes` or pass `workspace`.
+Results carry `structuredContent.read_scope` = `{source: "named" |
+"workspace_default", workspace_folder?, index_ids}`. `list_scopes` (formerly
+`list_indexes`) lists every index and index set with id, name, description and
+indexed folders; its first page adds `workspace_defaults`, and an optional
+`workspace` argument adds `workspace_default` (the match or null). When a read
+names neither selectors nor `workspace` and the client declared MCP `roots`,
+the service fills `workspace` from the client's first `file:` root
+(`roots/list`, once per session, refreshed on `roots/list_changed`, 2 s wait);
+roots are deprecated by SEP-2577 in newer protocol versions, so explicit
+`workspace` remains the primary path. Every read that takes `limit` and can
+span several indexes also takes `limit_per_index` (1–100): each index gets
+exactly that many results and `limit` becomes the overall cap. Members report
+`index_name` and `elapsed_ms` and are read concurrently up to the query
+concurrency.
+**Parity:** `airkctl tools call --index/--set/--workspace` (with
 `limit_per_index` in `--args`) and the Workbench's named-index selection and
 **Max results per index** reach the same service path and return the same
 complete result; only documented timing (`elapsed_ms`) differs between runs.
-Grant-bound connections are unchanged. Setup and limits: [agent integration](agent-integration.md#select-scope-and-provision-the-actual-client)
-and the [1.8.35 record](releases/release-1.8.35.md). The text below predates
-open connections.
+Setup and limits: [agent integration](agent-integration.md#select-scope-and-provision-the-actual-client).
+The text below predates per-call scope; references to launches, grants and
+connection-bound scope describe earlier transports and contracts.
 
 P7 adds explicit reviewed combined sessions, unique-index execution, shared
 budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)

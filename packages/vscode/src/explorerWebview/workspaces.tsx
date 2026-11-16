@@ -46,7 +46,7 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
     'search/tools': EvidenceToolsScreen,
-    // U103: activity and usage are read here; U104: agents are connected here; the other Management tabs open AIRK Admin.
+    // U103: activity and usage are read here; U104, U110: agents are connected here; the other Management tabs open AIRK Admin.
     'manage/activity': ActivityScreen,
     'manage/repair': AdminHandoffScreen,
     'manage/storage': AdminHandoffScreen,
@@ -93,8 +93,9 @@ export function WorkspaceView(props: ScreenProps) {
     const activeTab = props.route.tab;
     const destination = editorDestination(key);
     const title = activeEvidence?workspace.title:MAIN_DESTINATIONS.find(entry => entry.id === destination)?.title ?? workspace.title;
+    // Agents (U110) is the Explorer's own task-first screen; AIRK Admin › Agents keeps manual setup and trust.
     const sharedPage = ({ 'manage/activity': 'activity', 'manage/repair': 'recovery', 'manage/storage': 'storage',
-        'manage/service': 'service', 'manage/agents': 'agents', 'manage/usage': 'usage', 'manage/logs': 'logs',
+        'manage/service': 'service', 'manage/usage': 'usage', 'manage/logs': 'logs',
         'indexing/library': 'index-library' } as const)[key as 'manage/activity'];
     return (
         <section class="workspace">

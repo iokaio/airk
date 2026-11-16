@@ -30,6 +30,8 @@ fn retained_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
     );
     Ok(value)
 }
+/// U110: a positive one-index open MCP read has no combined member wrapper:
+/// its body is the index's own result and its `scope` names that index.
 fn retained_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
     airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
     ensure!(wire.get("error").is_none(), "{label} RPC error: {wire}");
@@ -37,7 +39,18 @@ fn retained_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value>
         .get("result")
         .filter(|value| value.is_object())
         .with_context(|| format!("{label} RPC result absent: {wire}"))?;
-    retained_body(reply, index, label)
+    ensure!(
+        reply
+            .get("isError")
+            .is_none_or(|flag| flag == &json!(false)),
+        "{label} outer error flag; complete bounded reply: {reply}"
+    );
+    let value = body(reply)?;
+    ensure!(
+        value["read_scope"]["index_ids"] == json!([index]) && value.get("members").is_none(),
+        "{label} one-index open read changed: {reply}"
+    );
+    Ok(value)
 }
 
 fn write_retention_observations(
@@ -349,13 +362,20 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
             airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
         let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
         let native = native_read(backend.as_ref(), "airk_search", &args).await?;
+        retained_body(&native, f.indexes[2], "retention native vector")?;
+        // U110: MCP reads the session's index whole as an open read and
+        // compares in full with the same open read through the pipe.
         let mut mcp = McpSession::start(&f)?;
-        let actual = mcp.call(10, "airk_search", args)?;
-        assert_parity(
+        let wire = super::changes_verification::mcp_matches_open_pipe(
+            &f,
+            &mut mcp,
+            10,
+            "airk_search",
+            &args,
             "retention actual in-process provider MCP",
-            &retained_body(&native, f.indexes[2], "retention native vector")?,
-            &retained_mcp_body(&actual, f.indexes[2], "retention MCP vector")?,
-        )?;
+        )
+        .await?;
+        retained_mcp_body(&wire, f.indexes[2], "retention MCP vector")?;
         // The same real migrated provider must expose the new per-file report
         // through native, actual CLI call and actual stdio MCP, with full data.
         let mut reported: Option<Value> = None;
@@ -363,17 +383,38 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
             let info_args = json!({"path":"api/policy.md","reply_detail":reply_detail,"include_profile_families":true,"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]],"member_availability":"require","verification":"off","response_mode":"full"});
             let info = native_read(backend.as_ref(), "airk_file_info", &info_args).await?;
             let cli = f.cli("airk_file_info", &info_args).await?;
-            let wire = mcp.call(call_id, "file_info", info_args)?;
+            let wire = super::changes_verification::mcp_matches_open_pipe(
+                &f,
+                &mut mcp,
+                call_id,
+                "file_info",
+                &info_args,
+                "selected FileInfo actual MCP",
+            )
+            .await?;
+            // The MCP read carries the same migrated per-file report.
+            let file = retained_mcp_body(&wire, f.indexes[2], "retention MCP FileInfo")?;
+            let report = file
+                .get("profile_families")
+                .with_context(|| format!("MCP FileInfo report absent; complete result: {file}"))?;
+            ensure!(
+                report["applied_file"]["applied_retention"]["profile"] == json!(target)
+                    && report["applied_file"].get("legacy_detail").is_none()
+                    && report["families"]
+                        .as_array()
+                        .is_some_and(|rows| rows.len() == 18)
+                    && report["live_source_checked"] == false
+                    && report["configured_collection_policy"]["revision"]["retained_profile"]
+                        == json!(target)
+                    && report["published_collection_policy"]["revision"]["retained_profile"]
+                        == json!(target),
+                "MCP FileInfo lost the migrated retention report: {report}"
+            );
             let complete = retained_body(&info, f.indexes[2], "retention native FileInfo")?;
             assert_parity(
                 "selected FileInfo actual CLI",
                 &complete,
                 &retained_body(&cli, f.indexes[2], "retention CLI FileInfo")?,
-            )?;
-            assert_parity(
-                "selected FileInfo actual MCP",
-                &complete,
-                &retained_mcp_body(&wire, f.indexes[2], "retention MCP FileInfo")?,
             )?;
             let members = complete["members"]
                 .as_array()

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Actual private TLS fixture: normal CA/IP checks precede bearer delivery."""
+"""Actual private TLS fixture: normal CA/IP checks precede any request; no credential is sent (U110)."""
 from contextlib import contextmanager
 import base64
 import hashlib
@@ -27,8 +27,8 @@ class ResponseEvidenceTests(unittest.TestCase):
     def client(self, status, data, headers=()):
         from unittest.mock import Mock
         client = HTTP.McpClient.__new__(HTTP.McpClient)
-        client._token, client.session = "fictional-token", "fictional-session"
-        client._connection_id, client._certificate_sha256 = "owned", hashlib.sha256(b"leaf").hexdigest()
+        client.session, client.scope = "fictional-session", {}
+        client._certificate_sha256 = hashlib.sha256(b"leaf").hexdigest()
         client.protocol, client.initialized = "2025-11-25", True
         response = Mock(status=status)
         response.read.return_value = data
@@ -41,13 +41,13 @@ class ResponseEvidenceTests(unittest.TestCase):
         return client
 
     def test_refusal_redacts_sessions_in_bodies_and_arbitrary_headers(self):
-        raw = b'{"echo":"fictional-session fictional-token"}'
+        raw = b'{"echo":"fictional-session new-session"}'
         client = self.client(503, raw, [("X-Echo", "fictional-session"), ("Mcp-Session-Id", "new-session")])
         with self.assertRaises(HTTP.HttpRefused) as caught:
             client._request("POST", {"id": 4, "method": "tools/call"})
         evidence = caught.exception.evidence()
         self.assertNotIn("fictional-session", json.dumps(evidence))
-        self.assertNotIn("fictional-token", json.dumps(evidence))
+        self.assertNotIn("new-session", json.dumps(evidence))
         self.assertTrue(evidence["body_redacted"])
         self.assertEqual(evidence["header_redactions"], ["X-Echo", "Mcp-Session-Id"])
         self.assertEqual(evidence["request"]["jsonrpc_id"], 4)
@@ -64,7 +64,7 @@ class ResponseEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["request"]["jsonrpc_id"], 8)
 
     def test_oversize_response_redacts_secret_prefix_cut_by_actual_read_bound(self):
-        for secret in (b"fictional-token", b"fictional-session"):
+        for secret in (b"fictional-session",):
             with self.subTest(secret=secret):
                 data = b"x" * (HTTP.MAX_RESPONSE_BYTES-4) + secret[:5]
                 client = self.client(200, data)
@@ -90,6 +90,41 @@ class ResponseEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["body"]["error"]["code"], -32000)
         self.assertEqual(evidence["request"]["jsonrpc_id"], 9)
         self.assertNotIn("fictional-session", json.dumps(evidence))
+
+    def test_scope_is_added_only_to_evidence_reads_that_name_none(self):
+        scope = {"index_ids": ["idx_fixture"]}
+        self.assertEqual(HTTP.scoped_arguments("search", {"query": "q"}, scope), {"query": "q", "index_ids": ["idx_fixture"]})
+        self.assertEqual(HTTP.scoped_arguments("airk_read_file", {}, scope), {"index_ids": ["idx_fixture"]})
+        for named in ({"index_ids": ["other"]}, {"index_set_ids": ["set"]}, {"workspace": "C:/work"}):
+            self.assertIs(HTTP.scoped_arguments("search", named, scope), named)
+        for unscoped in ("help", "airk_help", "list_scopes", "list_templates", "get_template", "draft_search", "suggest_view"):
+            arguments = {}
+            self.assertIs(HTTP.scoped_arguments(unscoped, arguments, scope), arguments)
+        original = {"query": "q"}
+        HTTP.scoped_arguments("search", original, scope)
+        self.assertEqual(original, {"query": "q"})
+        self.assertIs(HTTP.scoped_arguments("search", original, {}), original)
+
+    def test_scope_value_requires_bounded_names_or_an_absolute_workspace(self):
+        self.assertEqual(HTTP.scope_value(index_ids=["a", "b"]), {"index_ids": ["a", "b"]})
+        self.assertEqual(HTTP.scope_value(index_set_ids=["s"]), {"index_set_ids": ["s"]})
+        absolute = str(Path(tempfile.gettempdir()).resolve())
+        self.assertEqual(HTTP.scope_value(workspace=absolute), {"workspace": absolute})
+        for invalid in ({"index_ids": ["x"] * 33}, {"index_ids": [""]}, {"index_ids": "idx"},
+                        {"workspace": "relative/folder"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                HTTP.scope_value(**invalid)
+
+    def test_tools_call_gets_the_client_scope_without_changing_the_callers_request(self):
+        client = self.client(200, b"")
+        client.scope = {"index_ids": ["idx_fixture"]}
+        request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "search", "arguments": {"query": "q"}}}
+        self.assertEqual(client.with_scope(request)["params"]["arguments"], {"query": "q", "index_ids": ["idx_fixture"]})
+        self.assertEqual(request["params"]["arguments"], {"query": "q"})
+        listing = {"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}}
+        self.assertIs(client.with_scope(listing), listing)
+        scopes = {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "list_scopes", "arguments": {}}}
+        self.assertIs(client.with_scope(scopes), scopes)
 
     def test_shared_classifier_rejects_unknown_status_and_submitted_outcomes(self):
         for status, code in ((429, "query_admission_busy"), (503, "authentication_busy"), (503, "native_validation_busy")):
@@ -202,7 +237,8 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                         self.send_header("X-Fixture-Future", "original-first"); self.send_header("X-Fixture-Future", "original-second")
                         if reflect_credential:
                             self.send_header("Mcp-Session-Id", "private-fixture-session")
-                            self.send_header("X-Fixture-Token", self.headers.get("Authorization"))
+                            if self.headers.get("Authorization") is not None:
+                                self.send_header("X-Fixture-Token", self.headers.get("Authorization"))
                         self.end_headers(); self.wfile.write(data); return
                     data = json.dumps({"content": [], "structuredContent": {"arguments": value, "future_field": {"retained": True}}, "isError": False}).encode()
                     self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
@@ -237,6 +273,8 @@ class ActualHttpsFixtureTests(unittest.TestCase):
         thread.start()
         try:
             digest = lambda name: hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root / name).read_text())).hexdigest()
+            # The legacy (pre-U110) connection shape other suites still consume;
+            # McpClient reads only its endpoint and CA reference.
             yield {"schema": 1, "connection_id": self.identity, "selection": {"kind": "scoped", "selection": {"namespace": "33" * 16}},
                    "endpoint": {"schema": 1, "url": "https://127.0.0.1:" + str(server.server_port) + "/mcp", "state": "ready", "namespace": "33" * 16,
                                 "ca_sha256": digest("ca.pem"), "certificate_sha256": digest("leaf.pem")},
@@ -257,7 +295,51 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             finally:
                 client.close()
             self.assertEqual([row[0] for row in observed], ["initialize", "notifications/initialized", "tools/list", "DELETE"])
-            self.assertTrue(all(value == "Bearer " + (self.root / "credential.token").read_text() for _, value in observed))
+            # U110: no request carries Authorization.
+            self.assertEqual([value for _, value in observed], [None] * 4)
+
+    def test_endpoint_record_and_control_ca_connect_tokenless_with_per_call_scope(self):
+        with self.server(wire := []) as (connection, observed), tempfile.TemporaryDirectory() as directory:
+            control = Path(directory).resolve()
+            (control / "http-1").mkdir()
+            shutil.copyfile(self.root / "ca.pem", control / "http-1" / "ca.pem")
+            (control / "http-1" / "endpoint.json").write_text(json.dumps(connection["endpoint"]), encoding="utf-8")
+            for name in ("ca.pem", "endpoint.json"):
+                (control / "http-1" / name).chmod(0o600)
+            endpoint = HTTP.read_endpoint(control)
+            self.assertEqual(endpoint, connection["endpoint"])
+            client = HTTP.McpClient(endpoint, control, scope={"index_ids": ["idx_fixture"]})
+            try:
+                client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+                client.receive(1)
+                client.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search", "arguments": {"query": "q"}}})
+                client.receive(2)
+                client.send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "search", "arguments": {}}}, scoped=False)
+                client.receive(3)
+                self.assertEqual(client.api_read("search", {"query": "q"})["structuredContent"]["arguments"],
+                                 {"query": "q", "index_ids": ["idx_fixture"]})
+                self.assertEqual(client.api_read("search", {}, scoped=False)["structuredContent"]["arguments"], {})
+                self.assertEqual(client.api_read("list_scopes", {})["structuredContent"]["arguments"], {})
+            finally:
+                client.close()
+            calls = [value for value, _ in wire if isinstance(value, dict) and value.get("method") == "tools/call"]
+            self.assertEqual([call["params"]["arguments"] for call in calls], [{"query": "q", "index_ids": ["idx_fixture"]}, {}])
+            self.assertTrue(all(value is None for _, value in observed))
+
+    def test_endpoint_without_control_ca_or_with_changed_ca_is_refused_before_tls(self):
+        with self.server() as (connection, observed), tempfile.TemporaryDirectory() as directory:
+            control = Path(directory).resolve()
+            (control / "http-1").mkdir()
+            with self.assertRaises(OSError):
+                HTTP.McpClient(connection["endpoint"], control)
+            (control / "http-1" / "ca.pem").write_text((self.root / "ca.pem").read_text())
+            changed = {**connection["endpoint"], "ca_sha256": "00" * 32}
+            with self.assertRaisesRegex(ValueError, "issuer differs"):
+                HTTP.McpClient(changed, control)
+            for invalid in ({**connection["endpoint"], "state": "stopped"}, {**connection["endpoint"], "url": "https://localhost:1/mcp"}):
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "invalid or unavailable"):
+                    HTTP.McpClient(invalid, control)
+            self.assertEqual(observed, [])
 
     def test_actual_tls_sse_preserves_unsolicited_messages_and_matching_reply(self):
         with self.server() as (connection, _observed):
@@ -330,13 +412,13 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                                  ["original-first", "original-second"])
                 self.assertEqual(json.loads(base64.b64decode(evidence["raw_body_base64"])), caught.exception.body)
                 request = evidence["request"]
-                self.assertEqual((request["http_method"], request["path"], request["connection_id"]),
-                                 ("POST", "/api/v1/tools/refused", connection["connection_id"]))
+                self.assertEqual((request["http_method"], request["path"]), ("POST", "/api/v1/tools/refused"))
+                self.assertNotIn("connection_id", request)
                 self.assertEqual(request["request_sha256"], hashlib.sha256(b"{}").hexdigest())
             finally:
                 client.close()
 
-    def test_actual_http_503_preserves_diagnostics_but_redacts_reflected_credentials_and_session(self):
+    def test_actual_http_503_preserves_diagnostics_and_redacts_the_reflected_session(self):
         with self.server(refusal_status=503, reflect_credential=True) as (connection, observed):
             client = HTTP.McpClient(connection, self.root)
             try:
@@ -345,19 +427,18 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 evidence = caught.exception.evidence()
                 self.assertEqual(evidence["status"], 503)
                 self.assertEqual(evidence["body"]["error"]["future_detail"], {"retained": True})
-                self.assertTrue(evidence["body_redacted"])
-                self.assertEqual(evidence["header_redactions"], ["Mcp-Session-Id", "X-Fixture-Token"])
+                # U110: nothing to reflect; no Authorization was sent.
+                self.assertIsNone(evidence["body"]["reflected"])
+                self.assertEqual(evidence["header_redactions"], ["Mcp-Session-Id"])
                 self.assertEqual(dict(evidence["headers"])["Mcp-Session-Id"], "[REDACTED]")
-                self.assertNotIn(client._token, json.dumps(evidence))
                 self.assertNotIn("private-fixture-session", json.dumps(evidence))
                 raw = base64.b64decode(evidence["raw_body_base64"])
-                self.assertNotIn(client._token.encode(), raw)
                 self.assertEqual(evidence["raw_body_sha256"], hashlib.sha256(raw).hexdigest())
                 self.assertEqual(len(observed), 1, "A complete refusal is never replayed")
             finally:
                 client.close()
 
-    def test_peer_mismatch_sends_no_bearer_and_root_escape_is_rejected(self):
+    def test_peer_mismatch_sends_no_request_and_root_escape_is_rejected(self):
         with self.server() as (connection, observed):
             connection["endpoint"]["certificate_sha256"] = "00" * 32
             with self.assertRaisesRegex(ValueError, "peer differs"):
@@ -365,7 +446,7 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             self.assertEqual(observed, [])
             with tempfile.TemporaryDirectory() as outside:
                 with self.assertRaisesRegex(ValueError, "escaped"):
-                    HTTP.private_bytes(connection["credential_file"], outside, 103)
+                    HTTP.private_bytes(connection["ca_certificate_file"], outside, 8192)
 
     def test_wrong_ip_certificate_is_rejected_by_normal_hostname_validation(self):
         # Use the actual issuer but a different literal IP as the TLS name. This

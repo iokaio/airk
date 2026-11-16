@@ -157,7 +157,7 @@ pub(super) enum LibraryCommand {
         apply: ApplyArgs,
     },
     /// Set or clear the description of an index or an index set; agents read it in
-    /// list_indexes (without one, a description is generated from the name and paths).
+    /// list_scopes (without one, a description is generated from the name and paths).
     Describe {
         /// The index (`idx_…`).
         #[arg(long, conflicts_with = "set", required_unless_present = "set")]

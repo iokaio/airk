@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read AIRK's local JSON API using a connection saved by verified native setup."""
+"""Read AIRK's local JSON API using the endpoint and CA the native service publishes.
+
+No token is needed (U110). TLS with the installation's AIRK CA is still required,
+and read tools need a scope per call: --index/--set or --workspace.
+"""
 import argparse
 import hashlib
 import http.client
@@ -14,7 +18,7 @@ MAX_REPLY = 1024 * 1024
 
 
 def private_bytes(filename, maximum):
-    """Reject redirects/changes; native setup must have created private ACLs."""
+    """Reject redirects/changes; the native service must have created private ACLs."""
     path = Path(filename)
     if not path.is_absolute() or path.resolve(strict=True) != path:
         raise ValueError("Expected an absolute native-owned file without redirects")
@@ -34,27 +38,44 @@ def private_bytes(filename, maximum):
     return data
 
 
-def query(connection_file, tool=None, arguments=None):
-    connection = json.loads(private_bytes(connection_file, 60 * 1024))
-    endpoint = connection["endpoint"]
-    if connection["schema"] != 1 or endpoint["schema"] != 1 or endpoint["state"] != "ready":
-        raise ValueError("Obtain a current ready connection from native AIRK setup")
-    match = re.fullmatch(r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint["url"])
+def scoped(arguments, indexes=(), sets=(), workspace=None):
+    """Merge per-call scope selectors into the tool arguments (U110)."""
+    if not isinstance(arguments, dict):
+        raise ValueError("Use a JSON argument object")
+    merged = dict(arguments)
+    for key, values in (("index_ids", indexes), ("index_set_ids", sets)):
+        if values:
+            existing = merged.get(key, [])
+            if not isinstance(existing, list):
+                raise ValueError(key + " must be a list")
+            merged[key] = existing + [value for value in values if value not in existing]
+    if workspace is not None:
+        if not os.path.isabs(workspace) or merged.get("workspace", workspace) != workspace:
+            raise ValueError("Use one absolute workspace folder")
+        merged["workspace"] = workspace
+    return merged
+
+
+def query(control_dir, tool=None, arguments=None):
+    if not os.path.isabs(control_dir):
+        raise ValueError("Expected the absolute service control directory")
+    native = Path(control_dir) / "http-1"
+    endpoint = json.loads(private_bytes(str(native / "endpoint.json"), 64 * 1024))
+    if endpoint.get("schema") != 1 or endpoint.get("state") != "ready":
+        raise ValueError("The native endpoint is not ready; start the AIRK service")
+    match = re.fullmatch(r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint.get("url", ""))
     if not match or not 1 <= int(match[1]) <= 65535:
         raise ValueError("Invalid loopback endpoint")
-    pem = private_bytes(connection["ca_certificate_file"], 8192).decode("ascii")
+    pem = private_bytes(str(native / "ca.pem"), 8192).decode("ascii")
     if pem.count("-----BEGIN CERTIFICATE-----") != 1:
         raise ValueError("Expected the native installation's single CA certificate")
     der = ssl.PEM_cert_to_DER_cert(pem)
-    if hashlib.sha256(der).hexdigest() != endpoint["ca_sha256"]:
+    if hashlib.sha256(der).hexdigest() != endpoint.get("ca_sha256"):
         raise ValueError("Native CA identity changed")
-    token = private_bytes(connection["credential_file"], 103).decode("ascii")
-    if not re.fullmatch(r"airk1\.[0-9a-f]{32}\.[0-9a-f]{64}", token) or token.split(".")[1] != connection["connection_id"]:
-        raise ValueError("Invalid native credential identity")
     context = ssl.create_default_context()
     context.load_verify_locations(cadata=pem)  # Add trust; preserve normal roots and IP verification.
     route, method, body = "/api/v1/tools", "GET", None
-    headers = {"Authorization": "Bearer " + token}
+    headers = {}  # U110: no Authorization header.
     if tool is not None:
         if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", tool) or not isinstance(arguments, dict):
             raise ValueError("Use an advertised tool name and JSON argument object")
@@ -65,7 +86,7 @@ def query(connection_file, tool=None, arguments=None):
         headers["Content-Type"] = "application/json"
     client = http.client.HTTPSConnection("127.0.0.1", int(match[1]), context=context, timeout=125)
     try:
-        client.connect()  # Validate TLS before sending credentials. No redirects are followed.
+        client.connect()  # Validate TLS before sending the request. No redirects are followed.
         client.request(method, route, body=body, headers=headers)
         response = client.getresponse()
         data = response.read(MAX_REPLY + 1)
@@ -78,11 +99,20 @@ def query(connection_file, tool=None, arguments=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--connection", required=True, help="Protected JSON from verified native setup")
+    parser.add_argument("--control-dir", required=True,
+                        help="Absolute AIRK service control directory (holds http-1/endpoint.json and http-1/ca.pem)")
     parser.add_argument("--tool", help="Omit to list supported tools and complete schemas")
-    parser.add_argument("--arguments", default="{}", help="JSON argument object; never a bearer token")
+    parser.add_argument("--arguments", default="{}", help="JSON argument object")
+    parser.add_argument("--index", action="append", default=[], help="Index id or name (repeatable); sent as index_ids")
+    parser.add_argument("--set", action="append", default=[], help="Index set id or name (repeatable); sent as index_set_ids")
+    parser.add_argument("--workspace", help="Absolute folder whose Explorer-applied default scope applies")
     args = parser.parse_args()
-    status, result = query(args.connection, args.tool, json.loads(args.arguments))
+    arguments = json.loads(args.arguments)
+    if args.tool is not None:
+        arguments = scoped(arguments, args.index, args.set, args.workspace)
+    elif args.index or args.set or args.workspace:
+        parser.error("scope options need --tool")
+    status, result = query(args.control_dir, args.tool, arguments)
     print(json.dumps(result, indent=2))
     return 0 if status == 200 and not result.get("isError", False) else 1
 

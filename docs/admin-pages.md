@@ -26,7 +26,9 @@ code. The page exchanges it once for a session cookie (`__Host-`, `Secure`,
 carries. Sessions end after 30 idle minutes or 12 hours, on sign-out, or when
 the service restarts. Bearer tokens are refused on `/admin`, the admin cookie is
 refused on `/mcp` and `/api/v1`, and nothing that returns a credential is ever
-served over HTTP.
+served over HTTP. Since U110 `/mcp` itself takes no token: it strips and ignores
+any `Authorization` header, so any local process that can reach 127.0.0.1 can
+read every index.
 
 The service also checks that the browser's connection belongs to the same
 local user (Windows: the connection's owning process; Linux:
@@ -115,14 +117,16 @@ shown ready to copy.
 
 **Agents** shows your MCP endpoint (URL, state and whether Windows trusts the
 service's certificate, with the fix command when it does not), how to connect
-an agent automatically (VS Code **Connect Coding Agent**, or `airkctl agents
-connect`), and how to configure one by hand: ready-to-copy entries for Claude
-Code (`.mcp.json`), Codex (`config.toml`), VS Code / Copilot (`mcp.json`) and
-any other MCP client (URL, Streamable HTTP, `Authorization: Bearer` from
-`airkctl agents credential`), each with its certificate trust step. They are
-the same entries `airkctl agents connect` writes. An existing connection can be
-looked up, verified and revoked. Creating a connection is never done over
-HTTP.
+an agent automatically (Explorer **Management → Agents** → **Connect**, or
+`airkctl agents connect`), how agents choose their scope (per call with
+`index_ids`, `index_set_ids` or `workspace`; `list_scopes`; the workspace
+default an Explorer window's applied search scope stores), and how to configure
+one by hand: ready-to-copy entries for Claude Code (`.mcp.json`), Codex
+(`config.toml`), VS Code / Copilot (`mcp.json`) and any other MCP client (URL,
+Streamable HTTP), each with its certificate trust step. The snippets contain
+only the endpoint URL and the `X-AIRK-Response-Mode` header, the same entries
+`airkctl agents connect` writes; no token, credential or connection id is
+involved (U110).
 
 **Activity** loads the recent events as a table (local time, what happened,
 index, job), with an index filter and older pages; a job opens as a card with

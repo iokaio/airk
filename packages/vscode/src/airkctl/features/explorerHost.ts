@@ -11,9 +11,9 @@
 //! plane when their capabilities are advertised (windowScope.ts,
 //! windowAssistance.ts). U104: Management › Agents lists and disconnects this
 //! folder's agent entries (windowAgents.ts), and the search scope creates index
-//! sets through `airkctl library set-create`. U105: Connect enrolls open agent
-//! connections whose default scope follows the window's search scope, and the
-//! search scope edits descriptions through `airkctl library describe`.
+//! sets through `airkctl library set-create`. U110: the applied search scope is
+//! the workspace default of this window's folders (`airkctl scope default`), and
+//! the search scope edits descriptions through `airkctl library describe`.
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { AgentConfigHealth } from '../../agentConfigHealth';
@@ -159,8 +159,8 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
             const installation = airkctl.installation, first = this.specs()[0];
             return installation && first ? { command: installation.airkctl, installDir: installation.record.locations.program, root: first.root } : undefined;
         }, line => output.appendLine(line), libraryCommands(airkctl.session));
-        this.agents = new WindowAgents(airkctl, () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, () => this.requireReadyState(), line => output.appendLine(line),
-            { store: context.workspaceState, scope: this.windowScope });
+        this.agents = new WindowAgents(airkctl, () => (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath),
+            () => this.requireReadyState(), line => output.appendLine(line), { scope: this.windowScope });
         this.assistance = new WindowAssistance(airkctl.session, capabilities, this.suggestions, line => output.appendLine(line));
         this.publisher = new WindowHandoffs(airkctl.session, () => this.suggestionsBinding());
         this.live = new LiveStatus(airkctl.session, () => this.publishLive(), undefined, undefined, line => output.appendLine(line));
@@ -190,7 +190,7 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
                 void this.windowScope.restore().then(() => this.windowScope.ensureDefault(this.workspaceBinding()));
             }
         }), { dispose: () => this.live.dispose() },
-        // U105: followed open agent connections receive every applied or automatically granted scope.
+        // U110: every applied or automatically granted scope becomes the workspace default of this window's folders.
         this.windowScope.onDidChangeAgentScope(change => { void this.agents.followScope(change.scope, change.user); }));
     }
     private suggestionsBinding(): string { return vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()).join('\n') ?? ''; }

@@ -5,15 +5,19 @@
 //! observations; one that is unavailable leaves the entry unclassified
 //! (`status: None`) instead of `ok` or foreign.
 use super::recognize::{self, Declaration, Recognized};
-use super::{Agent, Class, Entry, Finding, Observations, Ownership, Scope, Transport};
-use airk_core::identity::Incarnation;
+use super::{Agent, Class, Entry, Finding, Observations, Scope, Transport};
 use serde_json::Value;
-use std::collections::HashMap;
+
+/// U110: a legacy HTTPS entry still carrying credential fields is reported
+/// as `https_unknown_connection` (its connection no longer exists) with this
+/// detail, and `agents repair` rewrites it to the URL-only form.
+const STALE_CREDENTIAL: &str = "The entry still carries AIRK connection credential fields (Authorization, headersHelper, http_headers_helper or bearer_token_env_var). AIRK agent connections no longer exist (U110); run airkctl agents repair to keep only the endpoint URL.";
 
 impl Entry {
     /// The `AgentConfigFinding` of a non-`ok`, classified entry.
     pub(crate) fn finding(&self) -> Option<Finding> {
         let problem = self.status.filter(|status| *status != Class::Ok)?;
+        let stale = problem == Class::HttpsUnknownConnection && self.transport == Transport::Https;
         Some(Finding {
             agent: self.agent,
             label: self.agent.label(),
@@ -27,7 +31,7 @@ impl Entry {
             root: self.root.clone(),
             collection: self.collection.clone(),
             problem,
-            detail: None,
+            detail: stale.then(|| STALE_CREDENTIAL.to_string()),
         })
     }
 }
@@ -65,19 +69,14 @@ pub(crate) struct FileReport {
     pub(crate) entries: Vec<Entry>,
 }
 
-/// Classifies files against one set of observations; asks the ownership
-/// observer at most once per connection ID.
+/// Classifies files against one set of observations.
 pub(crate) struct Classifier<'a> {
     observations: &'a Observations<'a>,
-    lookups: HashMap<Incarnation, Ownership>,
 }
 
 impl<'a> Classifier<'a> {
     pub(crate) fn new(observations: &'a Observations<'a>) -> Self {
-        Classifier {
-            observations,
-            lookups: HashMap::new(),
-        }
+        Classifier { observations }
     }
 
     /// Classify the result of reading one file: absent files are skipped, a
@@ -135,14 +134,6 @@ impl<'a> Classifier<'a> {
         report
     }
 
-    fn ownership(&mut self, id: Incarnation) -> Ownership {
-        let observe = self.observations.ownership;
-        self.lookups
-            .entry(id)
-            .or_insert_with(|| observe(id))
-            .clone()
-    }
-
     fn classify(
         &mut self,
         agent: Agent,
@@ -194,54 +185,29 @@ impl<'a> Classifier<'a> {
                     Class::StdioRetired
                 });
             }
-            Recognized::Https {
-                id,
-                url,
-                helper,
-                proven,
-            } => {
+            Recognized::Https { url, id, stale } => {
                 entry.transport = Transport::Https;
-                entry.connection_id = Some(id);
-                entry.status = match self.ownership(id) {
-                    // A user-level entry without the U92 proof counts only
-                    // once the service vouches for it or it names the live endpoint.
-                    Ownership::Unavailable if scope == Scope::User && !proven => return None,
-                    Ownership::Unavailable => None,
-                    Ownership::NotOwned => {
-                        if scope == Scope::User
-                            && !proven
-                            && observations.endpoint_url != Some(url.as_str())
-                        {
-                            return None;
-                        }
-                        Some(Class::HttpsUnknownConnection)
-                    }
-                    Ownership::Owned { url: owned } => {
-                        https_status(agent, &url, &owned, helper.as_deref(), observations)
-                    }
-                };
+                entry.connection_id = id;
+                entry.status = https_status(agent, &url, !stale.is_empty(), observations);
             }
         }
         Some(entry)
     }
 }
 
+/// U110: stale credential fields first (they are determined by the file
+/// alone), then the live endpoint, then trust for the clients that need it.
 fn https_status(
     agent: Agent,
     url: &str,
-    owned: &str,
-    helper: Option<&str>,
+    stale: bool,
     observations: &Observations<'_>,
 ) -> Option<Class> {
-    if url != owned {
-        return Some(Class::HttpsEndpointMismatch);
+    if stale {
+        return Some(Class::HttpsUnknownConnection);
     }
-    if let Some(helper) = helper {
-        match (observations.path_exists)(helper) {
-            Some(false) => return Some(Class::HttpsHelperMissing),
-            None => return None,
-            Some(true) => {}
-        }
+    if observations.endpoint_url? != url {
+        return Some(Class::HttpsEndpointMismatch);
     }
     if matches!(agent, Agent::Claude | Agent::Codex) {
         return match observations.trust_installed {

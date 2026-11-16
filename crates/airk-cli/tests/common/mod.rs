@@ -339,6 +339,15 @@ impl Service {
             .selection
             .clone()
     }
+    /// U110: the per-call HTTPS MCP scope naming this fixture's one index,
+    /// the same index its reviewed scoped selection reads whole.
+    pub fn open_scope(&self) -> http::Scope {
+        let airk_core::service_http::HttpSelection::Scoped { selection } = self.http_selection()
+        else {
+            panic!("fresh fixture selection is not scoped")
+        };
+        http::Scope::indexes([selection.index_id])
+    }
     pub fn install_dir(&self) -> &Path {
         &self
             .reviewed

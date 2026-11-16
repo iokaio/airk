@@ -6,6 +6,8 @@ Start with [native installation](service-installation.md), [CLI-only onboarding]
 
 Optional Arbiter source follows the [approved P10 boundaries](split/codex-plan.md): off by default, explicit immutable-index enrollment, supported verified profiles and in-process native ownership. The [earlier concept](arbiter/concept.md) is historical design, including its superseded sidecar proposal. Use `airkctl arbiter status` and the actual generated schemas for current controls; implemented model paths do not establish independent task/device/platform qualification. The [Arbiter operator guide](arbiter/user-guide.md) explains the approved Focus/Context stages, model roles, requirements and recovery.
 
+**Agent access (U110, 15 November 2026).** Coding agents connect to `https://127.0.0.1:<port>/mcp` with no token: the endpoint strips and ignores `Authorization`, keeps its Host, `Origin` and admin-cookie checks and still requires TLS issuer trust; any local process that can reach 127.0.0.1 can read every index. `airkctl agents connect` and the Explorer/Admin snippets write only the URL and `X-AIRK-Response-Mode`. Each read names its scope (`index_ids`, `index_set_ids` or `workspace`); `list_scopes` (formerly `list_indexes`) lists indexes, index sets and the workspace defaults that Explorer windows store (`airkctl scope default|defaults`). See [agent setup](agent-integration.md) and [MCP tools](mcp.md). Statements below about agent credentials, credential helpers, open connections and agent choice are dated history.
+
 <details>
 <summary>Historical development notices and earlier candidate checkpoints</summary>
 

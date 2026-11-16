@@ -1131,6 +1131,14 @@ fn canonical_control(
             ControlMethod::AgentConnectionVerify { connection_id } => {
                 agents::verify(&state.control_root, connection_id).await
             }
+            ControlMethod::WorkspaceScopeDefault {
+                folders,
+                index_ids,
+                index_set_ids,
+            } => open_reads::set_workspace_default(&state, folders, index_ids, index_set_ids).await,
+            ControlMethod::WorkspaceScopeDefaults {} => {
+                open_reads::workspace_defaults_response(&state).await
+            }
             ControlMethod::AgentConnectionDefaults {
                 connection_id,
                 expected_defaults_revision,
@@ -1352,6 +1360,7 @@ fn canonical_control(
                         index_ids,
                         index_set_ids,
                         connection_id,
+                        workspace,
                     },
                 response_mode,
                 usage_client,
@@ -1369,6 +1378,7 @@ fn canonical_control(
                         connection_id,
                         index_names: index_ids,
                         set_names: index_set_ids,
+                        workspace,
                         tool,
                         arguments,
                         mode: response_mode,

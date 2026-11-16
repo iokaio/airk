@@ -270,7 +270,6 @@ form:
   models are installed, or how to turn Focus or Context on.
 - "Native management · 69cc6133" and "Close management session" expose
   implementation details instead of the user's task.
-- The panel renders as a white box inside the dark themed Explorer.
 
 Needs a user-task redesign (status first, plain actions such as "Download and
 turn on Arbiter Focus"); not addressed in this candidate.
@@ -295,9 +294,6 @@ Reported by the user on 1.8.205 (Explorer webview, `packages/vscode/src/explorer
 - The group label does not say what its five items (Code, Documents, Evidence,
   Review, Strategies) have in common in terms a user would recognize, and the
   group opens only when one of them is current, so the items are easy to miss.
-- Inside each page, the native management panel ("Native management · …",
-  "Close management session") shows as a white block in the dark theme (see
-  section 9).
 
 **Proposed improvements**
 
@@ -326,37 +322,65 @@ Reported by the user on 1.8.205 (Explorer webview, `packages/vscode/src/explorer
 5. **Page titles match the rail labels**, so the heading confirms which
    destination is open ("AIRK WORKSPACE · Agents" today; keep the destination
    name prominent and drop the generic caption).
-6. **Theme the embedded management panels** (Service, Agents and the others)
-   with the Explorer's dark/light variables instead of a fixed white
-   background.
 
 Not addressed in this candidate.
 
-## 11. Explorer Agents page does not look or behave like part of the Explorer
+## 11. Agent access without a token (U110): follow-ups
 
-Reported by the user on 1.8.205 (Explorer > Agents). The page reads as an
-embedded foreign panel rather than part of the Explorer:
+U110 (15 November 2026, user decision) removed the MCP token: `/mcp` and the
+`/api/v1` tool routes take no credential, scope is a tool parameter
+(`index_ids`, `index_set_ids` or `workspace`, else `scope_required`), and the
+Explorer's applied scope is stored as a persisted workspace default. This
+resolves the earlier HTTP 401 (`credential_refused` / `credential_required`)
+problem, where Explorer snippets carried a `<connection-id>` placeholder.
 
-- It renders as a white block with light grey cards inside the dark themed
-  Explorer, with different fonts, spacing and button styles from the rest of
-  the UI.
-- It opens with implementation details ("Native management · 69cc6133",
-  "Close management session") instead of what the user came to do: connect an
-  agent.
-- The first card is a wall of explanatory text about the MCP endpoint, port
-  changes, TLS validation, cached trust and client certificate lists. The
-  endpoint URL is greyed out and looks disabled, and the issuer SHA-256 is
-  barely legible.
-- "Connect an agent automatically", the task most users want, is below the
-  fold, after the endpoint and certificate details.
-- Raw diagnostics ("Complete endpoint result (JSON)", "Complete trust result
-  (JSON)") sit in the main flow instead of a details/troubleshooting area.
-
-Needs the same redesign as section 9: themed with the Explorer's variables,
-the connect-an-agent task first (pick an agent, connect, see its status), a
-plain one-line status ("Ready: agents can connect" with the URL and Copy),
-and certificate/trust and JSON details moved into a collapsed
-"Troubleshooting" section. Not addressed in this candidate.
+- **Accepted exposure:** any local process of any OS user that can reach
+  127.0.0.1 can read every index. HTTPS (AIRK CA), Host and `Origin` checks
+  remain, so browser pages cannot reach it through DNS rebinding.
+- **MCP roots are deprecated upstream:** the automatic `workspace` fill uses
+  `roots/list`, which SEP-2577 deprecates. Clients on newer MCP protocol
+  versions may not offer roots; the explicit `workspace` argument is the
+  supported path.
+- **Unused credential machinery:** credential issuance, the ledger, `agents
+  credential/info/verify/launch/default/revoke` and the grant-bound HTTPS code
+  paths stay compiled but unused (marked legacy in CLI help). Their removal is
+  a separate, evidence-backed step.
+- **Harnesses still enrolling credentials:** `check-http-port-relocation.py`,
+  `check-issuer-rotation.py`, `benchmark-service.py`,
+  `benchmark-real-corpora.py`, `benchmark-mcp-investigation.py`,
+  `check-retrieval-quality.py`, `check-usage-inputs.py`,
+  `check-runtime-upgrade.py`, `check-service-install.py`, `check-container.py`
+  and `setup-local-test.py` still enroll a connection. The shared HTTPS client
+  ignores the token and fills in the enrolled index as scope, so they still
+  run, but they should move to the tokenless endpoint read.
+- **Terse status elision on the open path:** terse MCP sessions used to omit
+  an unchanged `freshness` on repeated status calls. Open reads build a fresh
+  backend per call and repeat it. Pre-U110 open connections behaved the same;
+  U110 makes it the only HTTPS path. `airk-cli mcp
+  default_terse_https_supports_full_and_requested_status_without_changing_revision`
+  fails on this assertion (not weakened).
+- **Multi-index capabilities plan over the open path:** a two-member
+  `parse` plan with a `capabilities` step is refused
+  `combined_read_unavailable` identically through MCP and the pipe; the
+  one-member plan passes. Grant-bound sessions served it before U110. Cause
+  not investigated (the error chain goes to the service's private log).
+  `airk-cli combined_reads capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_frame`
+  fails here.
+- **`read_scope` on multi-index results:** a delivered multi-index body is bound
+  byte for byte by its delivery receipt, so it carries no `read_scope`; its
+  `selection.scope_identity` names the open scope. Single-index results carry
+  `read_scope`.
+- **Unrelated failure seen in the U110 runs:** `airk-cli service_runtime
+  installed_log_binding_places_the_ring_outside_control_and_missing_ownership_never_falls_back`
+  (`index_setup_paths_overlap`) exercises index-setup drafts, not U110 code; not
+  run on an unmodified tree. `an_installed_first_start_creates_the_index_catalog_and_serves_admin`
+  failed once on a native frame deadline and passed on rerun.
+- **Pre-existing test failures found during U110:** `airk-mcp`
+  `arbiter_handler_tests::policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay_or_primitive_loss`
+  and `arbiter_handler_tests::optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refusal_stops_delivery`
+  fail identically on the unmodified `98c368f4` tree (they passed in the
+  earlier `test-r2`/`test-r5` runs; a commit between those runs and
+  `98c368f4` broke them). Not investigated.
 
 ## Operational notes
 

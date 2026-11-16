@@ -38,16 +38,16 @@ The copied dependency closure contains only public Python sources and the pinned
 
 ## Use the local developer API
 
-For an existing reviewed native selection, use the main's `setup --client <supported-client>` with its exact `--catalog-session` or `--combined-session` and explicit owned installation/control. Inspect the generated connection and trust instructions. Save native connection JSON in an owner-private file outside repositories. Token bytes stay in the protected credential file, never in command arguments or this folder.
+The local HTTPS endpoint takes no token (U110). The examples read the owner-private `http-1/endpoint.json` and `http-1/ca.pem` that a running native service publishes in its control directory; `airkctl agents endpoint --output json` prints the same endpoint record. Every read names its scope: an index or index set (id or name), or an absolute workspace folder whose Explorer-applied default applies.
 
 ```text
-python examples/local_https_client.py --connection <absolute-private-connection-json>
-python examples/local_https_client.py --connection <absolute-private-connection-json> --tool search --arguments "<JSON argument object matching the returned schema>"
+python examples/local_https_client.py --control-dir <absolute-service-control-dir>
+python examples/local_https_client.py --control-dir <absolute-service-control-dir> --tool search --arguments "<JSON argument object matching the returned schema>" --index <index-id-or-name>
 ```
 
-The first command calls `GET /api/v1/tools` and prints complete schemas. The second calls `POST /api/v1/tools/search` and prints the complete tool result. Use the actual advertised tool name and argument object. The example adds the approved local CA to normal roots, keeps chain/IP validation enabled, follows no redirects and sends bearer bytes only after TLS validation. The raw API needs no MCP SDK or Workbench. An expired/revoked credential, changed native scope or missing trust must be resolved through native setup, not by disabling TLS checks.
+The first command calls `GET /api/v1/tools` and prints complete schemas. The second calls `POST /api/v1/tools/search` with `index_ids` added and prints the complete tool result; `--set <id-or-name>` adds `index_set_ids` and `--workspace <absolute-folder>` uses that folder's stored default. A read that names no scope is refused `scope_required`. Use the actual advertised tool name and argument object. The example adds the approved local CA to normal roots, keeps chain/IP validation enabled, checks the CA against the endpoint record and follows no redirects. The raw API needs no MCP SDK or Workbench. A missing endpoint, changed CA or missing trust must be resolved through the native service, not by disabling TLS checks.
 
-The one-shot experiment above stops its service before returning; its earlier URL is not a persistent endpoint for these commands. A live custom experiment must keep its explicit reviewed native owner running and resolve fresh connection metadata after restart or relocation. Use the actual published port rather than assuming the preferred port is free.
+The one-shot experiment above stops its service before returning; its earlier URL is not a persistent endpoint for these commands. A live custom experiment must keep its explicit reviewed native owner running; the examples reread the published endpoint after restart or relocation. Use the actual published port rather than assuming the preferred port is free.
 
 ## Inspect and clean up
 

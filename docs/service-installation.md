@@ -546,9 +546,9 @@ Stable, preview and custom installations are separate installations, each with
 its own service. See [process ownership](process-model.md).
 
 MCP clients connect directly to the saved native HTTPS URL. They do not spawn an
-AIRK process, Node proxy or launcher for each connection/request. Claude Code
-and Codex credential helpers run the one-shot `airkctl agents credential`,
-which prints the bearer header and exits. Verified setup,
+AIRK process, Node proxy or launcher for each connection/request. Since U110
+the endpoint takes no token, so agent entries carry no credential helper.
+Verified setup,
 inspection and administrative CLI commands remain bounded one-shot operations.
 Interactive terminal tools execute the sealed main directly, retaining the exact
 installation and native selection. The optional terminal wrapper is a shell/PATH

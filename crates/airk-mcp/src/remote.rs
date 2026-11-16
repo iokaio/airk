@@ -119,6 +119,11 @@ pub trait RemoteTools: Send + Sync + 'static {
     fn guidance(&self) -> &'static str {
         crate::response::GUIDANCE
     }
+    /// U110: whether `tool` takes a `workspace` the bridge may fill from
+    /// the client's MCP roots when the call names no scope.
+    fn fills_workspace(&self, _tool: &str) -> bool {
+        false
+    }
     fn local_help(&self) -> bool {
         true
     }
@@ -281,6 +286,7 @@ impl ReadSessionFactory {
                 .then_some(preferences.client),
             local_admission: Some(Arc::new(Admission::default())),
             _owner: Some(Arc::new(SessionOwner(backend))),
+            roots: Default::default(),
         }
     }
     /// Service shutdown only. Closing an individual session never invokes this.
@@ -344,6 +350,9 @@ pub struct ReadSession {
     client: Option<airk_core::usage::ClientFamily>,
     local_admission: Option<Arc<Admission>>,
     _owner: Option<Arc<SessionOwner>>,
+    /// U110: the client's first `file:` MCP root, fetched once per session
+    /// (`None`: not fetched yet; `Some(None)`: the client offers none).
+    roots: Arc<tokio::sync::Mutex<Option<Option<String>>>>,
 }
 type Bridge = ReadSession;
 
@@ -500,9 +509,9 @@ fn canonical_read_name(name: &str) -> bool {
     crate::local::tools()
         .iter()
         .any(|tool| tool.name == name || tool.name.strip_prefix("airk_") == Some(name))
-        // U105: the open connection's list tool (`open::LIST_INDEXES`); the
+        // U105: the open connection's list tool (`open::LIST_SCOPES`); the
         // backend's catalog still decides whether a session offers it.
-        || name == airk_core::agent_scope::LIST_INDEXES
+        || name == airk_core::agent_scope::LIST_SCOPES
         || matches!(
             name,
             "projects"
@@ -663,7 +672,53 @@ impl ReadSession {
     }
 }
 
+/// U110: a call names no scope when it has no `workspace` and no non-empty
+/// `index_ids`/`index_set_ids`.
+fn names_no_scope(arguments: &serde_json::Map<String, serde_json::Value>) -> bool {
+    !arguments.contains_key("workspace")
+        && ["index_ids", "index_set_ids"].iter().all(|key| {
+            arguments
+                .get(*key)
+                .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
+        })
+}
+
+/// How long a call waits for the client's `roots/list` answer.
+const ROOTS_WAIT: Duration = Duration::from_secs(2);
+
+impl Bridge {
+    /// The client's first `file:` root as a local path, fetched once per
+    /// session and refreshed after `notifications/roots/list_changed`.
+    // MCP roots are deprecated by SEP-2577 but still offered by clients on
+    // earlier protocol versions; U110 uses them only when the client
+    // declares the capability, and the explicit `workspace` stays primary.
+    #[allow(deprecated)]
+    async fn root_workspace(&self, peer: &rmcp::Peer<RoleServer>) -> Option<String> {
+        let mut cached = self.roots.lock().await;
+        if let Some(known) = cached.as_ref() {
+            return known.clone();
+        }
+        let found = match tokio::time::timeout(ROOTS_WAIT, peer.list_roots()).await {
+            Ok(Ok(listed)) => listed
+                .roots
+                .iter()
+                .find_map(|root| airk_core::agent_workspace::path_from_file_uri(&root.uri)),
+            // A client that does not answer in time is asked again next call.
+            Err(_) => return None,
+            Ok(Err(_)) => None,
+        };
+        *cached = Some(found.clone());
+        found
+    }
+}
+
 impl ServerHandler for Bridge {
+    async fn on_roots_list_changed(
+        &self,
+        _context: rmcp::service::NotificationContext<RoleServer>,
+    ) {
+        *self.roots.lock().await = None;
+    }
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
@@ -715,6 +770,16 @@ impl ServerHandler for Bridge {
                     context.ct.clone(),
                 )
             });
+        let mut arguments = request.arguments.unwrap_or_default();
+        if self.backend.fills_workspace(&request.name) && names_no_scope(&arguments) {
+            let roots_supported = context
+                .peer
+                .peer_info()
+                .is_some_and(|info| info.capabilities.roots.is_some());
+            if roots_supported && let Some(workspace) = self.root_workspace(&context.peer).await {
+                arguments.insert("workspace".into(), serde_json::Value::String(workspace));
+            }
+        }
         let mut cancellation = LinkedCancellation::new(attempt.cancellation().clone(), context.ct);
         let mut session = self.clone();
         if let Some(preference) = context
@@ -725,12 +790,7 @@ impl ServerHandler for Bridge {
             session.response_mode = preference.0;
         }
         let result = session
-            .dispatch(
-                request.name.to_string(),
-                request.arguments.unwrap_or_default(),
-                client,
-                attempt,
-            )
+            .dispatch(request.name.to_string(), arguments, client, attempt)
             .await
             .unwrap_or_else(admission_failure);
         cancellation.complete();
@@ -991,6 +1051,9 @@ pub(crate) fn map_plan_results(
     mut update: impl FnMut(&str, &mut serde_json::Map<String, serde_json::Value>),
 ) -> anyhow::Result<serde_json::Value> {
     use airk_core::workbench::ResultEnvelope;
+    // U110: the open read path's `read_scope` annotation is not a plan field;
+    // keep it across the typed round trip.
+    let read_scope = value.get("read_scope").cloned();
     let mut envelope: ResultEnvelope = serde_json::from_value(value)?;
     for report in &mut envelope.steps {
         if report.status != "complete" {
@@ -1023,8 +1086,11 @@ pub(crate) fn map_plan_results(
     if envelope.status == "partial" && !envelope.steps.iter().any(|s| s.status == "complete") {
         envelope.status = "failed".into();
     }
-    let value = serde_json::to_value(airk_kernel::workbench::bounded_result(envelope)?)?;
+    let mut value = serde_json::to_value(airk_kernel::workbench::bounded_result(envelope)?)?;
     airk_core::verification::validate_projection(&value)?;
+    if let (Some(read_scope), Some(fields)) = (read_scope, value.as_object_mut()) {
+        fields.insert("read_scope".into(), read_scope);
+    }
     Ok(value)
 }
 
@@ -1070,6 +1136,7 @@ where
         client: None,
         local_admission: None,
         _owner: None,
+        roots: Default::default(),
     };
     serve_bounded_io(
         bridge,
@@ -1368,6 +1435,7 @@ mod tests {
                 client: None,
                 local_admission: None,
                 _owner: None,
+                roots: Default::default(),
             };
             let (mut client, mut server) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
@@ -1964,6 +2032,7 @@ mod tests {
             client: None,
             local_admission: None,
             _owner: None,
+            roots: Default::default(),
         };
         let (mut client, mut server) = tokio::try_join!(
             async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
@@ -2074,6 +2143,7 @@ mod tests {
                 client: None,
                 local_admission: None,
                 _owner: None,
+                roots: Default::default(),
             };
             let (client, server) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },

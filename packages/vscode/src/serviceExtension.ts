@@ -20,9 +20,9 @@ import { ADMIN_OPEN_IN_SETTING, AdminOpener, type AdminOpenIn, type AdminTarget 
 import { ADMIN_PAGES, type AdminPage } from './explorerContracts';
 import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/guidance';
 import {
-    connectAgent, connectionInfo, connectionUrl, credentialHeader, inputCredential, listAgents, repairAgents,
+    agentEndpoint, connectAgent, connectionUrl, inputCredential, listAgents, repairAgents,
     agentEntries, agentActionErrors, removableAgentEntry, sameAgentEntry, requireEntryRemoval, removeAgentEntries,
-    reportedConnections, retiredStdioWithoutIndex, sweepWithoutService, type Client, type RemovedEntry,
+    retiredStdioWithoutIndex, sweepWithoutService, type Client, type RemovedEntry,
 } from './airkctl/agents/index';
 import { setEvidenceTransport } from './explorerEvidence';
 import { ExplorerSidebar } from './explorerSidebar';
@@ -37,8 +37,8 @@ function nativeExecutionSetting(): boolean {
 const REMOVED_ENTRIES_KEY = 'airk.agents.removedWithoutService';
 const INSTALL_DEFERRED_KEY = 'airk.installation.deferred';
 const INSTALL_PENDING_KEY = 'airk.installation.pending';
-const VSCODE_CONNECTION_KEY = 'airk.vscodeMcp.connection';
-const INCARNATION = /^[0-9a-f]{32}$/;
+/** (U110) Whether this workspace asked the extension to provide AIRK to VS Code (opt-in, as the earlier per-connection choice was). */
+const VSCODE_PROVIDE_KEY = 'airk.vscodeMcp.provide';
 
 class SplitExtension implements vscode.Disposable {
     readonly output = vscode.window.createOutputChannel('AIRK');
@@ -280,8 +280,8 @@ class SplitExtension implements vscode.Disposable {
             .then(action => action ? this.output.show(true) : undefined);
     }
 
-    /** "Connect Coding Agent…": write an entry for an existing connection. New
-     * connections (grants) are created in the admin pages (U6). */
+    /** "Connect Coding Agent…" (U110): write the agent's entry for this folder with the endpoint URL and the
+     * response-mode header only; agents choose their scope per call or use the workspace default. */
     async connectAgent(): Promise<void> {
         await this.requireReady();
         const folder = this.folders()[0];
@@ -290,47 +290,31 @@ class SplitExtension implements vscode.Disposable {
             { label: 'Claude Code', client: 'claude' as Client }, { label: 'Codex', client: 'codex' as Client }, { label: 'VS Code / GitHub Copilot Chat', client: 'vscode' as Client },
         ], { title: 'AIRK: Connect Coding Agent' });
         if (!client) { return; }
-        const known = reportedConnections(await listAgents(this.airkctl, [folder]));
-        const picked = await vscode.window.showQuickPick([
-            ...known.map(id => ({ label: id, id })),
-            { label: 'Create a connection in AIRK Admin…', id: '' },
-        ], { title: 'AIRK: Choose an existing connection' });
-        if (!picked) { return; }
-        if (!picked.id) { await this.openAdmin({ page: 'agents' }); return; }
-        const result = await connectAgent(this.airkctl, client.client, picked.id, folder);
+        const result = await connectAgent(this.airkctl, client.client, folder);
         this.output.appendLine(`AIRK agents connect:\n${JSON.stringify(result, null, 2)}`);
         void vscode.window.showInformationMessage(`AIRK: ${client.label} is configured for this folder.`);
     }
 
-    /** VS Code MCP provider (§8.1, §8.4): the definition names an existing
-     * connection; its token is resolved by a one-shot at start, never stored. */
+    /** VS Code MCP provider (§8.1, U110): the service's endpoint URL with the response-mode header; no credential. */
     async provideDefinitions(): Promise<vscode.McpHttpServerDefinition[]> {
         if (this.disposed || !vscode.workspace.isTrusted || !vscode.workspace.getConfiguration('airk').get<boolean>('mcp.registrationEnabled', true)) { return []; }
-        const id = this.context.workspaceState.get<string>(VSCODE_CONNECTION_KEY);
-        if (!id || !INCARNATION.test(id) || this.airkctl.state.kind !== 'ready') { return []; }
+        if (this.context.workspaceState.get<boolean>(VSCODE_PROVIDE_KEY) !== true || this.airkctl.state.kind !== 'ready') { return []; }
         let url: string | undefined;
-        try { url = connectionUrl(await connectionInfo(this.airkctl, id)); }
-        catch (error) { this.output.appendLine(`AIRK: connection ${id} is unavailable: ${JSON.stringify(errorOf(error))}`); return []; }
+        try { url = connectionUrl(await agentEndpoint(this.airkctl)); }
+        catch (error) { this.output.appendLine(`AIRK: the MCP endpoint is unavailable: ${JSON.stringify(errorOf(error))}`); return []; }
         if (!url) { return []; }
         const mode = vscode.workspace.getConfiguration('airk').get<string>('mcp.responseMode', 'terse') === 'full' ? 'full' : 'terse';
-        return [new vscode.McpHttpServerDefinition('AIRK', vscode.Uri.parse(url), { 'X-AIRK-Response-Mode': mode }, `${this.airkctl.state.version}:${id}:${mode}`)];
-    }
-    async resolveDefinition(definition: vscode.McpServerDefinition): Promise<vscode.McpServerDefinition> {
-        const id = this.context.workspaceState.get<string>(VSCODE_CONNECTION_KEY);
-        if (!(definition instanceof vscode.McpHttpServerDefinition) || !id || !INCARNATION.test(id)) { return definition; }
-        definition.headers = { ...definition.headers, Authorization: await credentialHeader(this.airkctl, id) };
-        return definition;
+        return [new vscode.McpHttpServerDefinition('AIRK', vscode.Uri.parse(url), { 'X-AIRK-Response-Mode': mode }, `${this.airkctl.state.version}:${url}:${mode}`)];
     }
     async manageVscodeMcp(): Promise<void> {
         await this.requireReady();
-        const current = this.context.workspaceState.get<string>(VSCODE_CONNECTION_KEY);
-        const known = reportedConnections(await listAgents(this.airkctl, this.folders()));
+        const current = this.context.workspaceState.get<boolean>(VSCODE_PROVIDE_KEY) === true;
         const picked = await vscode.window.showQuickPick([
-            ...known.map(id => ({ label: id, description: id === current ? 'current' : undefined, id })),
-            { label: 'Stop providing AIRK to VS Code', id: '' },
-        ], { title: 'AIRK: Connection the VS Code MCP provider uses' });
+            { label: 'Provide AIRK to VS Code', description: current ? 'current' : undefined, provide: true },
+            { label: 'Stop providing AIRK to VS Code', description: current ? undefined : 'current', provide: false },
+        ], { title: 'AIRK: VS Code MCP provider' });
         if (!picked) { return; }
-        await this.context.workspaceState.update(VSCODE_CONNECTION_KEY, picked.id || undefined);
+        await this.context.workspaceState.update(VSCODE_PROVIDE_KEY, picked.provide || undefined);
         this.definitions.fire();
     }
 
@@ -443,7 +427,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections', {
             onDidChangeMcpServerDefinitions: extension.definitions.event,
             provideMcpServerDefinitions: () => extension.provideDefinitions(),
-            resolveMcpServerDefinition: value => extension.resolveDefinition(value),
         }));
     }
     context.subscriptions.push(

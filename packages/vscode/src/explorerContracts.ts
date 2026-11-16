@@ -756,11 +756,8 @@ const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as 
 /** Agents Management › Agents connects (`airkctl agents connect --client`; U91, U104). */
 export const AGENT_CLIENTS = ['claude', 'codex', 'vscode'] as const;
 export type AgentClient = typeof AGENT_CLIENTS[number];
-/** (U105) An open connection's agent choice: `off` (default scope only) or `on` (the agent lists and picks indexes). */
-export const AGENT_CHOICE_VALUES = ['off', 'on'] as const;
 /** (U105) Descriptions are edited on indexes and index sets (`airkctl library describe --index|--set`). */
 export const DESCRIPTION_KINDS = ['index', 'set'] as const;
-const CONNECTION_ID = { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ } as const;
 
 export const WEBVIEW_MESSAGES = {
     'ready': {},
@@ -833,17 +830,13 @@ export const WEBVIEW_MESSAGES = {
     'work.usage': { days: { kind: 'int', min: 1, max: 365 } },
     /** U103: recent activity: this window's session status/job events and `airkctl service logs`. */
     'work.activity': {},
-    /** U104: Management › Agents: this window folder's agent entries (`airkctl agents list --no-user`) and the window scope. */
+    /** U104, U110: Management › Agents: this window folder's agent entries (`airkctl agents list --no-user`), the endpoint
+     * (`airkctl agents endpoint`), the workspace defaults of this window's folders (`airkctl scope defaults`) and the window scope. */
     'agents.read': {},
-    /** U105: connect an agent with an open connection whose default scope is the window's search scope
-     * (`airkctl agents connect --open`, then `airkctl agents default`). */
+    /** U110: write the agent's entry for this folder with the URL and response mode only (`airkctl agents connect`). */
     'agents.connect': { client: { kind: 'enum', values: AGENT_CLIENTS } },
-    /** U104: remove this folder's entries naming one connection (`airkctl agents remove --connection-id`); U105: then revoke an open connection no entry names. */
-    'agents.disconnect': { connectionId: CONNECTION_ID },
-    /** U105: turn an open connection's agent choice off or on (`airkctl agents default --agent-choice`). */
-    'agents.choice': { connectionId: CONNECTION_ID, choice: { kind: 'enum', values: AGENT_CHOICE_VALUES } },
-    /** U105: whether an open connection's default scope follows this window's search scope (workspace setting; on sends the scope now). */
-    'agents.follow': { connectionId: CONNECTION_ID, follow: { kind: 'bool' } },
+    /** U110: remove this folder's project-level entries for one agent (`airkctl agents remove --entry`). */
+    'agents.disconnect': { client: { kind: 'enum', values: AGENT_CLIENTS } },
     /** Read-only index library (U97): one native catalog read through the window's airkctl session. */
     'library.read': {
         method: { kind: 'enum', values: LIBRARY_METHODS },
@@ -914,7 +907,7 @@ const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessa
     'strategy.run.export', 'details.copy', 'clipboard.write',
     'manage.command', 'work.action', 'planner.saveInWorkspace', 'planner.exportJSON',
     'indexing.scope.saveSet', 'agents.connect', 'agents.disconnect',
-    'indexing.scope.describe', 'agents.choice', 'agents.follow',
+    'indexing.scope.describe',
     'strategy.export', 'studio.save', 'suggestions.resolve',
     'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
     'recipes.save', 'recipes.delete', 'recipes.export',

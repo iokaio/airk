@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The shared cases (`fixtures/split/agents/config_cases.json`, hand-reviewed
-//! expectations) and focused checks of the parsers, the U92 helper and the
-//! file layer.
+//! expectations), the U110 URL-only writer and legacy-entry repair with
+//! literal expected files, and focused checks of the parsers and the file
+//! layer.
 use super::*;
+use airk_core::identity::Incarnation;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -388,17 +390,26 @@ fn late_config_publication_noop_observer_keeps_exact_prepared_bytes() {
     );
 }
 
-#[test]
-fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_bytes() {
-    let ownership = |_: Incarnation| Ownership::Unavailable;
-    let exists = |_: &str| Some(true);
-    let observations = Observations {
-        endpoint_url: None,
-        trust_installed: None,
-        ownership: &ownership,
-        path_exists: &exists,
+fn present(_: &str) -> Option<bool> {
+    Some(true)
+}
+
+/// Observations with trust installed and every path present.
+fn observed(endpoint: Option<&str>) -> Observations<'_> {
+    Observations {
+        endpoint_url: endpoint,
+        trust_installed: Some(true),
+        path_exists: &present,
         verified_launchers: &[],
         windows: false,
+    }
+}
+
+#[test]
+fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_bytes() {
+    let observations = Observations {
+        trust_installed: None,
+        ..observed(None)
     };
     let directory = writer_test_support::Editable::new();
     let file = directory.path().join(".mcp.json");
@@ -440,25 +451,10 @@ fn exact_entry_revalidation_refuses_live_changes_and_keeps_concurrent_source_byt
 }
 
 #[test]
-fn exact_entry_revalidation_uses_fresh_connection_observations() {
-    let source = r#"{"servers":{"airk":{"type":"http","url":"https://127.0.0.1:62133/mcp","headers":{"Authorization":"Bearer ${input:airkToken_11111111111111111111111111111111}"}}}}"#;
-    let exists = |_: &str| Some(true);
-    let missing = |_: Incarnation| Ownership::NotOwned;
-    let owned = |_: Incarnation| Ownership::Owned {
-        url: "https://127.0.0.1:62133/mcp".into(),
-    };
-    let before = Observations {
-        endpoint_url: None,
-        trust_installed: None,
-        ownership: &missing,
-        path_exists: &exists,
-        verified_launchers: &[],
-        windows: false,
-    };
-    let after = Observations {
-        ownership: &owned,
-        ..before
-    };
+fn exact_entry_revalidation_uses_fresh_endpoint_observations() {
+    let source = r#"{"servers":{"airk":{"type":"http","url":"https://127.0.0.1:62133/mcp","headers":{"X-AIRK-Response-Mode":"terse"}}}}"#;
+    let before = observed(Some("https://127.0.0.1:5544/mcp"));
+    let after = observed(Some("https://127.0.0.1:62133/mcp"));
     let entries = Classifier::new(&before)
         .file(
             Agent::Copilot,
@@ -468,7 +464,7 @@ fn exact_entry_revalidation_uses_fresh_connection_observations() {
         )
         .entries;
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].status, Some(Class::HttpsUnknownConnection));
+    assert_eq!(entries[0].status, Some(Class::HttpsEndpointMismatch));
     assert!(revalidate_entry(source, &entries[0], &before).is_ok());
     assert!(
         revalidate_entry(source, &entries[0], &after)
@@ -514,14 +510,9 @@ fn expect(
     }
 }
 
-fn connection(spec: &Value) -> Connection<'_> {
-    Connection {
-        id: id(spec["connectionId"].as_str().expect("connectionId")),
-        url: spec["url"].as_str().expect("url"),
-        airkctl: spec["airkctl"].as_str().expect("airkctl"),
-    }
-}
-
+/// The shared cases: classification from the file text plus the endpoint,
+/// trust and path observations (U110 consults no connection), then the
+/// reviewed `connect`, `repair` and `remove` expectations.
 fn run(case: &Value) {
     let name = case["name"].as_str().expect("name");
     let agent: Agent = serde_json::from_value(case["agent"].clone()).expect("agent");
@@ -529,23 +520,6 @@ fn run(case: &Value) {
     let file = case["file"].as_str().expect("file");
     let source = case["source"].as_str();
     let facts = &case["observations"];
-    let connections: HashMap<String, Ownership> = facts["connections"]
-        .as_object()
-        .map(|map| {
-            map.iter()
-                .map(|(key, value)| {
-                    let ownership = match value.get("owned").and_then(Value::as_str) {
-                        Some(url) => Ownership::Owned {
-                            url: url.to_string(),
-                        },
-                        None if value == "not_owned" => Ownership::NotOwned,
-                        None => panic!("{name}: unknown ownership {value}"),
-                    };
-                    (key.clone(), ownership)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     let paths: HashMap<String, Option<bool>> = facts["paths"]
         .as_object()
         .map(|map| {
@@ -558,17 +532,10 @@ fn run(case: &Value) {
         .get("verifiedLaunchers")
         .map(strings)
         .unwrap_or_default();
-    let ownership = |connection: Incarnation| {
-        connections
-            .get(&connection.to_string())
-            .cloned()
-            .unwrap_or(Ownership::Unavailable)
-    };
     let exists = |path: &str| paths.get(path).copied().unwrap_or(Some(true));
     let observations = Observations {
         endpoint_url: facts["endpointUrl"].as_str(),
         trust_installed: facts["trustInstalled"].as_bool(),
-        ownership: &ownership,
         path_exists: &exists,
         verified_launchers: &verified,
         windows: false,
@@ -591,9 +558,10 @@ fn run(case: &Value) {
         container_path: strings(&spec["containerPath"]),
         server_key: spec["serverKey"].as_str().expect("serverKey").to_string(),
     };
+    let url = |spec: &Value| spec["url"].as_str().expect("url").to_string();
     if let Some(spec) = case.get("connect") {
         let key = spec["serverKey"].as_str().expect("serverKey");
-        let result = connect(agent, scope, source, key, &connection(spec));
+        let result = connect(agent, scope, source, key, &url(spec));
         expect(name, "connect", source, result, &spec["expect"]);
     }
     for operation in ["repair", "remove"] {
@@ -602,7 +570,7 @@ fn run(case: &Value) {
         };
         let text = source.unwrap_or_else(|| panic!("{name}: {operation} needs a source"));
         let result = if operation == "repair" {
-            repair(agent, scope, text, &target(spec), &connection(spec))
+            repair(agent, scope, text, &target(spec), &url(spec))
         } else {
             remove(agent, scope, text, &target(spec))
         };
@@ -621,50 +589,296 @@ fn shared_cases() {
     }
 }
 
-#[test]
-fn helper_quotes_paths_a_shell_would_split() {
-    let windows = r"C:\Program Files\AIRK\airkctl.exe";
-    let command = recognize::helper_command(windows, id(A)).expect("helper");
-    assert_eq!(
-        command,
-        format!("\"{windows}\" agents credential --connection-id {A} --format header-json")
-    );
-    assert_eq!(
-        recognize::helper_connection(&command),
-        Some((windows.to_string(), id(A)))
-    );
-    for refused in [
-        "airkctl",
-        "/opt/airk/airk",
-        "/opt/$HOME/airkctl",
-        r"\\server\share\airkctl.exe",
-    ] {
-        assert!(
-            recognize::helper_command(refused, id(A)).is_err(),
-            "{refused}"
-        );
+const OLD_URL: &str = "https://127.0.0.1:4433/mcp";
+const LIVE_URL: &str = "https://127.0.0.1:5544/mcp";
+
+fn mcp_servers() -> Target {
+    Target {
+        container_path: vec!["mcpServers".into()],
+        server_key: "airk".into(),
     }
 }
 
 #[test]
-fn only_the_u92_helper_form_is_recognized() {
+fn connect_writes_only_the_endpoint_url_and_response_mode() {
+    let claude = connect(Agent::Claude, Scope::Project, None, "airk", OLD_URL).unwrap();
+    assert_eq!(
+        claude,
+        "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  }\n}\n"
+    );
+    let user = connect(Agent::Claude, Scope::User, None, "airk", OLD_URL).unwrap();
+    assert_eq!(user, claude);
+    let copilot = connect(Agent::Copilot, Scope::Project, None, "airk", OLD_URL).unwrap();
+    assert_eq!(
+        copilot,
+        "{\n  \"servers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  }\n}\n"
+    );
+    let codex = connect(Agent::Codex, Scope::Project, None, "airk", OLD_URL).unwrap();
+    assert_eq!(
+        codex,
+        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+    );
+    let codex_beside = connect(
+        Agent::Codex,
+        Scope::Project,
+        Some("model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"),
+        "airk",
+        OLD_URL,
+    )
+    .unwrap();
+    assert_eq!(
+        codex_beside,
+        "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+    );
+    let commented = "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] } // keep me\n  }\n}\n";
+    assert_eq!(
+        connect(
+            Agent::Claude,
+            Scope::Project,
+            Some(commented),
+            "airk",
+            OLD_URL
+        )
+        .unwrap(),
+        "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] }, // keep me\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  }\n}\n"
+    );
+    // A written entry is healthy against the live endpoint and idempotent.
+    let live = observed(Some(OLD_URL));
+    let report =
+        Classifier::new(&live).file(Agent::Claude, Scope::Project, "/p/.mcp.json", &claude);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries[0].status, Some(Class::Ok));
+    assert_eq!(report.entries[0].connection_id, None);
+    assert_eq!(
+        connect(
+            Agent::Claude,
+            Scope::Project,
+            Some(claude.as_str()),
+            "airk",
+            OLD_URL
+        )
+        .unwrap(),
+        claude
+    );
+    // Another endpoint is a mismatch; an unknown endpoint is never ok.
+    let moved = observed(Some(LIVE_URL));
+    let report = Classifier::new(&moved).file(Agent::Codex, Scope::Project, "/p/c.toml", &codex);
+    assert_eq!(report.entries[0].status, Some(Class::HttpsEndpointMismatch));
+    let unknown = observed(None);
+    let report =
+        Classifier::new(&unknown).file(Agent::Copilot, Scope::Project, "/p/m.json", &copilot);
+    assert_eq!(report.entries[0].status, None);
+    assert!(connect(Agent::Gemini, Scope::Project, None, "airk", OLD_URL).is_err());
+    assert!(connect(Agent::Claude, Scope::Project, None, "docs", OLD_URL).is_err());
+    assert!(
+        connect(
+            Agent::Claude,
+            Scope::Project,
+            None,
+            "airk",
+            "http://127.0.0.1:1/mcp"
+        )
+        .is_err()
+    );
+}
+
+const LEGACY_CLAUDE: &str = "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer static-token-value\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      },\n      \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id <connection-id> --format header-json\"\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n";
+
+#[test]
+fn legacy_static_token_and_placeholder_helper_are_listed_and_repaired() {
+    let live = observed(Some(LIVE_URL));
+    let report =
+        Classifier::new(&live).file(Agent::Claude, Scope::Project, "/p/.mcp.json", LEGACY_CLAUDE);
+    assert!(report.checked);
+    assert_eq!(
+        report.entries.len(),
+        1,
+        "the placeholder no longer hides it"
+    );
+    let entry = &report.entries[0];
+    assert_eq!(entry.server_key, "airk");
+    assert_eq!(entry.transport, Transport::Https);
+    assert_eq!(entry.status, Some(Class::HttpsUnknownConnection));
+    assert_eq!(entry.connection_id, None);
+    let mut findings = serde_json::to_value(&report.findings).unwrap();
+    let detail = findings[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("detail")
+        .unwrap();
+    assert!(detail.as_str().unwrap().contains("U110"), "{detail}");
+    assert_eq!(
+        findings,
+        json!([{
+            "agent": "claude",
+            "label": "Claude Code",
+            "file": "/p/.mcp.json",
+            "scope": "project",
+            "serverKey": "airk",
+            "url": "https://127.0.0.1:4433/mcp",
+            "problem": "https_unknown_connection"
+        }])
+    );
+    let repaired = repair(
+        Agent::Claude,
+        Scope::Project,
+        LEGACY_CLAUDE,
+        &mcp_servers(),
+        LIVE_URL,
+    )
+    .unwrap();
+    assert_eq!(
+        repaired,
+        "{\n  \"mcpServers\": {\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:5544/mcp\",\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    },\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+    );
+    let report =
+        Classifier::new(&live).file(Agent::Claude, Scope::Project, "/p/.mcp.json", &repaired);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    assert_eq!(report.entries[0].status, Some(Class::Ok));
+    // connect over the legacy entry repairs it the same way.
+    assert_eq!(
+        connect(
+            Agent::Claude,
+            Scope::Project,
+            Some(LEGACY_CLAUDE),
+            "airk",
+            LIVE_URL
+        )
+        .unwrap(),
+        repaired
+    );
+    assert_eq!(
+        remove(Agent::Claude, Scope::Project, LEGACY_CLAUDE, &mcp_servers()).unwrap(),
+        "{\n  \"mcpServers\": {\n    \"other\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }\n  }\n}\n"
+    );
+    let other = Target {
+        container_path: vec!["mcpServers".into()],
+        server_key: "other".into(),
+    };
+    assert!(remove(Agent::Claude, Scope::Project, LEGACY_CLAUDE, &other).is_err());
+    assert!(
+        repair(
+            Agent::Claude,
+            Scope::Project,
+            LEGACY_CLAUDE,
+            &other,
+            LIVE_URL
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn legacy_user_entries_are_recognized_by_key_or_credential_marker() {
+    let source = format!(
+        "{{\n  \"mcpServers\": {{\n    \"custom\": {{ \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\", \"headersHelper\": \"/opt/airk/bin/airkctl agents credential --connection-id {A} --format header-json\" }},\n    \"airk\": {{ \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\" }},\n    \"loopback\": {{ \"type\": \"http\", \"url\": \"https://127.0.0.1:4433/mcp\" }},\n    \"remote\": {{ \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": {{ \"Authorization\": \"Bearer x\" }} }}\n  }}\n}}\n"
+    );
+    let live = observed(Some(OLD_URL));
+    let report =
+        Classifier::new(&live).file(Agent::Claude, Scope::User, "/home/u/.claude.json", &source);
+    let rows: Vec<(&str, Option<Class>, Option<Incarnation>)> = report
+        .entries
+        .iter()
+        .map(|entry| (entry.server_key.as_str(), entry.status, entry.connection_id))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("airk", Some(Class::Ok), None::<Incarnation>),
+            ("custom", Some(Class::HttpsUnknownConnection), Some(id(A))),
+        ]
+    );
+}
+
+const LEGACY_CODEX: &str = "# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/bin/airkctl agents credential --connection-id <connection-id> --format header-json\"\nenabled_tools = [\"search\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n";
+
+#[test]
+fn legacy_codex_helper_placeholder_is_listed_and_repaired() {
+    let live = observed(Some(LIVE_URL));
+    let report = Classifier::new(&live).file(
+        Agent::Codex,
+        Scope::Project,
+        "/p/.codex/config.toml",
+        LEGACY_CODEX,
+    );
+    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries[0].server_key, "airk");
+    assert_eq!(
+        report.entries[0].status,
+        Some(Class::HttpsUnknownConnection)
+    );
+    let target = Target {
+        container_path: vec!["mcp_servers".into()],
+        server_key: "airk".into(),
+    };
+    let repaired = repair(
+        Agent::Codex,
+        Scope::Project,
+        LEGACY_CODEX,
+        &target,
+        LIVE_URL,
+    )
+    .unwrap();
+    assert_eq!(
+        repaired,
+        "# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nenabled_tools = [\"search\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
+    );
+    let report = Classifier::new(&live).file(Agent::Codex, Scope::Project, "/p/c.toml", &repaired);
+    assert_eq!(report.entries[0].status, Some(Class::Ok));
+
+    let bearer = "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nbearer_token_env_var = \"AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n";
+    assert_eq!(
+        repair(Agent::Codex, Scope::Project, bearer, &target, OLD_URL).unwrap(),
+        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
+    );
+    assert_eq!(
+        remove(Agent::Codex, Scope::Project, LEGACY_CODEX, &target).unwrap(),
+        "# AIRK\n# policy\n[mcp_servers.docs]\ncommand = \"npx\"\n"
+    );
+}
+
+#[test]
+fn legacy_vscode_input_is_dropped_with_its_authorization() {
+    let source = format!(
+        "{{\n  \"servers\": {{\n    \"github\": {{ \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true }},\n    \"airk\": {{\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {{\n        \"Authorization\": \"Bearer ${{input:airkToken_{A}}}\",\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }}\n    }}\n  }},\n  \"inputs\": [\n    {{ \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true }},\n    {{\n      \"id\": \"airkToken_{A}\",\n      \"type\": \"command\",\n      \"command\": \"airk.httpCredential\",\n      \"args\": {{\n        \"connection_id\": \"{A}\"\n      }}\n    }}\n  ]\n}}\n"
+    );
+    let live = observed(Some(OLD_URL));
+    let report = Classifier::new(&live).file(Agent::Copilot, Scope::Project, "/p/m.json", &source);
+    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries[0].connection_id, Some(id(A)));
+    assert_eq!(
+        report.entries[0].status,
+        Some(Class::HttpsUnknownConnection)
+    );
+    let target = Target {
+        container_path: vec!["servers".into()],
+        server_key: "airk".into(),
+    };
+    assert_eq!(
+        repair(Agent::Copilot, Scope::Project, &source, &target, OLD_URL).unwrap(),
+        "{\n  \"servers\": {\n    \"github\": { \"type\": \"http\", \"url\": \"https://api.example.com/mcp\", \"disabled\": true },\n    \"airk\": {\n      \"type\": \"http\",\n      \"url\": \"https://127.0.0.1:4433/mcp\",\n      \"headers\": {\n        \"X-AIRK-Response-Mode\": \"terse\"\n      }\n    }\n  },\n  \"inputs\": [\n    { \"id\": \"github_pat\", \"type\": \"promptString\", \"password\": true }\n  ]\n}\n"
+    );
+}
+
+#[test]
+fn legacy_helper_ids_are_read_only_from_the_u92_form() {
     let ok =
         format!("/opt/airk/bin/airkctl agents credential --connection-id {A} --format header-json");
-    assert!(recognize::helper_connection(&ok).is_some());
+    assert_eq!(recognize::helper_connection(&ok), Some(id(A)));
+    let quoted = format!(
+        "\"C:\\Program Files\\AIRK\\airkctl.exe\" agents credential --connection-id {A} --format header-json"
+    );
+    assert_eq!(recognize::helper_connection(&quoted), Some(id(A)));
     for other in [
         format!(
             "/opt/airk/airk runtime http-credential --install-dir /opt/airk --connection-id {A} --format header-json"
         ),
+        "/opt/airk/bin/airkctl agents credential --connection-id <connection-id> --format header-json".to_string(),
         format!("airkctl agents credential --connection-id {A} --format header-json"),
         format!(
             "/opt/airk/bin/airkctl agents credential --connection-id {} --format header-json",
             A.to_uppercase()
-        ),
-        format!(
-            "/opt/airk/bin/airkctl  agents credential --connection-id {A} --format header-json"
-        ),
-        format!(
-            "/opt/airk/bin/airkctl agents credential --connection-id {A} --format header-json --x"
         ),
         format!("/opt/airk/bin/other agents credential --connection-id {A} --format header-json"),
     ] {

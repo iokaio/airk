@@ -2,18 +2,22 @@
 
 Clients connect directly to the shared native HTTPS service on IPv4 loopback,
 at `https://127.0.0.1:<port>/mcp`. MCP connections and reads do not start an
-AIRK command, launcher, proxy or Node bridge, and no process runs for each
-agent. Since 1.8.22, the only process an agent starts is the one-shot
-credential helper described below, which exits after printing the token.
-Stdio MCP is retired. The listener URL comes from verified
+AIRK command, launcher, proxy, credential helper or Node bridge, and no process
+runs for each agent. Stdio MCP is retired. The listener URL comes from verified
 native discovery: an occupied preferred port can select another saved port, so
 copy the actual endpoint rather than assuming a machine-wide fixed port.
 
-The native service owns connections and protected credential files. VS Code is
-an optional setup interface, not an MCP proxy: closing it does not put its
-extension between a standalone client and AIRK. Headless reads still require the
-native service to be running and the client process to have its reviewed
-credential and CA trust. A saved configuration alone does not supply either.
+**No token (U110, 15 November 2026).** `/mcp` takes no credential. The gateway
+strips and ignores any `Authorization` header; its Host, `Origin` and
+admin-cookie refusals remain. Every MCP session is the service's built-in local
+agent session. Accepted consequence: any local process, of any OS user, that can
+reach 127.0.0.1 can read every index of this installation. TLS issuer trust is
+still required.
+
+VS Code is an optional setup interface, not an MCP proxy: closing it does not
+put its extension between a standalone client and AIRK. Headless reads still
+require the native service to be running and the client process to trust the
+local CA. A saved configuration alone supplies neither.
 
 ## Retrieval, ranking and contextual questions
 
@@ -27,7 +31,7 @@ Controls and new profiles remain under implementation/qualification.
 The `answer` MCP tool gathers contextual evidence for a question and retains
 source receipts, gaps, work and stop reasons. It differs from `context`, which
 expands lines around an indexed coordinate. Neither model advice nor stage
-enrollment expands the client's authorized index scope. Inspect the running
+enrollment expands the scope a call names or resolves. Inspect the running
 catalog and native status for supported operations and active profiles.
 
 The [Arbiter operator guide](arbiter/user-guide.md) explains stage/index consent,
@@ -37,70 +41,92 @@ candidate set, and a relevance score is not a sufficiency guarantee.
 
 ## Select scope and provision the actual client
 
-**Open connections (1.8.35 split candidate, U105).** In the Explorer, apply a
-search scope in **Indexing → Search scope**, then in **Management → Agents**
-choose the agent (Claude Code, Codex or VS Code / GitHub Copilot) and
-**Connect**. Connect enrolls an **open** connection (`airkctl agents connect
---open`), writes AIRK's entry in the agent's configuration file and sets the
-connection's **default scope** to the window's search scope (`airkctl agents
-default`). An open connection's token admits the agent to the MCP endpoint; it
-carries no reviewed grant. The indexes it reads are the default scope that AIRK
-Service stores for the connection. A connection connected from the Explorer
-follows the window's search scope: applying another scope updates its default
-scope, and the change applies to the agent's next call without a reconnect or
-a configuration rewrite. Clearing the scope empties it, and reads then refuse
-`agent_default_scope_unset`. Creating, describing or changing indexes and index
-sets does not close an open connection: each call re-resolves its scope at the
-current catalog revision (U106f). Revocation, a pending catalog fence and the
-service's end still deny or close it; grant-bound connections keep their
-existing fencing.
+**Connect (U110).** In the Explorer's **Management → Agents**, pick the agent
+(Claude Code, Codex or VS Code / GitHub Copilot) and **Connect**; the page then
+shows its status, the endpoint with **Copy**, and this window's workspace
+default. From a terminal:
 
-**Agent choice is off by default: never outside the assigned set.** The assigned
-set is the default indexes plus the members of the default index sets. Off, a
-call naming nothing reads the whole assigned set, and a call may narrow with
-`index_ids`/`index_set_ids` to a non-empty part of it (a set only when all of
-its members are inside). A call naming anything outside is refused
-`agent_scope_choice_disabled` with the outside indexes named, and
-`list_indexes` is neither listed nor served. Turn on **Let the agent choose
-indexes** (or `airkctl agents default --connection-id <id> --agent-choice on`)
-to let the agent name any indexes and index sets per call (union, at most 32
-each) and call `list_indexes`, which lists every index and index set with its
-id, name, description and indexed folders (a set lists its member indexes). A
-call naming nothing still reads the default scope. Names resolve by id
+```console
+airkctl agents connect --client claude|codex|vscode [--user] [--project <folder>]
+```
+
+Connect writes only AIRK's entry in the agent's configuration file: the
+endpoint URL and the header `X-AIRK-Response-Mode: terse`. It writes no
+`Authorization`, no `headersHelper`/`http_headers_helper` and creates no
+connection; entries are recognized by URL. Other servers, comments, disabled
+states and policies are kept. `--connection-id` and `--selection-file` are
+refused; `--open` is accepted and ignored. `airkctl agents list` reports older
+entries that still carry a token, a helper or a `<connection-id>` placeholder
+as needing repair (`https_unknown_connection` with that detail), and `airkctl
+agents repair` strips those fields. `agents credential`, `info`, `verify`,
+`revoke`, `default` and `launch` remain in the CLI but no longer affect agents;
+the credential machinery is unused and will be removed separately.
+
+**Scope is a tool parameter.** Every read tool takes `index_ids` and
+`index_set_ids` (ids or names, union, at most 32 each) and `workspace` (an
+absolute folder path). Resolution:
+
+1. named selectors, if any;
+2. otherwise the workspace default of the most specific stored folder
+   containing `workspace` (on Windows, case-insensitive with `/` and `\`
+   equal);
+3. otherwise the call is refused `scope_required`; the message tells the agent
+   to call `list_scopes` or pass `workspace`.
+
+Results carry `structuredContent.read_scope` = `{source: "named" |
+"workspace_default", workspace_folder?, index_ids}`. Names resolve by id
 (`idx_…`, `prj_…`), then exact name, then a unique case-insensitive name;
 ambiguous or unknown names refuse `scope_name_ambiguous` or
 `scope_name_unknown`.
+
+`list_scopes` (formerly `list_indexes`) lists every index and index set with its
+id, name, description and indexed folders (a set lists its member indexes). Its
+first page adds `workspace_defaults` (every stored default); with the optional
+`workspace` argument it also adds `workspace_default`, the matching default or
+null.
+
+**Workspace defaults.** The Explorer's applied search scope is stored as the
+default of every folder of its VS Code window. AIRK Service persists them
+(`agent-workspace-defaults.json` in its private HTTP directory, at most 256
+entries); they survive restarts and closed windows. A changed default applies to
+the agent's next call without a reconnect or configuration rewrite. From a
+terminal:
+
+```console
+airkctl scope default --workspace <abs-folder>… [--index <id>]… [--set <id>]…
+airkctl scope defaults
+```
+
+With no `--index`/`--set`, `scope default` clears the folders' default. Both
+print `{"schema":1,"entries":[{folder,index_ids,index_set_ids,applied_unix_ms}]}`.
+`airkctl tools call --workspace <folder>` follows the same resolution as MCP.
+
+**MCP roots.** When a read names no selectors and no `workspace`, and the client
+declared the MCP `roots` capability, the service asks the client (`roots/list`,
+once per session after initialization, refreshed on
+`notifications/roots/list_changed`, waiting at most 2 s) and uses the first
+`file:` root as `workspace`. Without roots the call is unchanged. Roots are
+deprecated by SEP-2577 in newer MCP protocol versions; passing `workspace`
+explicitly remains the primary path.
 
 Results of a read over several indexes stay grouped by index (`members[]`), and
 each member reports `index_name` and `elapsed_ms`. `limit_per_index` (1–100)
 gives every index exactly that many results; `limit` is then the overall cap
 (default indexes × `limit_per_index`), and a product above the cap or above 100
 is refused `combined_limit_per_index_too_large`. Member reads run concurrently
-up to the machine's query concurrency. With choice on, any agent
-holding that token can read every index of this OS user: workspace isolation is
-a default, not a boundary. After the choice changes, a running agent may need to
-reload its tool list (Claude Code `/mcp`, restart Codex).
+up to the machine's query concurrency. Workspace defaults are a convenience,
+not a boundary: any agent can name any index.
 
 A named index is read whole (every enabled source root); an index set is read as
 its member indexes, each whole. Index and index-set descriptions are edited in
 the Explorer's Search scope (**Edit description**) or with `airkctl library
 describe --index <idx_…>|--set <prj_…> --text <text>|--clear --yes`; without a
-stored description, `list_indexes` generates one from the name and source paths.
-**Disconnect** in Management → Agents removes the entries naming a connection
-and revokes an open connection that no remaining entry names.
+stored description, `list_scopes` generates one from the name and source paths.
+Removing an agent in Management → Agents deletes AIRK's entry from its
+configuration file.
 
-The 1.8.35 behavior is built for local manual testing only; installed-editor
-journeys and real-client qualification of open connections are not run. See the
-[1.8.35 record](releases/release-1.8.35.md).
-
-**Grant-bound connections.** Connections enrolled from a reviewed selection
-(AIRK Admin's Agents page, `airkctl agents connect --selection-file`) keep
-working unchanged and keep the scope they were connected with. Saving a URL does
-not grant access. Missing/revoked authority, a changed registration or stale
-review remains an explicit refusal. Imported connections keep their original
-native grant and genuine owned configuration or preexisting provider receipt. A
-multi-root predecessor retains the exact original union and requires an explicit
-project; the active editor does not narrow it.
+U110 is built for local manual testing only; installed-editor journeys and
+real-client qualification are not run.
 
 Historical helper-cache cleanup retains the native scope in its complete
 receipt. A native default installation reports `native-defaults`, covering its
@@ -111,43 +137,27 @@ ambient user cache discovery. Native OS installation identity determines this
 distinction; an editor path or test flag cannot promote it. Unknown cache
 ownership or incomplete retirement remains an explicit blocker.
 
-| Implemented adapter | Configuration | Host trust and credentials |
+| Implemented adapter | Configuration | Host trust |
 | --- | --- | --- |
-| VS Code / Copilot Chat | `servers.airk` with `type: "http"`, literal actual `url`, and protected command input `${input:airkToken_<ID>}` with a matching top-level `inputs` definition. The built-in provider returns an HTTP definition. | Review the native per-user issuer trust action. The provider supplies its protected credential via the API; manual project files use the AIRK extension's protected native credential resolver, without a Code reload. |
-| Codex | Literal `mcp_servers.airk.url`, nested `http_headers`, and `http_headers_helper` (1.8.22). Without a helper path that is safe to write, `bearer_token_env_var` is used instead. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. The helper delivers the credential; see below. |
-| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url`, a `${AIRK_MCP_TOKEN_<ID>}` Authorization header, and `headersHelper` (1.8.22), which overrides that header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer. The helper delivers the credential; see below. |
+| VS Code / Copilot Chat | `servers.airk` with `type: "http"`, literal actual `url` and the `X-AIRK-Response-Mode` header. The built-in provider returns an HTTP definition. | Review the native per-user issuer trust action. |
+| Codex | Literal `mcp_servers.airk.url` and nested `http_headers` with the mode header. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. |
+| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url` and the mode header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer. |
 
-### Credential helpers (1.8.22)
+### Legacy credential entries
 
-Claude Code's `headersHelper` and Codex's `mcp_servers.<id>.http_headers_helper`
-run this command:
-
-```console
-airkctl agents credential --connection-id <id> --format header-json
-```
-
-Before split Phase 4 this was `airk runtime http-credential --install-dir …`;
-entries written by `airkctl agents connect` and `agents repair` name the
-installed `airkctl`.
-
-It prints `{"Authorization":"Bearer <token>"}` and exits. It reads only this
-installation's owner-private credential file for an existing, unrevoked
-connection. It never starts the service, enrolls, rotates or logs the token.
-Agents started outside VS Code therefore receive their token without a
-prepared environment variable. The per-window session (`airkctl session`) never returns bearer tokens.
-
-The extension writes helper paths only when a client shell can pass them
-through unquoted. When the runtime changes, it refreshes the helper commands it
-owns before retiring the previous runtime. The Codex key name is taken from the
-Codex configuration reference.
+Before U110, Claude Code's `headersHelper` and Codex's
+`mcp_servers.<id>.http_headers_helper` ran `airkctl agents credential
+--connection-id <id> --format header-json`, and VS Code entries used the
+`airk.httpCredential` command input. Those fields are no longer needed: the
+endpoint ignores `Authorization`. `airkctl agents list` and Explorer report such
+entries as needing repair, and `airkctl agents repair` (or Explorer's Connect)
+rewrites them to the URL-only form, removing the VS Code credential input that
+nothing references any more. The per-window session (`airkctl session`) never
+returns bearer tokens.
 
 Still unverified against the real clients:
 
-- whether Codex trusts the OS user certificate store outside VS Code;
-- which Windows shell runs the header helpers.
-
-VS Code does not use a helper. It gets the token from the extension's MCP
-provider or from the `airk.httpCredential` command input in `.vscode/mcp.json`.
+- whether Codex trusts the OS user certificate store outside VS Code.
 
 ### Reconnecting after a replacement
 
@@ -170,8 +180,9 @@ are not edited.
    appear in an Explorer banner, the status bar and Management → Agents.
    Classes are `stdio_retired`, `stdio_missing_command`,
    `https_unknown_connection`, `https_endpoint_mismatch`,
-   `https_trust_missing`, `https_helper_missing` and `ok`. A missing helper is
-   repaired by the helper refresh, not a full Reconnect.
+   `https_trust_missing`, `https_helper_missing` and `ok`. Since U110 an
+   entry still carrying credential fields is reported as needing repair, and
+   repair rewrites it to the URL-only form.
 3. **Reconnect.** **Reconnect** (or **AIRK: Reconnect Coding Agents…**) shows
    the existing index and configuration entries it will use, and asks once.
    Reconnect never creates an index. If none exists for a recorded folder,
@@ -181,10 +192,9 @@ are not edited.
    For each folder with an existing index it then:
    - grants this window access. **This makes the index the window's search
      scope;**
-   - enrolls HTTPS;
-   - rewrites each entry in place, keeping other servers, comments, disabled
-     states and policies;
-   - provisions trust and the token helper.
+   - rewrites each entry in place with the endpoint URL and mode header only,
+     keeping other servers, comments, disabled states and policies;
+   - provisions trust.
 4. **Report.** Each entry reports one of these statuses:
    - `complete`;
    - `awaiting_host_reconnect`, with the host's action, such as Claude Code
@@ -262,13 +272,13 @@ reviewed per-user native trust enrollment and actual acceptance afterward;
 neither investigation changed an OS trust store. Do not disable system CA
 support or certificate verification to make the test pass.
 
-All implemented adapters retain the original reviewed selector and native grant.
-AIRK can refresh its owned endpoint definition after native discovery; external
-clients may require their own reload or reconnect. An environment reference only
-works in a process which received that credential and additive trust. Existing
-client processes do not acquire new environment values when a file is saved.
-
-VS Code command inputs require the AIRK extension and its Local harness support. Portable/forwarded harnesses that reject input/command variables remain unqualified; do not convert them by guessing. The resolver accepts only a connection ID, verifies current native grant/expiry/ACL and the actual matching workspace configuration, then reads the exact protected native token. No token or caller-nominated file path is saved in the JSON.
+The classification above is dated: since U110 the implemented adapters write
+only the URL and mode header, and the credential-related evidence columns
+describe the earlier configuration. AIRK can refresh its owned endpoint
+definition after native discovery; external clients may require their own
+reload or reconnect. Additive trust only works in a process which received it.
+Existing client processes do not acquire new environment values when a file is
+saved.
 
 Recognized owned-file migration preserves comments, other servers, disabled
 settings and tool policies. Exact file preimages, editor versions, unsaved edits,
@@ -277,7 +287,7 @@ user-wide/client-private state need review. No raw token, private key or
 `credential_file` contents belong in tracked files or copied snippets. See the
 [configuration templates](../examples/mcp/README.md).
 
-The extension can prepare additive CA/credential references for **new terminals
+The extension can prepare additive CA references for **new terminals
 created by that VS Code window**. Existing terminals, separately launched apps,
 headless sessions, SSH/remote hosts and containers do not receive those values
 by saving a project file. Provision and qualify the process which will connect.
@@ -292,9 +302,10 @@ A host cannot reach a container's private loopback merely by copying its URL.
 > as `airk __airk_role setup-interim setup …` and `… setup-interim uninstall …`
 > until the Phase 7 setup role and installer replace them; the installers are
 > being reworked under the [split plan](split/split-plan.md) (Phases 6–7).
-> Client enrollment for a reviewed selection is `airkctl agents connect`, and
-> `airkctl agents launch` starts Claude Code, Codex or VS Code on an existing
-> connection.
+> Since U110 client setup is `airkctl agents connect`, which writes only the
+> endpoint URL; the grant and credential steps of the interim `setup` described
+> below predate U110 and are not needed for MCP access. `airkctl agents launch`
+> remains but no longer matters for agents.
 
 Standalone Windows, macOS and Linux installer support is implemented in source for the CLI and native
 MCP/HTTPS service only. They do not install a VSIX or VS Code extension, run Code
@@ -401,42 +412,24 @@ credentials remain preserved but their original namespace does not grant access
 to the successor. Review and enroll the replacement scope explicitly; do not
 reuse an old namespace or silently broaden the client selection.
 
-### Open connection from a terminal
+### Connect from a terminal
 
-Without the Explorer, enroll an open connection and set its default scope:
-
-```console
-airkctl agents connect --client codex --open
-airkctl agents default --connection-id <printed-id> --set <index-set-name> --index <index-name>
-airkctl tools call search --connection <printed-id> --args '{"query":"…"}'
-```
-
-`--index` and `--set` take ids or exact names and replace the whole default
-scope; `--clear` empties it; `--agent-choice off|on` sets agent choice.
-`airkctl tools call --connection <id>` reads exactly as that connection's MCP
-calls do, and `airkctl tools list --connection <id>` shows the catalog it sees.
-`airkctl tools call --index/--set` reads named indexes and sets through the same
-open read path without a connection. Pass `limit_per_index` in `--args`, for
-example `--args '{"query":"…","limit_per_index":5}'`.
-
-### Existing reviewed selector
-
-Use the exact reviewed native selector, not invented IDs or folder-derived scope.
-The following is a template with values supplied by authenticated native setup:
+Without the Explorer, write the entry and, optionally, a workspace default:
 
 ```console
-airkctl agents connect --client codex --connection-id <new-id> --selection-file <reviewed-selection.json>
+airkctl agents connect --client codex
+airkctl scope default --workspace <abs-folder> --set <index-set-name> --index <index-name>
+airkctl tools call search --workspace <abs-folder> --args '{"query":"…"}'
 ```
 
-The selection file is owner-private and holds the reviewed selection;
-`--user` writes the user-level file instead of the project's. Before split
-Phase 4 this was `airk … --catalog-session '<json>' setup --client codex`
-(`--combined-session` for a combined selection). `agents connect` enrolls the
-reviewed selection and writes only AIRK's entry in the client's configuration
-file, preserving other servers and settings. It does not print a bearer token
-or index sources. Root-only setup without
-genuine predecessor lineage requires review. Reuse a returned connection ID for
-an exact retry; an uncertain mutation does not authorize a new attempt identity.
+`--index` and `--set` take ids or exact names and replace the folder's whole
+default; with neither, the default is cleared. `airkctl tools call --workspace`
+resolves scope exactly as an MCP read passing `workspace` does, and `airkctl
+tools call --index/--set` reads named indexes and sets through the same read
+path. Pass `limit_per_index` in `--args`, for example
+`--args '{"query":"…","limit_per_index":5}'`. `--user` on `agents connect`
+writes the user-level file instead of the project's; `--project <folder>` names
+the project folder.
 
 ## HTTPS trust and actual verification
 
@@ -462,7 +455,8 @@ and a scoped read citing an original source path and indexed revision. Deferred
 discovery can delay visibility. A badge, valid config or extension-side probe
 alone does not prove that another agent loaded the connection. Preserve native
 failure/retry receipts and repeat only reads authorized by their exact contract.
-CLI, Workbench and MCP retain complete canonical results and selected scope.
+CLI, Workbench and MCP retain complete canonical results and the resolved
+scope (`structuredContent.read_scope`).
 
 Project instruction buttons still open existing `AGENTS.md`, `CLAUDE.md` or
 GitHub Copilot instructions without overwriting unsaved edits; missing files

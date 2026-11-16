@@ -2,13 +2,16 @@
 //! Declarations and AIRK ownership recognition: ports of
 //! `globalConfigDeclarations` (unifiedAgentConfig.ts), `stdioCommand`
 //! (agentConfigHealth.ts), `recordedRoot`/`recordedCollection`/`samePath`
-//! (agentReconnect.ts) and `httpUrl` (serviceHttp.ts), with HTTPS ownership
-//! narrowed by U92: Claude Code and Codex entries are AIRK's only when their
-//! header helper is `<absolute airkctl> agents credential --connection-id <id>
-//! --format header-json`. The pre-split `airk runtime http-credential` helper
-//! and bare `AIRK_MCP_TOKEN_*` forms are not recognized, so nothing here ever
-//! edits them. VS Code has no helper; its entries are recognized by the
-//! `${input:airkToken_<id>}` Authorization reference the extension writes.
+//! (agentReconnect.ts) and `httpUrl` (serviceHttp.ts). U110: `/mcp` needs no
+//! credential, so an HTTPS entry is AIRK's by its loopback AIRK URL plus an
+//! AIRK server key (`airk`, `airk-…`, `airk_…`), or plus a legacy AIRK
+//! credential marker (the U92 `<absolute airkctl> agents credential
+//! --connection-id <id> --format header-json` helper, an `AIRK_MCP_TOKEN_<ID>`
+//! reference or a `${input:airkToken_<id>}` reference). Entries that still
+//! carry any credential field (`Authorization`, `headersHelper`,
+//! `http_headers_helper`, `bearer_token_env_var`) are recognized as stale so
+//! `agents repair` can strip them; a `<connection-id>` placeholder no longer
+//! hides an entry.
 use super::{Agent, Scope, jsonc, toml};
 use airk_core::identity::Incarnation;
 use serde_json::{Map, Value};
@@ -168,36 +171,10 @@ fn is_airkctl(path: &str) -> bool {
     name == "airkctl" || name.eq_ignore_ascii_case("airkctl.exe")
 }
 
-/// The U92 helper command for `airkctl`, quoted as `credentialHelperCommand`
-/// quotes paths: plain when a client shell passes it through unchanged,
-/// double-quoted otherwise; refused when a shell could reinterpret it.
-pub(super) fn helper_command(airkctl: &str, id: Incarnation) -> Result<String, String> {
-    let plain = airkctl
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:\\/+-".contains(&byte));
-    if !is_absolute(airkctl)
-        || airkctl.len() > 1024
-        || airkctl
-            .chars()
-            .any(|c| "\"'`$%!".contains(c) || c.is_control())
-        || airkctl.starts_with("\\\\")
-        || !is_airkctl(airkctl)
-    {
-        return Err(format!(
-            "agents credential helper path unsupported: {airkctl:?} must be an absolute airkctl path without shell metacharacters"
-        ));
-    }
-    let executable = if plain {
-        airkctl.to_string()
-    } else {
-        format!("\"{airkctl}\"")
-    };
-    Ok(format!("{executable}{HELPER_MIDDLE}{id}{HELPER_END}"))
-}
-
-/// The executable and connection of a U92 helper command, or `None` for any
-/// other command (including the pre-split `airk runtime http-credential`).
-pub(super) fn helper_connection(command: &str) -> Option<(String, Incarnation)> {
+/// The connection a legacy U92 helper command names, or `None` for any other
+/// command (including the pre-split `airk runtime http-credential` and a
+/// `<connection-id>` placeholder).
+pub(super) fn helper_connection(command: &str) -> Option<Incarnation> {
     if command.len() > 4096 {
         return None;
     }
@@ -213,7 +190,16 @@ pub(super) fn helper_connection(command: &str) -> Option<(String, Incarnation)> 
     }
     let id = rest.strip_prefix(HELPER_MIDDLE)?.strip_suffix(HELPER_END)?;
     let id: Incarnation = id.parse().ok()?;
-    (is_absolute(executable) && is_airkctl(executable)).then(|| (executable.to_string(), id))
+    (is_absolute(executable) && is_airkctl(executable)).then_some(id)
+}
+
+/// A legacy AIRK header helper: the U92 `airkctl agents credential` form
+/// (any connection id, placeholders included) or the pre-split
+/// `airk runtime http-credential` form.
+fn legacy_helper(command: &str) -> bool {
+    command.len() <= 4096
+        && ((command.contains("airkctl") && command.contains(HELPER_MIDDLE))
+            || (command.contains("airk") && command.contains(" runtime http-credential ")))
 }
 
 /// `Bearer ${AIRK_MCP_TOKEN_<ID>}` or `Bearer ${env:AIRK_MCP_TOKEN_<ID>}`.
@@ -284,14 +270,17 @@ fn recorded_collection(fields: &Map<String, Value>) -> Option<String> {
         .then(|| collection.to_string())
 }
 
-fn header<'a>(fields: &'a Map<String, Value>, name: &str) -> Result<Option<&'a str>, ()> {
-    match fields.get("headers") {
-        None => Ok(None),
-        Some(Value::Object(headers)) => match headers.get(name) {
-            None => Ok(None),
-            Some(Value::String(value)) => Ok(Some(value)),
-            Some(_) => Err(()),
-        },
+/// The members of the object `fields[table]` named `name`, compared ASCII
+/// case-insensitively as HTTP header names are; `Err` when `table` is present
+/// but not an object (manual review).
+fn header_keys(fields: &Map<String, Value>, table: &str, name: &str) -> Result<Vec<String>, ()> {
+    match fields.get(table) {
+        None => Ok(Vec::new()),
+        Some(Value::Object(headers)) => Ok(headers
+            .keys()
+            .filter(|key| key.eq_ignore_ascii_case(name))
+            .cloned()
+            .collect()),
         Some(_) => Err(()),
     }
 }
@@ -306,19 +295,20 @@ pub(super) enum Recognized {
         collection: Option<String>,
     },
     Https {
-        id: Incarnation,
         url: String,
-        /// The helper executable (Claude-style and Codex entries).
-        helper: Option<String>,
-        /// The U92 helper proves AIRK wrote the entry; VS Code entries lack one.
-        proven: bool,
+        /// The connection a legacy credential field names, when it names one.
+        id: Option<Incarnation>,
+        /// U110: the legacy credential fields the entry still carries, as
+        /// paths below the server declaration (`["headersHelper"]`,
+        /// `["headers", "Authorization"]`, …). Empty for the URL-only form.
+        stale: Vec<Vec<String>>,
     },
 }
 
-/// Whether `row` is an AIRK entry. A project entry needs an AIRK key (or the
-/// U92 helper); a user-level entry needs a verified launcher (stdio) or the
-/// U92 helper (HTTPS). VS Code user entries are recognized here but count
-/// only once the service confirms them (see `classify`).
+/// Whether `row` is an AIRK entry. A stdio entry needs a verified launcher
+/// or, in a project file, an AIRK key. An HTTPS entry (U110) needs the
+/// loopback AIRK URL plus an AIRK key or a legacy AIRK credential marker,
+/// in either scope.
 pub(super) fn recognize(
     agent: Agent,
     scope: Scope,
@@ -346,44 +336,54 @@ pub(super) fn recognize(
     if !http_url(url) {
         return None;
     }
-    let (id, helper) = match agent.parser() {
-        Parser::Codex => {
-            if fields.contains_key("bearer_token_env_var") {
+    let parser = agent.parser();
+    let (helper_field, tables): (&str, &[&str]) = match parser {
+        Parser::Codex => (
+            "http_headers_helper",
+            &["http_headers", "env_http_headers"][..],
+        ),
+        Parser::Claude | Parser::Copilot => {
+            if fields.contains_key("command")
+                || (parser == Parser::Copilot && fields.contains_key("args"))
+            {
                 return None;
             }
-            let (executable, id) = helper_connection(fields.get("http_headers_helper")?.as_str()?)?;
-            (id, Some(executable))
-        }
-        Parser::Claude => {
-            if fields.contains_key("command") {
-                return None;
-            }
-            let (executable, id) = helper_connection(fields.get("headersHelper")?.as_str()?)?;
-            match header(fields, "Authorization").ok()? {
-                None => {}
-                Some(value) if env_reference(value) == Some(id) => {}
-                Some(_) => return None,
-            }
-            (id, Some(executable))
-        }
-        Parser::Copilot => {
-            if fields.contains_key("command") || fields.contains_key("args") {
-                return None;
-            }
-            (
-                input_reference(header(fields, "Authorization").ok()??)?,
-                None,
-            )
+            ("headersHelper", &["headers"][..])
         }
     };
-    let proven = helper.is_some();
-    if scope == Scope::Project && !keyed && !proven {
+    let mut stale = Vec::new();
+    let mut id = None;
+    // An AIRK credential marker, even with a `<connection-id>` placeholder.
+    let mut marked = false;
+    if let Some(helper) = fields.get(helper_field) {
+        if let Some(command) = helper.as_str() {
+            id = helper_connection(command);
+            marked = legacy_helper(command);
+        }
+        stale.push(vec![helper_field.to_string()]);
+    }
+    if parser == Parser::Codex && fields.contains_key("bearer_token_env_var") {
+        stale.push(vec!["bearer_token_env_var".to_string()]);
+    }
+    for table in tables {
+        for key in header_keys(fields, table, "Authorization").ok()? {
+            if let Some(value) = fields
+                .get(*table)
+                .and_then(|headers| headers.get(key.as_str()))
+                .and_then(Value::as_str)
+            {
+                id = id.or_else(|| env_reference(value).or_else(|| input_reference(value)));
+                marked |= value.contains("AIRK_MCP_TOKEN_") || value.contains("airkToken_");
+            }
+            stale.push(vec![table.to_string(), key]);
+        }
+    }
+    if !keyed && !marked && id.is_none() {
         return None;
     }
     Some(Recognized::Https {
-        id,
         url: url.to_string(),
-        helper,
-        proven,
+        id,
+        stale,
     })
 }

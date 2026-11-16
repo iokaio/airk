@@ -1,71 +1,69 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Management › Agents in the Explorer (U104, U105): the coding-agent entries of
-//! this window's first folder, read with `airkctl agents list --no-user`, each
-//! open connection's service-stored default scope and agent choice
-//! (`airkctl agents info`), Connect, Disconnect, the choice switch and following.
+//! Management › Agents in the Explorer (U104, U110): connect a coding agent to
+//! this window's first folder, the agent entries of that folder
+//! (`airkctl agents list --no-user`), the MCP endpoint (`airkctl agents endpoint`)
+//! and the workspace defaults of this window's folders (`airkctl scope defaults`).
 //!
-//! Connect enrolls an **open** connection (`airkctl agents connect --open`, choice
-//! off, empty default) and immediately sets its default scope to this window's
-//! search scope (`airkctl agents default`). Connections connected here are
-//! remembered per workspace; a followed one receives every later scope the
-//! window applies or grants automatically (serialized, newest wins). A follow
-//! failure is reported on this screen and in the AIRK log; it never fails the
-//! scope change. Disconnect removes this folder's entries naming the connection
-//! and revokes an open connection no other entry names (`airkctl agents revoke`).
+//! U110: the MCP endpoint needs no credential, and agents choose their scope per
+//! call (`index_ids`, `index_set_ids`, `workspace`). Connect writes only the
+//! endpoint URL and the response-mode header (`airkctl agents connect`). The
+//! window's applied search scope becomes the **workspace default** of every folder
+//! of this window (`airkctl scope default --workspace <folder>…`; a cleared scope
+//! clears it). Runs are serialized and the newest scope wins. A failure is
+//! reported on this screen and in the AIRK log; it never fails the scope change.
 //! Every read returns the complete native reports.
 import type { AgentClient } from '../../explorerContracts';
+import type { Entry } from '../../generated/i2';
 import {
-    connectionInfo, connectOpenAgent, listAgents, openConnectionState, removeAgents, reportedConnections, revokeConnection, setAgentDefaults,
-    type AgentChoice, type AgentDefaultScope, type AgentsRunner, type OpenConnectionState,
+    agentEndpoint, agentEntries as nativeEntries, connectAgent, defaultFor, listAgents, removeAgentEntries, setWorkspaceDefault,
+    workspaceDefaultEntries, workspaceDefaults, type AgentDefaultScope, type AgentsRunner, type WorkspaceDefault,
 } from '../agents/index';
 
-const CONNECTION = /^[0-9a-f]{32}$/;
-/** workspaceState key: the open connections connected from this workspace and whether each follows the window's scope. */
-export const OPEN_AGENTS_KEY = 'airk.agents.openConnections';
-/** At most this many connections are remembered and read per screen read. */
-const MAX_CONNECTIONS = 16;
 /** The agent `agents list` names → the `--client` Management › Agents offers (U91). */
 const CLIENT_OF: Readonly<Record<string, AgentClient>> = { claude: 'claude', codex: 'codex', copilot: 'vscode' };
+const ENDPOINT_URL = /^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/;
 
 /** One recognized entry as the Agents screen lists it. */
 export interface AgentEntryView {
     readonly client: AgentClient; readonly agent: string; readonly file: string; readonly scope: string;
-    readonly serverKey: string; readonly connectionId?: string; readonly status: string | null;
+    readonly serverKey: string; readonly url?: string; readonly status: string | null;
 }
-/** One index or index set of a default scope, named from the loaded search choices when known. */
+/** One index or index set of a scope, named from the loaded search choices when known. */
 export interface ScopeItemView { readonly kind: 'index' | 'set'; readonly id: string; readonly name?: string; readonly description?: string }
 export interface FailureView { readonly code: string; readonly message: string }
-/** One connection named by this folder's entries. `open` is absent for a grant-bound connection. */
-export interface AgentConnectionView {
-    readonly connectionId: string;
-    readonly open?: OpenConnectionState & { readonly scope: ScopeItemView[] };
-    /** Remembered from a Connect in this workspace. */
-    readonly remembered: boolean;
-    /** Receives this window's search scope after every apply (open connections only). */
-    readonly follows: boolean;
-    /** The complete `agents info` answer, or why it could not be read. */
-    readonly info?: unknown; readonly infoError?: FailureView;
-    /** The last failure to pass this window's scope on (cleared by the next success). */
-    readonly followError?: FailureView;
+/** The stored workspace default that applies to one folder of this window. */
+export interface WorkspaceDefaultView {
+    readonly folder: string;
+    /** The most specific stored folder containing `folder`, or null when agents must name a scope per call. */
+    readonly stored: (WorkspaceDefault & { readonly items: ScopeItemView[] }) | null;
 }
 export interface AgentsView {
-    readonly folder: string; readonly entries: AgentEntryView[]; readonly report: unknown;
-    readonly connections: AgentConnectionView[];
-    /** The default scope Connect and following send now; null without an applied scope. */
+    /** The folder Connect writes entries for (this window's first folder). */
+    readonly folder: string;
+    /** Every folder of this window; each receives the window's applied scope as its workspace default. */
+    readonly folders: string[];
+    readonly entries: AgentEntryView[]; readonly report: unknown;
+    /** The MCP endpoint (`agents endpoint`), or why it could not be read. */
+    readonly endpoint: { readonly url: string; readonly state?: string } | null;
+    readonly endpointReport?: unknown; readonly endpointError?: FailureView;
+    /** Per window folder: the workspace default agents use when a call names no scope. */
+    readonly workspaceDefaults: WorkspaceDefaultView[];
+    readonly defaultsReport?: unknown; readonly defaultsError?: FailureView;
+    /** The scope this window passes on now; null without an applied scope. */
     readonly windowScope: { readonly index_ids: string[]; readonly project_ids: string[]; readonly items: ScopeItemView[] } | null;
+    /** The last failure to store this window's scope as the workspace default (cleared by the next success). */
+    readonly followError?: FailureView;
 }
 export interface ConnectOutcome {
-    /** `connected`: a new open connection was enrolled and its entry written. `already_connected`: this folder's
-     * entry for the client already names a remembered open connection; only its default scope was set. */
-    readonly status: 'connected' | 'already_connected';
-    readonly client: AgentClient; readonly connectionId: string;
-    /** The complete `agents connect --open` answer (absent when already connected). */
-    readonly connected?: unknown;
-    readonly file?: string; readonly changed?: boolean;
-    /** The complete `agents default` answer, or why the default scope was not set. */
-    readonly defaults?: unknown; readonly defaultsError?: FailureView;
-    readonly open?: OpenConnectionState;
-    readonly scope: ScopeItemView[] | null; readonly follows: boolean;
+    readonly status: 'connected';
+    readonly client: AgentClient;
+    /** The complete `agents connect` answer. */
+    readonly connected: unknown;
+    readonly file?: string; readonly url?: string; readonly changed?: boolean;
+    /** The window's scope, which is (or was just made) the workspace default; null without an applied scope. */
+    readonly scope: ScopeItemView[] | null;
+    /** Why the window's scope could not be stored as the workspace default. */
+    readonly defaultError?: FailureView;
 }
 
 /** What the Agents host needs of the window search scope (windowScope.ts). */
@@ -74,8 +72,8 @@ export interface AgentScopeSource {
     choiceInfo?(kind: 'index' | 'set', id: string): { name?: string; description?: string } | undefined;
     loadChoices?(): Promise<void>;
 }
-export interface AgentsStore { get<T>(key: string): T | undefined; update(key: string, value: unknown): PromiseLike<void> }
-interface RememberedConnection { connectionId: string; client: AgentClient; follow: boolean }
+/** Entry removal needs the verified CLI capability (`agents-entry-remove/1`). */
+type Runner = AgentsRunner & { readonly state?: { readonly kind: string; readonly capabilities?: readonly string[] } };
 
 /** The connectable entries of an `agents list` report (Claude Code, Codex, VS Code), field for field. */
 export function agentEntries(report: unknown): AgentEntryView[] {
@@ -85,160 +83,108 @@ export function agentEntries(report: unknown): AgentEntryView[] {
         const client = typeof entry.agent === 'string' ? CLIENT_OF[entry.agent] : undefined;
         if (!client || typeof entry.file !== 'string' || typeof entry.serverKey !== 'string') { return []; }
         return [{ client, agent: String(entry.agent), file: entry.file, scope: typeof entry.scope === 'string' ? entry.scope : 'project', serverKey: entry.serverKey,
-            ...(typeof entry.connectionId === 'string' && CONNECTION.test(entry.connectionId) ? { connectionId: entry.connectionId } : {}),
+            ...(typeof entry.url === 'string' && ENDPOINT_URL.test(entry.url) ? { url: entry.url } : {}),
             status: typeof entry.status === 'string' ? entry.status : null }];
     });
+}
+/** The URL and state of an `agents endpoint` answer; undefined when it names no loopback MCP URL. */
+export function endpointOf(answer: unknown): { url: string; state?: string } | undefined {
+    const record = answer && typeof answer === 'object' ? answer as Record<string, unknown> : {};
+    const inner = record.endpoint && typeof record.endpoint === 'object' ? record.endpoint as Record<string, unknown> : record;
+    return typeof inner.url === 'string' && ENDPOINT_URL.test(inner.url)
+        ? { url: inner.url, ...(typeof inner.state === 'string' ? { state: inner.state } : {}) } : undefined;
 }
 function failure(error: unknown): FailureView {
     const code = (error as { code?: unknown })?.code;
     return { code: typeof code === 'string' && /^[A-Za-z0-9_]{1,128}$/.test(code) ? code : 'agent_command_failed',
         message: (error instanceof Error ? error.message : String(error)).slice(0, 600) };
 }
-const scopeKey = (scope: AgentDefaultScope | null) => scope ? JSON.stringify([[...scope.index_ids].sort(), [...scope.project_ids].sort()]) : 'clear';
-function remembered(value: unknown): RememberedConnection[] {
-    return (Array.isArray(value) ? value : []).flatMap(item => {
-        const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
-        return typeof record.connectionId === 'string' && CONNECTION.test(record.connectionId) && typeof record.follow === 'boolean'
-            && (record.client === 'claude' || record.client === 'codex' || record.client === 'vscode')
-            ? [{ connectionId: record.connectionId, client: record.client as AgentClient, follow: record.follow }] : [];
-    }).slice(0, MAX_CONNECTIONS);
-}
+const scopeKey = (folders: readonly string[], scope: AgentDefaultScope | null) =>
+    JSON.stringify([[...folders].sort(), scope ? [[...scope.index_ids].sort(), [...scope.project_ids].sort()] : 'clear']);
 
 export class WindowAgents {
-    /** The scope the follower passes on next (newest wins) and the run in flight. */
+    /** The scope passed on next (newest wins) and the run in flight. */
     private pending?: { scope: AgentDefaultScope | null; user: boolean };
     private running?: Promise<void>;
-    /** Per connection: the scope last passed on successfully, and the last follow failure. */
-    private readonly sent = new Map<string, string>();
-    private readonly followErrors = new Map<string, FailureView>();
+    /** The folders and scope last stored successfully, and the last failure. */
+    private sent?: string;
+    private followError?: FailureView;
 
-    constructor(private readonly runner: AgentsRunner, private readonly folder: () => string | undefined,
+    constructor(private readonly runner: Runner, private readonly folders: () => readonly string[],
         private readonly requireReady: () => void, private readonly log: (line: string) => void = () => {},
-        private readonly options: { store?: AgentsStore; scope?: AgentScopeSource } = {}) {}
+        private readonly options: { scope?: AgentScopeSource } = {}) {}
 
     private requireFolder(): string {
-        const folder = this.folder();
+        const folder = this.folders()[0];
         if (!folder) { throw Object.assign(new Error('Open a folder in VS Code to connect coding agents to it.'), { code: 'NO_PROJECT' }); }
         return folder;
     }
-    private remembered(): RememberedConnection[] { return remembered(this.options.store?.get(OPEN_AGENTS_KEY)); }
-    private async remember(records: RememberedConnection[]): Promise<void> { await this.options.store?.update(OPEN_AGENTS_KEY, records.slice(-MAX_CONNECTIONS)); }
-    private requireConnection(connectionId: string): void {
-        if (!CONNECTION.test(connectionId)) { throw Object.assign(new Error('The connection identity is invalid.'), { code: 'INVALID_MESSAGE' }); }
-    }
-    private items(scope: AgentDefaultScope): ScopeItemView[] {
+    private items(indexIds: readonly string[], setIds: readonly string[]): ScopeItemView[] {
         const item = (kind: 'index' | 'set', id: string): ScopeItemView => ({ kind, id, ...this.options.scope?.choiceInfo?.(kind, id) });
-        return [...scope.project_ids.map(id => item('set', id)), ...scope.index_ids.map(id => item('index', id))];
+        return [...setIds.map(id => item('set', id)), ...indexIds.map(id => item('index', id))];
     }
 
-    /** This folder's project-level agent entries, each named connection's defaults and the window's scope, with the complete native reports. */
+    /** This folder's agent entries, the endpoint, the workspace defaults of this window's folders and the window's scope. */
     async read(): Promise<AgentsView> {
         this.requireReady();
-        const folder = this.requireFolder();
+        const folder = this.requireFolder(), folders = [...this.folders()];
         const report = await listAgents(this.runner, [folder], false);
-        const entries = agentEntries(report), saved = this.remembered();
+        let endpointReport: unknown, endpointError: FailureView | undefined;
+        try { endpointReport = await agentEndpoint(this.runner); } catch (error) { endpointError = failure(error); }
+        let defaultsReport: unknown, defaultsError: FailureView | undefined, stored: WorkspaceDefault[] = [];
+        try { defaultsReport = await workspaceDefaults(this.runner); stored = workspaceDefaultEntries(defaultsReport); }
+        catch (error) { defaultsError = failure(error); }
         await this.options.scope?.loadChoices?.();
-        const ids = [...new Set(entries.flatMap(entry => entry.connectionId ? [entry.connectionId] : []))].slice(0, MAX_CONNECTIONS);
-        const connections: AgentConnectionView[] = [];
-        for (const connectionId of ids) {
-            const record = saved.find(item => item.connectionId === connectionId), followError = this.followErrors.get(connectionId);
-            let info: unknown, infoError: FailureView | undefined;
-            try { info = await connectionInfo(this.runner, connectionId); } catch (error) { infoError = failure(error); }
-            const open = info && typeof info === 'object' ? openConnectionState((info as Record<string, unknown>).open) : undefined;
-            connections.push({ connectionId, remembered: !!record, follows: !!open && record?.follow === true,
-                ...(open ? { open: { ...open, scope: this.items({ index_ids: open.default_index_ids, project_ids: open.default_index_set_ids }) } } : {}),
-                ...(info !== undefined ? { info } : {}), ...(infoError ? { infoError } : {}), ...(followError ? { followError } : {}) });
-        }
         const scope = this.options.scope?.agentDefaultScope();
-        return { folder, entries, report, connections,
-            windowScope: scope ? { index_ids: [...scope.index_ids], project_ids: [...scope.project_ids], items: this.items(scope) } : null };
+        return { folder, folders, entries: agentEntries(report), report,
+            endpoint: endpointOf(endpointReport) ?? null,
+            ...(endpointReport !== undefined ? { endpointReport } : {}), ...(endpointError ? { endpointError } : {}),
+            workspaceDefaults: folders.map(item => {
+                const entry = defaultsError ? undefined : defaultFor(stored, item);
+                return { folder: item, stored: entry ? { ...entry, items: this.items(entry.index_ids, entry.index_set_ids) } : null };
+            }),
+            ...(defaultsReport !== undefined ? { defaultsReport } : {}), ...(defaultsError ? { defaultsError } : {}),
+            windowScope: scope ? { index_ids: [...scope.index_ids], project_ids: [...scope.project_ids], items: this.items(scope.index_ids, scope.project_ids) } : null,
+            ...(this.followError ? { followError: this.followError } : {}) };
     }
 
-    /** (U105) Connect `client` for this folder with an open connection whose default scope is this window's search scope. */
-    async connectAgentToScope(client: AgentClient): Promise<ConnectOutcome> {
+    /** (U110) Write `client`'s entry for this folder (URL and response mode only) and make sure this window's
+     * applied scope is the workspace default of its folders. */
+    async connect(client: AgentClient): Promise<ConnectOutcome> {
         this.requireReady();
         const folder = this.requireFolder();
+        const connected = await connectAgent(this.runner, client, folder);
+        const answer = connected && typeof connected === 'object' ? connected as Record<string, unknown> : {};
+        this.log(`AIRK: agents connect --client ${client} --project ${folder} completed.`);
         const scope = this.options.scope?.agentDefaultScope();
-        // An entry for this client that already names a remembered open connection is kept: only its default changes.
-        const saved = this.remembered();
-        const existing = agentEntries(await listAgents(this.runner, [folder], false))
-            .find(entry => entry.client === client && entry.connectionId && saved.some(item => item.connectionId === entry.connectionId));
-        let connectionId: string, connected: unknown, file: string | undefined, changed: boolean | undefined, open: OpenConnectionState | undefined;
-        if (existing?.connectionId) {
-            connectionId = existing.connectionId; file = existing.file;
-        } else {
-            connected = await connectOpenAgent(this.runner, client, folder);
-            const answer = connected && typeof connected === 'object' ? connected as Record<string, unknown> : {};
-            if (typeof answer.connectionId !== 'string' || !CONNECTION.test(answer.connectionId)) {
-                throw Object.assign(new Error('agents connect --open answered without a connection identity.'), { code: 'agents_connect_malformed', nativeResponse: answer });
-            }
-            connectionId = answer.connectionId;
-            file = typeof answer.file === 'string' ? answer.file : undefined;
-            changed = typeof answer.changed === 'boolean' ? answer.changed : undefined;
-            open = openConnectionState(answer.open);
-            this.log(`AIRK: agents connect --open --client ${client} enrolled connection ${connectionId}.`);
-        }
-        await this.remember([...saved.filter(item => item.connectionId !== connectionId), { connectionId, client, follow: true }]);
-        let defaults: unknown, defaultsError: FailureView | undefined;
-        if (scope) {
-            try {
-                defaults = await setAgentDefaults(this.runner, connectionId, { scope });
-                this.sent.set(connectionId, scopeKey(scope)); this.followErrors.delete(connectionId);
-                const stored = defaults && typeof defaults === 'object' ? openConnectionState((defaults as Record<string, unknown>).open) : undefined;
-                if (stored) { open = stored; }
-            } catch (error) {
-                defaultsError = failure(error);
-                this.followErrors.set(connectionId, defaultsError);
-                this.log(`AIRK: the default scope of connection ${connectionId} was not set (${defaultsError.code}): ${defaultsError.message}`);
-            }
-        }
-        return { status: existing ? 'already_connected' : 'connected', client, connectionId,
-            ...(connected !== undefined ? { connected } : {}), ...(file ? { file } : {}), ...(changed !== undefined ? { changed } : {}),
-            ...(defaults !== undefined ? { defaults } : {}), ...(defaultsError ? { defaultsError } : {}), ...(open ? { open } : {}),
-            scope: scope ? this.items(scope) : null, follows: true };
+        if (scope) { await this.followScope(scope, true); }
+        return { status: 'connected', client, connected,
+            ...(typeof answer.file === 'string' ? { file: answer.file } : {}),
+            ...(typeof answer.url === 'string' ? { url: answer.url } : {}),
+            ...(typeof answer.changed === 'boolean' ? { changed: answer.changed } : {}),
+            scope: scope ? this.items(scope.index_ids, scope.project_ids) : null,
+            ...(scope && this.followError ? { defaultError: this.followError } : {}) };
     }
 
-    /** (U105) Turn the agent's choice on (it may list and pick any index or index set) or off (default scope only). */
-    async setChoice(connectionId: string, choice: AgentChoice): Promise<{ connectionId: string; choice: AgentChoice; result: unknown }> {
+    /** Remove this folder's project-level entries for `client` (`agents remove --entry`, complete native rows). */
+    async disconnect(client: AgentClient): Promise<{ removed: unknown }> {
         this.requireReady();
-        this.requireConnection(connectionId);
-        if (choice !== 'off' && choice !== 'on') { throw Object.assign(new Error('The agent choice is off or on.'), { code: 'INVALID_MESSAGE' }); }
-        const result = await setAgentDefaults(this.runner, connectionId, { choice });
-        this.log(`AIRK: agents default --connection-id ${connectionId} --agent-choice ${choice} completed.`);
-        return { connectionId, choice, result };
-    }
-
-    /** (U105) Follow (or stop following) this window's search scope; following passes the current scope on now. */
-    async setFollow(connectionId: string, follow: boolean): Promise<{ connectionId: string; follow: boolean; result?: unknown; error?: FailureView }> {
-        this.requireReady();
-        this.requireConnection(connectionId);
-        const saved = this.remembered(), record = saved.find(item => item.connectionId === connectionId);
-        let client = record?.client;
-        if (!client) {
-            const entry = agentEntries(await listAgents(this.runner, [this.requireFolder()], false)).find(item => item.connectionId === connectionId);
-            if (!entry) { throw Object.assign(new Error('No entry in this folder names that connection.'), { code: 'agent_connection_not_listed' }); }
-            client = entry.client;
-        }
-        await this.remember([...saved.filter(item => item.connectionId !== connectionId), { connectionId, client, follow }]);
-        if (!follow) { this.followErrors.delete(connectionId); return { connectionId, follow }; }
-        const scope = this.options.scope?.agentDefaultScope();
-        if (!scope) { return { connectionId, follow }; }
-        try {
-            const result = await setAgentDefaults(this.runner, connectionId, { scope });
-            this.sent.set(connectionId, scopeKey(scope)); this.followErrors.delete(connectionId);
-            return { connectionId, follow, result };
-        } catch (error) {
-            const reason = failure(error);
-            this.followErrors.set(connectionId, reason);
-            return { connectionId, follow, error: reason };
-        }
+        const folder = this.requireFolder();
+        const runner = this.runner;
+        if (!runner.state) { throw Object.assign(new Error('Selected agent removal requires verified CLI support; update AIRK Service and try again.'), { code: 'CAPABILITY_DISABLED' }); }
+        const rows = nativeEntries(await listAgents(runner, [folder], false))
+            .filter((entry: Entry) => entry.scope === 'project' && CLIENT_OF[entry.agent] === client);
+        if (!rows.length) { throw Object.assign(new Error('This folder has no AIRK entry for that agent.'), { code: 'agent_entry_not_listed' }); }
+        const removed = await removeAgentEntries({ session: runner.session, state: runner.state }, [folder], rows);
+        this.log(`AIRK: agents remove --client ${client} removed ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}.`);
+        return { removed };
     }
 
     /**
-     * (U105) The window's scope changed: pass it on to every followed open connection of this workspace
-     * (`null`: the user cleared it, so the default scope is cleared). Runs are serialized; a newer scope
-     * replaces one not yet started. An unchanged automatic or restored scope is not sent again.
-     * Failures are recorded per connection and logged; the returned promise never rejects.
+     * (U110) The window's scope changed: store it as the workspace default of every folder of this window
+     * (`null`: the user cleared it, so the default is cleared). Runs are serialized; a newer scope replaces
+     * one not yet started. An unchanged automatic or restored scope is not sent again. A failure is
+     * recorded and logged; the returned promise never rejects.
      */
     followScope(scope: AgentDefaultScope | null, user: boolean): Promise<void> {
         this.pending = { scope, user };
@@ -254,50 +200,19 @@ export class WindowAgents {
         this.running = run;
         return run;
     }
-    /** Resolves when no follow run is in flight. */
+    /** Resolves when no run is in flight. */
     settled(): Promise<void> { return this.running ?? Promise.resolve(); }
     private async passOn(scope: AgentDefaultScope | null, user: boolean): Promise<void> {
-        const key = scopeKey(scope);
-        for (const record of this.remembered().filter(item => item.follow)) {
-            if (!user && this.sent.get(record.connectionId) === key) { continue; }
-            try {
-                await setAgentDefaults(this.runner, record.connectionId, { scope: scope ?? { index_ids: [], project_ids: [] } });
-                this.sent.set(record.connectionId, key); this.followErrors.delete(record.connectionId);
-            } catch (error) {
-                const reason = failure(error);
-                this.followErrors.set(record.connectionId, reason);
-                this.log(`AIRK: connection ${record.connectionId} did not receive this window's search scope (${reason.code}): ${reason.message}`);
-            }
-        }
-    }
-
-    /** Remove this folder's entries naming `connectionId`; other servers and settings stay. An open connection
-     * that no remaining entry (this folder or the user's files) names is revoked. */
-    async disconnect(connectionId: string): Promise<{ removed: unknown; revoked?: unknown; revokeError?: FailureView; kept?: string }> {
-        this.requireReady();
-        this.requireConnection(connectionId);
-        const folder = this.requireFolder(), saved = this.remembered();
-        let open = saved.some(item => item.connectionId === connectionId);
-        if (!open) {
-            try { const info = await connectionInfo(this.runner, connectionId); open = !!openConnectionState((info as Record<string, unknown> | null)?.open); }
-            catch { open = false; }
-        }
-        const removed = await removeAgents(this.runner, [folder], connectionId);
-        this.log(`AIRK: agents remove --connection-id ${connectionId} completed.`);
-        await this.remember(saved.filter(item => item.connectionId !== connectionId));
-        this.sent.delete(connectionId); this.followErrors.delete(connectionId);
-        if (!open) { return { removed }; }
+        const folders = [...this.folders()];
+        if (!folders.length) { return; }
+        const key = scopeKey(folders, scope);
+        if (!user && this.sent === key) { return; }
         try {
-            if (reportedConnections(await listAgents(this.runner, [folder], true)).includes(connectionId)) {
-                return { removed, kept: 'Another agent entry still names this connection, so it was not revoked.' };
-            }
-            const revoked = await revokeConnection(this.runner, connectionId);
-            this.log(`AIRK: agents revoke --connection-id ${connectionId} completed.`);
-            return { removed, revoked };
+            await setWorkspaceDefault(this.runner, folders, scope);
+            this.sent = key; this.followError = undefined;
         } catch (error) {
-            const reason = failure(error);
-            this.log(`AIRK: connection ${connectionId} was not revoked (${reason.code}): ${reason.message}`);
-            return { removed, revokeError: reason };
+            this.followError = failure(error);
+            this.log(`AIRK: this window's search scope was not stored as the workspace default (${this.followError.code}): ${this.followError.message}`);
         }
     }
 }

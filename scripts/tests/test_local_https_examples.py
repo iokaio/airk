@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Execute the Node/Windows PowerShell examples against isolated actual TLS."""
+"""Execute the Node/Windows PowerShell examples against isolated actual TLS (U110: no token)."""
 from contextlib import contextmanager
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,7 +41,7 @@ class LocalHttpsExamplesTests(unittest.TestCase):
         subprocess.run([BASE.OPENSSL, "x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "wrong.pem", "-days", "1", "-sha256", "-extfile", "wrong.conf"], cwd=cls.root, check=True, capture_output=True, timeout=30)
         subprocess.run([BASE.OPENSSL, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1", "-config", "ca.conf", "-keyout", "other.key", "-out", "other.pem"], cwd=cls.root, check=True, capture_output=True, timeout=30)
         (cls.root / "other.pem").chmod(0o600)
-        for name in ("ca.pem", "other.pem", "credential.token"):
+        for name in ("ca.pem", "other.pem"):
             protect_file(cls.root / name)
 
     tearDownClass = classmethod(BASE.ActualHttpsFixtureTests.tearDownClass.__func__)
@@ -102,7 +102,9 @@ class LocalHttpsExamplesTests(unittest.TestCase):
         thread.start()
         digest = lambda name: hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root / name).read_text())).hexdigest()
         try:
-            yield {"schema": 1, "connection_id": self.identity, "selection": {"kind": "scoped", "selection": {"namespace": "33" * 16}}, "endpoint": {"schema": 1, "url": "https://127.0.0.1:" + str(server.server_port) + "/mcp", "state": "ready", "ca_sha256": digest("ca.pem")}, "ca_certificate_file": str(self.root / "ca.pem"), "credential_file": str(self.root / "credential.token")}, observed
+            # The published endpoint descriptor fields the examples read, and
+            # the CA file published beside it in <control>/http-1.
+            yield {"endpoint": {"schema": 1, "url": "https://127.0.0.1:" + str(server.server_port) + "/mcp", "state": "ready", "ca_sha256": digest("ca.pem")}, "ca": "ca.pem"}, observed
         finally:
             server.shutdown()
             server.server_close()
@@ -110,20 +112,31 @@ class LocalHttpsExamplesTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
 
     def clients(self):
-        yield "node", [NODE, str(ROOT / "examples/local_https_client.cjs")], ["--connection", "--tool", "--arguments"]
+        yield "node", [NODE, str(ROOT / "examples/local_https_client.cjs")], ["--control-dir", "--tool", "--arguments", "--index", "--set", "--workspace"]
         if os.name == "nt" and PWSH:
-            yield "pwsh", [PWSH, "-NoLogo", "-NoProfile", "-File", str(ROOT / "examples/local_https_client.ps1")], ["-Connection", "-Tool", "-Arguments"]
+            yield "pwsh", [PWSH, "-NoLogo", "-NoProfile", "-File", str(ROOT / "examples/local_https_client.ps1")], ["-ControlDir", "-Tool", "-Arguments", "-Index", "-Set", "-Workspace"]
         else:
             with self.subTest(client="pwsh"):
                 self.skipTest("PowerShell Windows protected-file reader requires Windows and pwsh")
 
-    def run_client(self, client, connection, arguments=None, env=None):
+    def control(self, connection, prefix=""):
+        """A fresh service control directory holding http-1/endpoint.json and ca.pem."""
+        control = self.root / ("control-" + uuid.uuid4().hex)
+        native = control / "http-1"
+        native.mkdir(parents=True)
+        (native / "endpoint.json").write_text(json.dumps(connection["endpoint"]), encoding="utf-8")
+        shutil.copyfile(self.root / connection["ca"], native / "ca.pem")
+        for name in ("endpoint.json", "ca.pem"):
+            protect_file(native / name)
+        return prefix + str(control)
+
+    def run_client(self, client, connection, arguments=None, env=None, scope=None, prefix=""):
         name, command, flags = client
         run_id = uuid.uuid4().hex
-        saved = self.root / (name + "-" + run_id + "-connection.json")
-        saved.write_text(json.dumps(connection), encoding="utf-8")
-        protect_file(saved)
-        command = [*command, flags[0], str(saved)]
+        command = [*command, flags[0], self.control(connection, prefix)]
+        for flag, values in zip(flags[3:], scope or ()):
+            for value in ([values] if isinstance(values, str) else values):
+                command += [flag, value]
         if arguments is not None:
             encoded = json.dumps(arguments)
             if len(encoded) > 20000:
@@ -134,9 +147,7 @@ class LocalHttpsExamplesTests(unittest.TestCase):
             else:
                 command += [flags[1], "search", flags[2], encoded]
         environment = {**os.environ, "HTTP_PROXY": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1", **(env or {})}
-        result = subprocess.run(command, capture_output=True, text=True, timeout=20, env=environment)
-        self.assertNotIn((self.root / "credential.token").read_text(), result.stdout + result.stderr)
-        return result
+        return subprocess.run(command, capture_output=True, text=True, timeout=20, env=environment)
 
     def test_real_tls_complete_get_post_refusal_and_tool_error_without_replay(self):
         for client in self.clients():
@@ -150,23 +161,43 @@ class LocalHttpsExamplesTests(unittest.TestCase):
                         self.assertEqual(body, {"error": {"code": "fixture_refused", "future_detail": {"retained": True}}})
                     else:
                         self.assertEqual(body, {"content": [], "structuredContent": {"arguments": args, "future_field": {"retained": True}}, "isError": mode == "tool_error"})
-                    self.assertEqual(observed, [("POST", "/api/v1/tools/search", "Bearer " + (self.root / "credential.token").read_text(), args)])
+                    self.assertEqual(observed, [("POST", "/api/v1/tools/search", None, args)])
             with self.subTest(client=client[0], mode="catalog"), self.server() as (connection, observed):
                 result = self.run_client(client, connection)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(observed[0][:2], ("GET", "/api/v1/tools"))
-                self.assertEqual(len(observed), 1)
+                self.assertEqual(observed, [("GET", "/api/v1/tools", None, None)])
 
-    def test_ca_and_credential_identity_crosses_and_wrong_ip_send_no_headers(self):
+    def test_scope_options_are_merged_into_tool_arguments(self):
+        workspace = str(self.root)
         for client in self.clients():
-            for mode in ("ca_digest", "credential", "untrusted", "ip"):
+            # PowerShell -File binds one value per parameter; Node repeats flags.
+            indexes = ["alpha"] if client[0] == "pwsh" else ["alpha", "beta"]
+            with self.subTest(client=client[0]), self.server() as (connection, observed):
+                args = {"query": "original fictional evidence", "index_ids": ["alpha"]}
+                result = self.run_client(client, connection, args, scope=(indexes, "team", workspace))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {"query": "original fictional evidence", "index_ids": indexes, "index_set_ids": ["team"], "workspace": workspace}
+                self.assertEqual(observed, [("POST", "/api/v1/tools/search", None, expected)])
+            for scope in ((["alpha"], (), "relative-folder"), ((), (), str(self.root) + "-other")):
+                with self.subTest(client=client[0], refused=scope), self.server() as (connection, observed):
+                    result = self.run_client(client, connection, {"workspace": str(self.root)}, scope=scope)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(observed, [])
+            with self.subTest(client=client[0], refused="scope without tool"), self.server() as (connection, observed):
+                result = self.run_client(client, connection, scope=(["alpha"],))
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(observed, [])
+
+    def test_ca_identity_crosses_unready_endpoint_and_wrong_ip_send_no_request(self):
+        for client in self.clients():
+            for mode in ("ca_digest", "not_ready", "untrusted", "ip"):
                 with self.subTest(client=client[0], mode=mode), self.server(wrong_ip=mode == "ip") as (connection, observed):
                     if mode == "ca_digest":
                         connection["endpoint"]["ca_sha256"] = "00" * 32
-                    elif mode == "credential":
-                        connection["connection_id"] = "44" * 16
+                    elif mode == "not_ready":
+                        connection["endpoint"]["state"] = "stopping"
                     elif mode == "untrusted":
-                        connection["ca_certificate_file"] = str(self.root / "other.pem")
+                        connection["ca"] = "other.pem"
                         connection["endpoint"]["ca_sha256"] = hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root / "other.pem").read_text())).hexdigest()
                     result = self.run_client(client, connection, {})
                     self.assertNotEqual(result.returncode, 0)
@@ -186,19 +217,17 @@ class LocalHttpsExamplesTests(unittest.TestCase):
         # Trust the actual fixture issuer through an existing Node extra-root
         # source while the native metadata names a different valid local CA.
         with self.server() as (connection, observed):
-            connection["ca_certificate_file"] = str(self.root / "other.pem")
+            connection["ca"] = "other.pem"
             connection["endpoint"]["ca_sha256"] = hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root / "other.pem").read_text())).hexdigest()
             result = self.run_client(next(self.clients()), connection, {}, {"NODE_EXTRA_CA_CERTS": str(self.root / "ca.pem")})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(observed), 1)
 
     @unittest.skipUnless(os.name == "nt", "Native Windows namespace path aliases")
-    def test_native_windows_namespace_file_references(self):
+    def test_native_windows_namespace_control_directory(self):
         for client in self.clients():
             with self.subTest(client=client[0]), self.server() as (connection, observed):
-                for key in ("ca_certificate_file", "credential_file"):
-                    connection[key] = "\\\\?\\" + connection[key]
-                result = self.run_client(client, connection, {})
+                result = self.run_client(client, connection, {}, prefix="\\\\?\\")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(observed), 1)
 
