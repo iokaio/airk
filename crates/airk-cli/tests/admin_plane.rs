@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Platforms with a same-user peer observer (review H1); elsewhere the admin
 /// API is refused with `admin_peer_refused` (fail closed).
-const PEER_PROOF: bool = cfg!(any(windows, target_os = "linux"));
+const PEER_PROOF: bool = cfg!(any(windows, target_os = "linux", target_os = "macos"));
 
 struct Reply {
     status: u16,

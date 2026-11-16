@@ -250,7 +250,18 @@ fn validate_roster(roster: &Roster, index: IndexId) -> Result<()> {
         for mode in &row.modes {
             let args = &mode.arguments;
             ensure!(
-                args.is_object()
+                args.as_object()
+                    .is_some_and(|object| object.keys().all(|key| matches!(
+                        key.as_str(),
+                        "query"
+                            | "mode"
+                            | "limit"
+                            | "max_bytes"
+                            | "response_mode"
+                            | "path_prefix"
+                            | "project_ids"
+                            | "index_ids"
+                    )))
                     && args["query"] == row.query
                     && args["mode"] == mode.mode
                     && args["limit"] == 10
@@ -273,6 +284,120 @@ fn validate_roster(roster: &Roster, index: IndexId) -> Result<()> {
     }
     Ok(())
 }
+// A scoped singleton is a current canonical response, not a combined wire envelope.
+// Validate its typed owners without altering any opaque result/verification fields.
+fn validate_singleton_search(input: &Input, mode: &Mode, body: &Value) -> Result<()> {
+    ensure!(
+        body.get("schema").is_none()
+            && mode
+                .arguments
+                .as_object()
+                .is_some_and(|arguments| arguments.len() == 5
+                    && arguments.keys().all(|key| matches!(
+                        key.as_str(),
+                        "query" | "mode" | "limit" | "max_bytes" | "response_mode"
+                    ))),
+        "singleton capture requires the original implicit single-index request"
+    );
+    let response: airk_core::SearchResponse = serde_json::from_value(body.clone())?;
+    ensure!(
+        response.publication.as_ref() == Some(&input.expected_publication)
+            && response.collection == input.expected_publication.collection
+            && response.generation == input.expected_publication.generation,
+        "singleton publication/collection/generation differs"
+    );
+    let scope: airk_core::scoped_reads::ScopeObservation =
+        serde_json::from_value(body["scope_observation"].clone())?;
+    scope.validate()?;
+    ensure!(
+        scope.members.len() == 1
+            && scope.members[0].index_id == input.expected_index
+            && body["read_scope"]["index_ids"] == json!([input.expected_index]),
+        "singleton actual native index/disclosed read scope differs"
+    );
+    let verification: airk_core::verification::VerificationReceipt =
+        serde_json::from_value(body["source_verification"].clone())?;
+    ensure!(
+        verification.schema == "airk.saved-source-verification/1",
+        "current native saved-source receipt required"
+    );
+    airk_core::verification::validate_projection(body)?;
+    for origin in &verification.origins {
+        ensure!(
+            origin.index_id.as_deref() == Some(input.expected_index.to_string().as_str())
+                && origin.legacy_project == input.project.binding.to_string()
+                && origin.collection == input.expected_publication.collection
+                && origin.incarnation == input.expected_publication.incarnation
+                && origin.publication == input.expected_publication.token,
+            "singleton source origin/index/publication differs"
+        );
+    }
+    for source in &verification.sources {
+        let path = source
+            .source_relative_path
+            .as_ref()
+            .context("native source-relative path absent")?;
+        let expected = input
+            .expected_physical_sources
+            .get(path)
+            .context("native source outside original roster")?;
+        ensure!(
+            source.original_root.as_deref() == Some(input.project.root.as_str())
+                && source.path.as_ref() == Some(path)
+                && source
+                    .expected_hash
+                    .is_none_or(|hash| hash == expected.sha256)
+                && source
+                    .observed_hash
+                    .is_none_or(|hash| hash == expected.sha256)
+                && verification
+                    .origins
+                    .iter()
+                    .any(|origin| origin.id == source.origin_id)
+                && source
+                    .source_root_id
+                    .as_ref()
+                    .is_some_and(|root| scope.members[0]
+                        .source_root_ids
+                        .iter()
+                        .any(|id| id.to_string() == *root)),
+            "singleton native source root/hash/origin differs"
+        );
+    }
+    let check_citation = |citation: &airk_core::Citation| -> Result<()> {
+        ensure!(
+            input
+                .expected_physical_sources
+                .get(&citation.path)
+                .is_some_and(|expected| expected.sha256.to_string() == citation.content_hash),
+            "singleton citation source/hash differs"
+        );
+        Ok(())
+    };
+    for hit in &response.hits {
+        check_citation(&hit.citation)?;
+    }
+    for reference in &verification.references {
+        let citation: airk_core::Citation = serde_json::from_value(
+            body.pointer(&reference.result_pointer)
+                .context("native checked reference absent")?
+                .clone(),
+        )?;
+        check_citation(&citation)?;
+        ensure!(
+            verification
+                .sources
+                .iter()
+                .any(|source| source.id == reference.source_id
+                    && source.source_relative_path.as_deref() == Some(citation.path.as_str())),
+            "singleton reference rebound to another source"
+        );
+    }
+    // Budget-exhausted/partial/empty/readiness/fallback observations stay opaque.
+    // Independent physical source_census still checks the full original roster.
+    Ok(())
+}
+
 // Preserve opaque arguments/envelopes, using Core's existing materializer only for identity checks.
 fn validate_mode_capture(input: &Input, roster: &Roster, capture: &Value) -> Result<bool> {
     ensure!(
@@ -330,25 +455,29 @@ fn validate_mode_capture(input: &Input, roster: &Roster, capture: &Value) -> Res
                 .get("native_result")
                 .or_else(|| row.pointer("/native_attempt/native_result"))
             {
-                ensure!(
-                    body["schema"] == airk_core::combined_reads::COMBINED_READ_SCHEMA,
-                    "current U110 capture required"
-                );
-                let logical = airk_core::combined_reads::materialize_combined_read(body)?;
-                let members = logical["publication_vector"]["members"]
-                    .as_array()
-                    .context("publication members absent")?;
-                ensure!(
-                    members.len() == 1 && members[0]["index_id"] == json!(input.expected_index),
-                    "actual index identity differs"
-                );
-                if !members[0]["publication"].is_null() {
-                    ensure!(
-                        members[0]["publication"] == json!(input.expected_publication),
-                        "pre-stop mode publication differs from frozen comparison"
-                    );
+                if body.get("schema").is_none() {
+                    validate_singleton_search(input, mode, body)?;
                 } else {
-                    complete = false;
+                    ensure!(
+                        body["schema"] == airk_core::combined_reads::COMBINED_READ_SCHEMA,
+                        "current U110 capture required"
+                    );
+                    let logical = airk_core::combined_reads::materialize_combined_read(body)?;
+                    let members = logical["publication_vector"]["members"]
+                        .as_array()
+                        .context("publication members absent")?;
+                    ensure!(
+                        members.len() == 1 && members[0]["index_id"] == json!(input.expected_index),
+                        "actual index identity differs"
+                    );
+                    if !members[0]["publication"].is_null() {
+                        ensure!(
+                            members[0]["publication"] == json!(input.expected_publication),
+                            "pre-stop mode publication differs from frozen comparison"
+                        );
+                    } else {
+                        complete = false;
+                    }
                 }
             } else {
                 complete = false;
@@ -913,5 +1042,237 @@ fn ann_query_source_census_refuses_changed_missing_and_extra_files() -> Result<(
     std::fs::remove_file(root.join("extra.txt"))?;
     std::fs::remove_file(path)?;
     assert!(source_census(&root, &expected, deadline).is_err());
+    Ok(())
+}
+
+// Independent literal capture fixture: no product call, model, filesystem or derived expected roster.
+fn capture_fixture() -> Result<(Input, Roster, Value)> {
+    let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
+    let root =
+        airk_core::index_catalog::SourceRootId::from_identity(Incarnation::from_bytes([2; 16]));
+    let hash = Sha256Digest::from_bytes([3; 32]);
+    let source_id = Sha256Digest::from_bytes([4; 32]);
+    let publication = airk_core::evidence::RevisionEnvelope::new(
+        "literal".into(),
+        airk_core::identity::RevisionToken {
+            incarnation: Incarnation::from_bytes([5; 16]),
+            generation: 7,
+            revision: Sha256Digest::from_bytes([6; 32]),
+        },
+    );
+    let pin = || Pin {
+        path: PathBuf::from("unused-literal-pin"),
+        bytes: 0,
+        sha256: hash,
+    };
+    let input = Input {
+        private_base: "unused-base".into(),
+        project: ProjectRegistration {
+            binding: hash,
+            root: "literal-root".into(),
+            data_root: "unused-data".into(),
+            collection: "literal".into(),
+        },
+        control: "unused-control".into(),
+        expected_namespace: Incarnation::from_bytes([7; 16]),
+        expected_runtime: hash,
+        expected_index: index,
+        expected_profile: "unused-profile".into(),
+        expected_publication: publication.clone(),
+        expected_head: None,
+        expected_model: None,
+        expected_indexed_sources: BTreeMap::new(),
+        expected_physical_sources: BTreeMap::from([(
+            "literal.txt".into(),
+            SourcePin {
+                bytes: 11,
+                sha256: hash,
+            },
+        )]),
+        model_directory: "unused-model".into(),
+        query_roster: pin(),
+        pre_stop_capture: pin(),
+        stop_reply: pin(),
+        stop_response_pointer: String::new(),
+        pre_stop_health: pin(),
+        health_pointer: String::new(),
+        identities: BTreeMap::from([
+            ("runtime_image".into(), pin()),
+            ("cli_image".into(), pin()),
+            ("read_budget_fixture".into(), pin()),
+        ]),
+    };
+    let citation = json!({"path":"literal.txt","content_hash":hash,"start_line":1,"end_line":1,"location":{"Lines":{"start":1,"end":1}}});
+    let verification_counts = json!({"references":1,"references_lower_bound":1,"requested_sources":1,"requested_sources_lower_bound":1,"checked_sources":0,"matched_sources":0,"mismatched_sources":0,"unchecked_sources":1,"bytes_read":0});
+    let verification_limits = json!({"max_sources":8,"max_bytes":16777216,"deadline_ms":2000,"effective_deadline_ms":2000,"stream_bytes":65536,"eof_probe_reserve_bytes":1,"concurrency":1,"reference_inventory_max":4096,"receipt_bytes_max":32768,"receipt_bytes_budget":32768,"hit":["sources"]});
+    let verification_origins = json!([{"id":"origin-0","index_id":index,"legacy_project":hash,"collection":"literal","incarnation":publication.incarnation,"publication":publication.token,"project_ids":[]}]);
+    let verification_sources = json!([{"id":source_id,"origin_id":"origin-0","source_root_id":root,"original_root":"literal-root","source_relative_path":"literal.txt","path":"literal.txt","expected_hash":hash,"observed_hash":null,"profile_digest":hash,"project_ids":[],"reference_ids":["ref-0"],"state":"budget_exhausted","reason":"sources","observed_from_unix_ms":1,"observed_to_unix_ms":2,"bytes_read":0}]);
+    let verification_references = json!([{"id":"ref-0","source_id":source_id,"result_pointer":"/hits/0/citation","kind":"citation"}]);
+    let scope_observation = json!({"schema":1,"qualifier":"selected_subset","fingerprint":hash,"selection":{"owner":"agent","scope_identity":hash,"catalog_revision":1},"members":[{"index_id":index,"memberships":[],"source_root_ids":[root],"source_revision":1,"policy_epoch":0,"policy_digest":null}]});
+    let source_verification = json!({"schema":"airk.saved-source-verification/1","method":"sha256-full-saved-source/1","mode":"report","status":"partial","scope_digest":hash,"selection_digest":hash,"observed_from_unix_ms":1,"observed_to_unix_ms":2,"publication_fence":"current","inventory_complete":true,"all_references_accounted":true,"source_rows_omitted":0,"requirements_satisfied":false,
+            "counts":verification_counts,
+            "limits":verification_limits,
+            "origins":verification_origins,
+            "sources":verification_sources,
+            "references":verification_references,"qualifications":[]});
+    let body = json!({"collection":"literal","generation":7,"publication":publication,"hits":[{"citation":citation,"text":"literal text","truncated":false}],"truncated":false,
+        "execution":{"version":1,"requested_mode":"vector","served_mode":"vector","incomplete":false},
+        "read_scope":{"index_ids":[index],"source":"named"},
+        "scope_observation":scope_observation,
+        "source_verification":source_verification});
+    let modes=["lexical","vector","hybrid"].map(|mode|Mode {mode:mode.into(),arguments:json!({"query":"literal query","mode":mode,"limit":10,"max_bytes":65536,"response_mode":"full"}),capture_pointer:format!("/representative/attempts/{}",match mode {"lexical"=>0,"vector"=>1,_=>2})});
+    let attempts=modes.iter().map(|mode|json!({"case":"literal-q1","mode":mode.mode,"input":{"query":"literal query"},"status":"ok","native_attempt":{"request":{"name":"airk_search","arguments":mode.arguments},"budget":{"operation_deadline_ms":120000,"sha256":hash}},"native_result":body})).collect::<Vec<_>>();
+    let capture = json!({"binary_sha256":hash,"binary_sha256_after":hash,"airkctl_sha256":hash,"representative":{"source_oracle":{"selection":{"index_id":index,"namespace":input.expected_namespace},"request_scope":{"index_ids":[index]}},"attempts":attempts}});
+    Ok((
+        input,
+        Roster {
+            purpose: "fresh-ungraded-step7".into(),
+            questions: vec![Question {
+                id: "literal-q1".into(),
+                query: "literal query".into(),
+                disposition: json!({"alignment":"ungraded"}),
+                modes: Vec::from(modes),
+            }],
+        },
+        capture,
+    ))
+}
+#[test]
+fn ann_query_accepts_current_singleton_partial_and_empty_without_rewriting() -> Result<()> {
+    let (input, roster, mut capture) = capture_fixture()?;
+    let before = capture.clone();
+    assert!(validate_mode_capture(&input, &roster, &capture)?);
+    assert_eq!(capture, before);
+    let row = &mut capture["representative"]["attempts"][0]["native_result"];
+    row["hits"] = json!([]);
+    row["source_verification"]["origins"] = json!([]);
+    row["source_verification"]["sources"] = json!([]);
+    row["source_verification"]["references"] = json!([]);
+    row["source_verification"]["status"] = json!("not_applicable");
+    row["source_verification"]["requirements_satisfied"] = json!(true);
+    row["source_verification"]["counts"] = json!({"references":0,"references_lower_bound":0,"requested_sources":0,"requested_sources_lower_bound":0,"checked_sources":0,"matched_sources":0,"mismatched_sources":0,"unchecked_sources":0,"bytes_read":0});
+    row["source_verification"]["limits"]["hit"] = json!([]);
+    assert!(validate_mode_capture(&input, &roster, &capture)?);
+    Ok(())
+}
+#[test]
+fn ann_query_singleton_refuses_foreign_identity_sources_selectors_and_unknown_shapes() -> Result<()>
+{
+    let (input, roster, capture) = capture_fixture()?;
+    for (pointer, value) in [
+        (
+            "/scope_observation/members/0/index_id",
+            json!(IndexId::from_identity(Incarnation::from_bytes([9; 16]))),
+        ),
+        ("/publication/generation", json!(8)),
+        ("/collection", json!("foreign")),
+        ("/generation", json!(8)),
+        (
+            "/hits/0/citation/content_hash",
+            json!(Sha256Digest::from_bytes([9; 32])),
+        ),
+        (
+            "/source_verification/origins/0/publication",
+            json!(
+                "airk-r1:09090909090909090909090909090909:1:0909090909090909090909090909090909090909090909090909090909090909"
+            ),
+        ),
+        (
+            "/source_verification/sources/0/original_root",
+            json!("foreign-root"),
+        ),
+        (
+            "/source_verification/sources/0/expected_hash",
+            json!(Sha256Digest::from_bytes([9; 32])),
+        ),
+        (
+            "/source_verification/references/0/result_pointer",
+            json!("/absent"),
+        ),
+    ] {
+        let mut changed = capture.clone();
+        *changed["representative"]["attempts"][0]["native_result"]
+            .pointer_mut(pointer)
+            .unwrap() = value;
+        assert!(
+            validate_mode_capture(&input, &roster, &changed).is_err(),
+            "{pointer}"
+        );
+    }
+    for (key, selector) in [
+        ("index_ids", json!([input.expected_index])),
+        (
+            "index_set_ids",
+            json!(["prj_09090909090909090909090909090909"]),
+        ),
+        ("workspace", json!("literal-workspace")),
+        ("project_ids", json!([])),
+        ("member_availability", json!("report")),
+        ("limit_per_index", json!(10)),
+        (
+            "origin_publication",
+            json!(input.expected_publication.token),
+        ),
+        ("project", json!("literal-binding")),
+        ("unexpected", json!(true)),
+    ] {
+        let (_, mut changed, mut body) = capture_fixture()?;
+        changed.questions[0].modes[0].arguments[key] = selector;
+        if !matches!(key, "index_ids" | "project_ids") {
+            assert!(
+                validate_roster(&changed, input.expected_index).is_err(),
+                "{key}"
+            );
+        }
+        body["representative"]["attempts"][0]["native_attempt"]["request"]["arguments"] =
+            changed.questions[0].modes[0].arguments.clone();
+        assert!(
+            validate_mode_capture(&input, &changed, &body).is_err(),
+            "{key}"
+        );
+    }
+    let mut wrong_disclosure = capture.clone();
+    wrong_disclosure["representative"]["attempts"][0]["native_result"]["read_scope"]["index_ids"] =
+        json!([]);
+    assert!(validate_mode_capture(&input, &roster, &wrong_disclosure).is_err());
+    let mut swapped = capture.clone();
+    let row = &mut swapped["representative"]["attempts"][0]["native_result"];
+    let observation = row["scope_observation"].clone();
+    row["scope_observation"] = row["read_scope"].clone();
+    row["read_scope"] = observation;
+    assert!(validate_mode_capture(&input, &roster, &swapped).is_err());
+    for value in [
+        json!({}),
+        json!({"schema":"unknown/1"}),
+        json!({"error":"not a search result"}),
+    ] {
+        let mut changed = capture.clone();
+        changed["representative"]["attempts"][0]["native_result"] = value;
+        assert!(validate_mode_capture(&input, &roster, &changed).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn ann_query_combined_capture_keeps_original_index_publication_and_partial_fences() -> Result<()> {
+    let (input, roster, mut capture) = capture_fixture()?;
+    let combined = json!({"schema":"airk.combined-read/1","members":[{"index_id":input.expected_index,"result":{}}],"ranking":[],"publication_vector":{"members":[{"index_id":input.expected_index,"publication":input.expected_publication}]}});
+    for row in capture["representative"]["attempts"]
+        .as_array_mut()
+        .unwrap()
+    {
+        row["native_result"] = combined.clone();
+    }
+    assert!(validate_mode_capture(&input, &roster, &capture)?);
+    let mut wrong = capture.clone();
+    wrong["representative"]["attempts"][0]["native_result"]["publication_vector"]["members"][0]["index_id"] =
+        json!(IndexId::from_identity(Incarnation::from_bytes([9; 16])));
+    assert!(validate_mode_capture(&input, &roster, &wrong).is_err());
+    let mut wrong = capture.clone();
+    wrong["representative"]["attempts"][0]["native_result"]["publication_vector"]["members"][0]["publication"]
+        ["generation"] = json!(8);
+    assert!(validate_mode_capture(&input, &roster, &wrong).is_err());
+    capture["representative"]["attempts"][0]["native_result"]["publication_vector"]["members"][0]
+        ["publication"] = Value::Null;
+    assert!(!validate_mode_capture(&input, &roster, &capture)?);
     Ok(())
 }

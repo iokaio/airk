@@ -70,3 +70,22 @@ exit. A genuine older complete input set is required for an upgrade claim.
 Successful original-operation wrapper reconciliation is separately labeled and
 does not establish interrupted-recovery acceptance. Mock/pure driver tests do
 not qualify a Mac artifact, installed service, model or platform outcome.
+
+
+## Research attribution legal closure
+
+From source version 1.8.207, the maintained license-notices producer also stages
+its pinned research attribution and verbatim publisher rights texts (including
+the original TechQA CDLA-Permissive-1.0 license PDF), plus the
+unchanged historical QASPER/36-paper/Requests training companions. Native C7
+packaging requires their exact bytes under `notices/research/` and
+`notices/models/`; a resealed outer inventory cannot authorize missing or changed
+legal text. Historical version fixtures retain their original legal roster.
+
+Windows staging copies that verified notice tree into
+`notices/dependencies/`, includes every file in the existing payload inventory,
+and the Inno recursive notice rule places the same bytes. No raw datasets,
+training examples or private fixtures enter the notice bundle. Research credits
+are not public-model/training admission, endorsement or model qualification.
+This is legal attribution; filesystem owners/ACLs are unchanged. Changed legal
+payloads require fresh artifact packaging/qualification before delivery.

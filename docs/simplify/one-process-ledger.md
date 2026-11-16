@@ -5637,3 +5637,164 @@ as additional ANN evidence. Client harness controls pass86/86
 (`current-client-harness-controls-r1`,4.383s). Repository checks pass3494public
 files; format and whitespace pass. Existing contributors and branch are verified
 before the local DCO milestone; no push/PR/install/publication is performed.
+
+### Actual Large storage/control proof and new native image custody (16 November)
+
+Local DCO milestone dda749cbdf77b3e2106003ff10a683ec3aec3202 records42public
+paths. Genuine all-feature Cargo JSON no-run build passes108.841s, unchanged
+native group18ee803e50e57e63af1e69057b6dcafb1829c69e5cf2d250f89256157e558bbe
+(`current-b2-test-image-cargo-json-r1`). It executes no tests. Eight exact native
+images are preserved as separate human-owned files with actual unique Cargo
+compiler-artifact rows, x64 PE32+, original/copy hashes and recorded static ORT
+linkage. No testcase count is inferred. Exact34-path reviewed native bridge
+`reviewed-native-source-bridge-b2-r1.json` SHA
+858cce13e434e8e771d8b1932235cabe0dc92b066994ce16856217afa8c33ad5
+preserves old evidence under its original source. New current-policy metadata
+must be emitted against this genuine build; references transfer only after
+complete unchanged Profile/Asset/native-template byte proof.
+
+The actual private Large ignored regression passes1/1 using the preserved
+Service image6c7d1003d327578b997f60c0c857b899bbeefc861dd86fc0f1ca6b192e47c87e.
+Whole run70.504s/native test69.07s, PID62204 actual exit0 observed. One fresh
+16,103,160,761-byte Large closure is published; real finish and restart cached
+pin each observe model.onnx.data16,089,835,520B after65,536 positive digest bytes.
+Actual Health completes while hashing in16.902ms/13.105ms, respectively. Actual
+Cancel is observed, unfinished lease custody remains held, original I/O returns
+Ready with cancellation retained, worker joins, service component exits and
+exclusive lease reacquires in both phases. Hash scopes take10.225s/10.107s;
+shutdown observation10.187s/10.087s stays inside original30s Draining. No model
+operation is dispatched, forward count stays unobserved/null, and neither a
+ManagedStopComplete nor public source/download qualification is claimed. Full
+native request/response/result pins are retained in
+`exec-20261116T052942Z/actual-large-acquisition-summary-r1.json`; original C
+protected fixture remains intact. Original historical Large failure stays failed.
+
+The user requested a compact Workbench composer and usable Plus menu. Its
+persistent context notice/question/budget controls are being moved into
+on-demand Plus panels, preserving canonical request/result semantics. This is
+an additive UI change after the B2 source freeze; its new build/DOM/installed
+checks cannot inherit B2 frontend evidence. Public human-label source audit is
+expanded beyond retained inputs; no claim of global label unavailability or
+new human adjudication is made.
+
+
+### Component measurements, platform diagnosis and public human sources (16 November)
+
+The user's reporting cadence is every two hours; the next substantive report
+is due about 2026-11-16T16:35Z (09:35 Denver). Execution T0 and hard cap remain
+unchanged. All work continues as TYAI\tdotn, SID ending1002, with ownership and
+ACLs preserved. No installed-user namespace change, push or publication occurs.
+
+B2 original Focus numeric passes twelve full512-token rows, original/same-artifact
+tolerances and argmax checks. The separate20-sample resource run passes:
+nearest-rank p95 2,116,398us, max2,207,725us; load3.518098s,
+RSS2,942,107,648B and peak Job committed3,960,651,776B below the original4GiB
+cap. Both processes exit naturally0 and owned Jobs settle empty. Canonical
+zero-NN owner/typed Execution projections each pass1/1. Proofs remain under
+`software-v2-native-execution-preparation-r3/runs/*-b2-r4/`; no task-quality,
+CAL, end-to-end latency, approval or promotion is inferred.
+
+Context Compact and Large numeric attempts each return their17/128-token rows
+then exceed the original120s operation deadline on the8192-token row. Whole
+runs156.302s/197.837s retain incomplete two-row outputs and watchdog failures;
+owned Job termination exits77 and settles empty. These are failures, not numeric
+acceptance. Their unchanged full-size resource campaigns are skipped because
+the known full-size operation already fails; no p95 is invented and no deadline,
+CPU profile or numeric threshold is silently relaxed.
+
+Neo genuine dda749cb source bridge and staticORT provisioning are complete.
+Whole-workspace/all-target/all-feature Clippy passes168.859s. Workspace tests
+select159 before stopping:158pass, one Admin TLS test fails because its platform
+capability constant omitted macOS while production supports the observed socket
+proof. Root reviews and applies the one-line test-only capability correction,
+retaining the security assertions. No unchanged retry is made. Actual remote
+process/group settlement and target cleanup pass; the original365dirty checkout
+entries remain unchanged. A new committed bridge and scoped-first batch are
+pending; doctests were not reached in that stopped batch.
+
+Fresh baseline transport captures27/27 original queries/modes with source,
+Stop and original process-exit proof. Eighteen vector/hybrid source verification
+receipts stay partial under the original eight-source budget. Native follow-on
+preparation first refuses path spelling, then correctly exposes an overly narrow
+combined-response assumption. The canonical singleton correction retains exact
+scope/publication/source fences. Its first Clippy attempt fails only a deep
+literal fixture macro; mechanically splitting the fixture preserves parsed
+values and every assertion. Scoped Kernel Clippy then passes12.616s on unchanged
+native group3f65d079ac09f33d53f90e71be70c6fb7cd05b2a2261507b4f70c8dad4348bd4.
+Focused ANN/human-visibility controls are pending the grouped build.
+
+Workbench context controls now open through Plus; permanent notice/question/
+budget rows are removed. Keyboard, focus, busy/session and canonical request
+semantics remain covered. Fresh compile/build and65 affected DOM identities pass
+as the documented source-bound union; failed fixture attempts remain failed.
+Root reviews actual320px and wide previews and exact223 compiled editor outputs.
+Fresh packaged/runtime UI checks remain pending. Research license staging and
+package controls pass46/46 before the separately added original TechQA terms;
+README/Arbiter README/installer attribution are implemented, not yet present in
+the old1933 distributables.
+
+Public human labels are available. The exact CoSQA/CodeSearchNet join produces
+1955 judged pairs from38 repository families; all other pairings stay unknown.
+ContextBench yields150 source-complete multifile TRAIN cases. Original TechQA
+600-record provenance compares exactly; the stronger full DEV source fence
+leaves290 positive pairs/254documents and only15 complete original menus.
+Prior394/350-doc pilot feasibility is superseded, not admitted. A dated audit
+records the corrected counts, source rights and intermediate metadata scope
+caveat. Native visibility, split/clone/rights review and pre-score power/size
+acceptance remain pending. No gradients, new human terminal labels or promotion
+are claimed. The new native visibility seam retains every original row/refusal
+and distinguishes complete positive-span visibility from whole-unit label
+transfer; model-forward counters remain explicitly unobserved/null.
+
+
+B3 follow-through: scoped diagnostic controls pass11/11 (sixANN/fivevisibility),
+67.516s including build/0.127s tests. Genuine Kernel Cargo-JSON no-run receipt
+passes1.122s, source group3f65d079... unchanged. Preserved Kernel image
+8ce7376a625bb3677d147b2e997ac9d8f408fdc1a0323581eb2ff69d0d481db5
+has exact compiler-artifact/staticORT provenance; B2 images remain unchanged.
+The complete B2-to-B3 source bridge records12paths including research notice
+inputs, SHA2607dfe56629571380afdbd3f8a7d550ca4517647480f26c5879706a82e30999.
+Whole-workspace/all-target/all-feature Clippy passes12.190s unchanged, format
+passes, repository checks pass3503public files and whitespace passes.
+
+The actual ANN follow-on now passes. Native zero-NN pins admit the authentic
+stopped fixture and emit the literal typed input; only observed head/model fields
+replace the original unset fields. The comparison uses exactly nine uncached
+actual embedding forwards for nine original queries, retaining all27transport
+slots, all10live/11allocated vectors and full source/publication/model fences.
+Exact scalar and DiskANN IDs/order agree for each query; max distance difference
+is1.2644547438e-6. Descriptive component p95 is embedding7.0405ms,
+exact0.2765ms, ANN21.6138ms, total41.1864ms. Native phase1.989s/3.990s,
+outer9.302s/10.774s; both actual single-child owners observe naturalexit0,
+empty Job, retained handle closure and no force/timeout. Original120s/8GiB
+bounds remain unchanged. Final packet
+`fresh-ann-query-r1/native-comparison-r7/result-review.json` SHA
+ed9abbae116a63726ce7fdbe57872e95907f6db4728c0eba4035b9135da7fb7f
+retains all raw distance/vector/stats/typed inputs and ownership proofs.
+Because10live equals k10, this is not larger-corpus recall, scalability or human
+quality qualification. All18partial saved-source verification receipts remain
+partial; source-census success does not upgrade them.
+
+Independent source review of the frozen human-visibility module/input finds no
+blocking issue and verifies span/whole-unit separation, unknown negatives, full
+1955denominator, original256/512native input refusals and no scoring. Actual
+CoSQA visibility emission remains pending its separately frozen owned launch.
+Root also reviews R154's final completion-predicate correction and3/3actual
+Windows suspended authentication controls. New matched-runtime bindings and
+ready private stages are still prerequisites; no actual R154 Answer replay is
+claimed. The requested Plus-menu operator guide is updated without generated
+asset changes. TechQA notice addition is underway for the fresh legal payload.
+
+
+Final attribution follow-through adds the exact original TechQA92209-byte CDLA
+PDF (e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f),
+all21canonical authors and original publisher archive/README provenance. Fresh
+27/27 affected research/package controls pass8.483s, zero skips;24local links
+and whitespace pass. This is a focused current rerun, not27additional distinct
+cases beyond all prior legal coverage. Original46-case evidence stays preserved.
+The legal inventory now authenticates11research companions; source freeze is
+`research-attribution-techqa-r2/source-freeze.json`. Root reviews the final delta.
+Earlier candidate artifacts retain their old notices; fresh runtime/package
+qualification is still required. All source work for the next DCO milestone is
+reviewed and frozen; follow-on diagnostic implementation waits until the matched
+build/source transfer consumes this snapshot.

@@ -163,6 +163,16 @@ switch models, precision or devices silently.
 
 ## Results, limits and fallback
 
+In AIRK Workbench, choose **+ → Gather cited context…** to open the
+question panel. Review or edit the question, then choose **Gather cited context**
+to use the native default budget. Context controls and their explanation appear
+only while this panel is open, leaving the normal composer compact.
+
+The advanced **Adjust native budget** section starts collapsed. Open it to
+review or change the JSON budget, then choose **Gather with this budget** to send
+that explicit budget. The selected read scope still applies, and the normal
+result, citation, copy and export views retain the complete response.
+
 Canonical results retain original source locations, content hashes, publication
 identity and read authority. Focus ordering and any selected or omitted subset
 must be disclosed. A ranked excerpt is still indexed evidence, not a new source

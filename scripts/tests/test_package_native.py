@@ -355,6 +355,8 @@ class SplitPairContracts(unittest.TestCase):
                     (notice_root / name).write_bytes(content)
                 (notice_root / "provenance.json").write_bytes(
                     (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
+                builder = package.runtime_builder()
+                builder.load_script("license-notices").stage_research_notices(package.ROOT, root / "notices")
                 seal_split(root, pair, build)
                 files, _ = package.validate_runtime(root, "1.9.0", target, self.source)
                 self.assertEqual({name.removeprefix("notices/all-MiniLM-L6-v2/") for name in files

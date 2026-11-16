@@ -134,3 +134,110 @@ files. The audit's relative links resolve and new files have no trailing
 whitespace. The private inventory's input hashes match the observed bytes.
 These checks establish documentation and input identity only. No model quality,
 training, runtime, transport, platform or release pass follows from them.
+
+
+## Public existing-human-label source audit (16 November 2026)
+
+Observed16November2026. This expands the earlier retained-local-input census. Public human judgments exist; source/rights/native admission and unsupported claims must be distinguished. No gradients, model scoring, new human annotation or FINAL question exposure were performed. All raw data stays private and outside distributable payloads.
+
+### Actual source audit
+
+| Source | Observed human/source scope | Admission boundary |
+| --- | --- | --- |
+| [CoSQA](https://aclanthology.org/2021.acl-long.442/) / [CoCLR](https://github.com/Jun-jie-Huang/CoCLR) | Authentic published TRAIN20,000 queries:9,707positive/10,293negative, code map6,267functions. Model-data owner joined1,955human TRAIN pairs (979positive/976negative),465functions and316original pinned files across38canonical repository families with retained permissive rights/notice evidence. Publisher annotations use at least three humans per pair. | These are actual source/rights candidates, not native-admitted examples. Python-only query/function labels do not establish exact complete-evidence or native card/terminal correctness. Keep CodeSearchNet overlap, repository/fork/issue/chronology splits and refusal denominators. |
+| [CodeSearchNet](https://github.com/github/CodeSearchNet#annotations) | Actual public CSV:4,006human annotations,99queries,573query-language pairs,2,874codeURLs and2,258literal repository URLs across six languages. | Upstream designates human annotations evaluation-only, distinct from mechanical docstring TRAIN. Preserve that upstream role unless a separately recorded pre-score research assignment explicitly changes use. Literal URL counts do not prove independent fork families. |
+| [ContextBench](https://github.com/EuniAI/ContextBench) / [paper2602.05892v1](https://arxiv.org/html/2602.05892v1) | Published human expert context evidence:1,136issues/66repositories/eight languages. Only publisher `data/train.parquet` acquired:450rows/58canonical identifiers,3,625span headers,285multifile tasks. Fixed first-case20-family audit retained62basecommit source files and all20root license closures. Seven whole cases/7families align all their human code spans;90of131selected spans align individually. | Native-admitted0. The published older TRAIN format uses context headers and explicit line counters, differing from the current full-release JSON schema. Keep originals and exact formatting transformations. Generated/outside-repository paths, changed code and stale ranges remain refused. Docs/config path flags63 and test flags84 overlap; they are not human task-stratum assignments. |
+| [TechQA](https://aclanthology.org/2020.acl-main.117/) via [PrimeQA original archive](https://huggingface.co/datasets/PrimeQA/TechQA) and [NVIDIA mirror](https://huggingface.co/datasets/nvidia/TechQA-RAG-Eval) | Blind original-ID filtering isolated600TRAIN records (450answerable/150unanswerable) from the mirror's910records;310DEV questions/answers/text were never output or used. TRAIN388document names overlap40of148DEV filename-only references; shared files were excluded before extracting348TRAIN-only documents.396answerable cases match their retained corpus contexts;394have exactly one whole literal answer in matching source. | These394 are source-stage document candidates, native-admitted0. The mirror is an automated transformation of IBM human QA, not new human review. Original archive README confirms human answer spans and CDLA data rights; original600QA byte-for-byte comparison was not performed because the archive places a2.7GB corpus member before training files. Preserve exact mirror revision/IDs and this provenance limit; no unanswerable-to-terminal translation. |
+| [QASPER](https://huggingface.co/datasets/allenai/qasper) | Human research-paper questions plus separately annotated answers/evidence. Existing retained licensed TRAIN can supply a general-document replay candidate population. | Existing rights, native visibility and exposed/reserved source closures remain authoritative. Paper families do not count as software repositories; paper answerability does not establish native terminal classes. |
+| [CoNaLa](https://conala-corpus.github.io/) and [StaQC manual labels](https://github.com/LittleYUYU/StackOverflow-Question-Code-Dataset#22-manual-annotations) | Human curated code/intent or standalone-snippet labels exist separately from automatically mined bulk. CoNaLa has2,379manual TRAIN examples and500test examples. | Stack Overflow post/date attribution and underlying rights need joining; no software repository/commit coverage is implied. Do not relabel mined pairs as human-reviewed. No pickle execution or bulk corpus acquisition occurred in this audit. |
+| [SWE-QA, Peng et al](https://github.com/peng-weihan/SWE-QA-Bench), [Agent Retrieval Bench](https://github.com/eyuansu62/agent-retrieval-bench), [CORE-Bench v3](https://arxiv.org/html/2606.11864v3) | SWE-QA current release has720manually validated repository QA pairs/15Python projects with commit roster. ARB provides427workflow-derived cases/25repositories; CORE reports180Kqueries/106Kbroader-context labels. | Do not infer independent human span adjudication from workflow/patch/model-derived labels. Exact release, annotation authority, source rights and SWE/CodeSearchNet overlap require audit. SWE-QA is distinct from the similarly named2026multiple-choice release. Only metadata was inspected here. |
+
+### Rights decisions
+
+CoSQA's data is governed by C-UDA; its tooling is MIT. The [actual Microsoft agreement1.0](https://github.com/microsoft/Computational-Use-of-Data-Agreement/blob/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/C-UDA-1.0.md) permits computational use and does not restrict qualifying Results, explicitly including trained models containing no more than de minimis source data (§§1.1,2.2,5.5). Modified raw records remain Data; redistributed Data carries attribution and C-UDA obligations (§3). Underlying rights are not warranted (§4.1), hence the actual original CodeSearchNet source/license joins. There is no blanket computational-training prohibition or automatic conflict with AIRK's Apache2 code license. The ACL paper's CC-BY notice applies to the paper, not as replacement rights for data/source files.
+
+The actual TechQA archive README, not merely a wrapper card, states that both QA and Technote corpus are [CDLA-Permissive-1.0](https://cdla.dev/permissive-1-0/). The exact original license PDF is retained. Sections2.1/2.2 grant use rights; §3.4 leaves qualifying Results unrestricted, with the de-minimis bound in §1.10. Publication of Data/Enhanced Data requires license and credit/change notices (§3.1). NVIDIA and PrimeQA Apache declarations do not erase the original CDLA terms. This audit redistributes neither source corpus nor training examples.
+
+ContextBench's Apache2 wrapper does not replace underlying repository rights. Each audited basecommit retains its actual root license/notice. The seven complete source-ready cases use BSD-family, MIT or Apache2 sources. Other selected cases include Flipt's GPL3 license and remain distinct; no blanket all-Apache or all-admitted claim is made.
+
+### Strict derived Context span proposal — not accepted automatically
+
+The original annotation and declared range remain immutable. For a stale range only, the ENTIRE raw gold body must occur byte-for-byte exactly once in the SAME already pinned basecommit file, at line boundaries. Record original declared lines, raw body/source hashes and derived byte/line coordinates separately. No code trimming, fuzzy match, guessed range, patch, revision substitution, outside-repository file or unsupported formatter transformation is allowed. This is derived span projection, not additional human review or a changed label.
+
+The strict probe checked41previously refused spans and found4eligible projections (threeFlipt,onecode-server). It creates no additional fully complete case: the other required spans in those cases still refuse. Original seven complete cases remain seven; native-admitted count remains0. Root must review/accept this mapping before any consumer uses it.
+
+### Pilot feasibility and remaining gates
+
+The original2000-group plan requires800code/tests,700docs/contracts/config,300cross-file and200general replay groups, mutually assigned, with at least20unrelated software repository families. The source audit now establishes substantial human source candidates and a concrete394-case document pool; it does not establish700software-doc groups,300fully aligned cross-file groups, or a complete admitted2000-group corpus.
+
+A justified smaller pre-score1000-group pilot would preserve the same mix:400code/tests,350software-docs,150cross-file and100general replay. The1,955source-joined CoSQA pairs across38families and394TRAIN-only TechQA document candidates make its code/docs quantities plausible before native visibility refusals. It still requires enough valid cross-file cases, rights/split closure, independent DEV/CAL/confirmation/FINAL reservations, stratified TRAIN review appropriate to each exact visible claim, sample/power rationale, native-emitted examples and executable compute cards. No size change or gate waiver is made by this proposal.
+
+No audited source supplies AIRK human whole-card Sufficient, Clarify or NoJustifiedRead labels on exact retained evidence/menu. Those classes remain unsupported. Missing dependent labels block only their training acceptance/promotion; resource, numerical, lifecycle, transport and platform work continue independently.
+
+
+### Public TRAIN source audit and stronger TechQA fence (16 November 2026)
+
+This follow-up records source availability, not native admission or training
+acceptance. The expanded ContextBench audit filtered the current release by the
+450 original TRAIN IDs before question/context materialization. All 450 match
+prior IDs, exact question bytes and base commits; the other 686 rows remain
+outside semantic output, mining, scoring and training. Of 1,599 pinned source
+files, 1,592 were authenticated. Of 4,207 human spans, 3,560 match declared ranges
+and 302 have a separately retained unique exact-entire-content projection in the
+same pinned file. Original annotations are preserved. There are 280
+source-complete cases, including 150 multifile cases; native-admitted count is
+zero. Of those 150, 126 have retained permissive source terms and 24 have actual
+GPL/AGPL terms. Local research disposition and any later model distribution need
+separate review; neither a missing license classifier nor a wrapper license
+settles the underlying source rights.
+
+The original TechQA publisher archive is now retained privately with streaming
+and reopened SHA256 equality: 2,959,973,525 bytes, SHA256
+`6b094ef9a69718f727ce8d7e15c4d961e51032cefaa952e0d6af9d176d7ba118`.
+All 600 mirrored TRAIN records compare exactly with original IDs, answers,
+answerability and relevant document references. Their questions are exactly the
+original QUESTION_TITLE, two line feeds and QUESTION_TEXT. All 396 original
+answer offsets checked in the initial source-disjoint population select the
+human answer exactly. Original QA and corpus terms are CDLA-Permissive 1.0;
+the mirror's Apache declaration does not replace them. The mirror omits the
+original DOC_IDS candidate pools in all 600 cases, so source pairs cannot be
+called complete original menus or terminal labels.
+
+A stronger original DEV DOC_IDS-only metadata fence covers 310 records and
+12,355 held-out source IDs. It quarantines 134 of 388 TRAIN gold source IDs,
+94 more than the earlier relevant-document-only fence, excluding 160 of 450
+answerable TRAIN questions. This leaves 290 positive question/gold-source pairs
+across 254 original documents. Only 15 positive original whole candidate menus
+are disjoint. The prior 394-candidate snapshot and proposed 350-doc contribution
+to a 1,000-group pilot are superseded; neither was native-admitted. A fresh
+private fixture physically contains only the 254 allowed documents and 290
+original question/human-offset pairs, with exact character-to-UTF8 span proof.
+Source-ID disjointness does not establish content-clone, product-family,
+chronology, native visibility or held-out model acceptance.
+
+An intermediate mirror crosscheck broadly decoded already retained mixed
+NVIDIA dictionaries while constructing reference metadata. No DEV question was
+emitted, scored or trained on, but the no-materialization claim for that attempt
+was invalid. Its receipt and scope caveat remain preserved. The corrected pass
+materializes only original DEV DOC_IDS arrays and performs no broad mirror
+decode. Original 600-record comparison remains separate from that correction.
+
+An 800-group composition of 320 code/tests, 280 software-docs, 120 cross-file and
+80 general replay is only a source-count planning possibility. No pilot size is
+approved by this audit. Actual native visibility/refusal census, repository and
+clone splits, rights, label scope, negative masks, cluster variance/power,
+DEV/CAL/confirmation/FINAL reservations and compute limits govern any pre-score
+decision. CoSQA labels cover only their judged pairs; other pairings stay
+unknown. No unjudged negatives, whole-card or terminal labels are invented.
+
+Private evidence: `public-human-label-admission-r1/` contains ContextBench full
+450-case receipt SHA256
+`363c5a8bebd4fe179c498d1c557e7be49b71b4388ae7c84bff630db7af8c6499`,
+TechQA original comparison
+`f348fad09baf0fbbce6438dc00afa25289d7dcd605c54a7c551047ab645032a9`,
+corrected full DEV source fence
+`a0c1eeaf4302a7390d38494dfcde62950daeb239e2306cafdca53d3938473a1c`
+and source fixture
+`3e9506f1e6c3b5223d1d77f9289c941402b5a41ab385cbc0cefdc9a02f770642`.
+Raw examples and indexed source copies remain private and excluded from
+packages. Independent runtime, model resource and product work continues.

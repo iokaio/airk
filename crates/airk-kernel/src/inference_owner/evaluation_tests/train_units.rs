@@ -719,3 +719,4 @@ fn asset_digest() -> Result<String> {
         Sha256::digest(std::fs::read(std::env::current_exe()?)?)
     ))
 }
+mod public_human_visibility;

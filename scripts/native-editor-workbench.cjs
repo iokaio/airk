@@ -31,8 +31,11 @@ async function workbenchAction(request,actions){
     if(request.action==='workbenchRead'){
         if(typeof request.tool!=='string'||!request.tool||request.tool.length>64||!request.fields||Array.isArray(request.fields)||typeof request.fields!=='object'||Object.keys(request.fields).length>32)throw Error('Invalid Workbench read request');
         for(const [label,value]of Object.entries(request.fields))fieldExpressions(label,value);
-        if(!await actions.observe("!!document.querySelector('#evidence-options')"))await mutate(selectorExpressions('button[aria-controls="evidence-options"]'));
-        if(!await actions.observe("!!document.querySelector('.tool-form')"))await click('Tool forms',"document.querySelector('#evidence-options')");
+        if(!await actions.observe("!!document.querySelector('.tool-form')")&&!await actions.observe(`!!document.querySelector('#evidence-options[role="dialog"][aria-label="Tool forms"]')`)){
+            if(!await actions.observe("!!document.querySelector('#evidence-options')"))await mutate(selectorExpressions('button[aria-controls="evidence-options"]'));
+            else if(!await actions.observe(`!!document.querySelector('#evidence-options[role="menu"]')`))await mutate(selectorExpressions('button[aria-label="Back to evidence options"]'));
+            await click('Tool forms…',"document.querySelector('#evidence-options')");
+        }
         await actions.wait("!!document.querySelector('.tool-form select[aria-label=\"Operation\"]')",'actual Workbench operation catalog');
         const select=`document.querySelector('.tool-form select[aria-label="Operation"]')`;
         const selectOperation=async name=>{

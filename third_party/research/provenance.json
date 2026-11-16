@@ -1,0 +1,83 @@
+{
+  "purpose": "Research attribution/legal source pins only; no raw data, model admission or qualification",
+  "publisher_texts": [
+    {
+      "file": "CoCLR-MIT-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/Jun-jie-Huang/CoCLR/14ebcacf9e9bc3e7109102632bc63047876f27d2/LICENSE",
+      "sha256": "5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243",
+      "git_blob": "7e8ee061eb9b771aa90999e20a822f634baaeb0f"
+    },
+    {
+      "file": "CodeSearchNet-MIT-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/LICENSE",
+      "sha256": "5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22",
+      "git_blob": "331b241b3611ddfc3f124d52624c8fc2098b8142"
+    },
+    {
+      "file": "C-UDA-1.0.md",
+      "source_url": "https://raw.githubusercontent.com/microsoft/Computational-Use-of-Data-Agreement/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/C-UDA-1.0.md",
+      "sha256": "69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82",
+      "git_blob": "23b90859ccbe34422e046c96facecf8b4925337c"
+    },
+    {
+      "file": "ContextBench-Apache-2.0-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/EuniAI/ContextBench/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "file": "TechQA-CDLA-Permissive-1.0.pdf",
+      "source_url": "https://huggingface.co/datasets/PrimeQA/TechQA/resolve/60437bc79ab217679682217598a3693cab78365b/TechQA.tar.gz",
+      "archive_member": "TechQA/CDLA-Permissive-v1.0.pdf",
+      "sha256": "e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f",
+      "bytes": 92209,
+      "authoritative_terms": "https://cdla.dev/permissive-1-0/"
+    }
+  ],
+  "dataset_declarations": {
+    "CoSQA": "https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md",
+    "CodeSearchNet": "https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md",
+    "QASPER": "https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md",
+    "HotpotQA": "https://hotpotqa.github.io/",
+    "ContextBench": "https://github.com/EuniAI/ContextBench/blob/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/README.md",
+    "TechQA": "https://aclanthology.org/2020.acl-main.117/"
+  },
+  "agreement_text_license": "C-UDA agreement text publisher repository is CC0-1.0; this does not make a C-UDA dataset CC0",
+  "agreement_repository_license_url": "https://github.com/microsoft/Computational-Use-of-Data-Agreement/blob/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/LICENSE",
+  "historical_training_companions": [
+    {
+      "source": "third_party/models/minilm-v2-TRAINING-NOTICES.md",
+      "sha256": "2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be"
+    },
+    {
+      "source": "third_party/models/minilm-v2-LICENSE.txt",
+      "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"
+    },
+    {
+      "source": "third_party/models/minilm-v2-provenance.json",
+      "sha256": "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"
+    },
+    {
+      "source": "third_party/models/CC-BY-4.0.txt",
+      "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+    }
+  ],
+  "original_techqa": {
+    "publisher": "IBM original TechQA question/answer dataset and Technote corpus",
+    "dataset_license": "CDLA-Permissive-1.0",
+    "archive": {
+      "url": "https://huggingface.co/datasets/PrimeQA/TechQA/resolve/60437bc79ab217679682217598a3693cab78365b/TechQA.tar.gz",
+      "sha256": "6b094ef9a69718f727ce8d7e15c4d961e51032cefaa952e0d6af9d176d7ba118",
+      "bytes": 2959973525
+    },
+    "original_readme": {
+      "sha256": "c5a58ed7f2780fb2c4f2e06f8933ec4afbd06b5f29f6797c7857f3812f824060",
+      "bytes": 5997,
+      "declaration": "Original QA dataset and separately released Technote corpus both use CDLA-Permissive-1.0"
+    },
+    "paper": "https://aclanthology.org/2020.acl-main.117/",
+    "official_terms": "https://cdla.dev/permissive-1-0/",
+    "use": "Original TRAIN source/split/rights candidate audit; no native admission, model training or neural scoring asserted",
+    "wrapper_metadata_is_original_license": false,
+    "raw_data_bundled": false
+  }
+}

@@ -170,6 +170,14 @@ def validate_runtime(runtime, version, target, source):
         for name, digest in model_files.items():
             if files.get(name) != digest:
                 raise ValueError("Pinned model notice differs or is missing: " + name)
+    if tuple(int(part) for part in version.split(".")) >= (1, 8, 207):
+        # Research attribution is a pinned legal closure, not a Cargo package
+        # or a grant to redistribute raw datasets. Old fixtures keep old rosters.
+        research = builder.load_script("license-notices").research_notice_inventory()
+        required.update(research)
+        for name, digest in research.items():
+            if files.get(name) != digest:
+                raise ValueError("Pinned research notice differs or is missing: " + name)
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)

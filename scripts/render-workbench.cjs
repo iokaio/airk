@@ -97,7 +97,7 @@ async function main(){
                 symbols:{type:'object',properties:{name:{type:'string'},name_match:{type:'string',enum:['exact','suffix','contains']},compact:{type:'boolean'},include_count:{type:'boolean'}}},
                 references:{type:'object',required:['name'],properties:{name:{type:'string'},order:{type:'string',enum:['index','path','code_first']},include_files:{type:'boolean'}}}};
             await evaluate(`window.fixture.operations=${JSON.stringify(operations)};window.fixture.session.title='Session alpha';window.fixture.sessionEpoch=0;window.alphaId=window.fixture.session.id;window.fixtureSessions.set(window.alphaId,structuredClone(window.fixture.session));window.betaId='browser-session-beta';window.fixtureSessions.set(window.betaId,{...structuredClone(window.fixture.session),id:window.betaId,title:'Session beta',turns:[],formDraft:{activeTool:'search',values:{},revision:0,scope:'',recipe:''}});window.fixture.recent=[...window.fixtureSessions.values()].map(session=>({id:session.id,title:session.title,updatedAt:session.updatedAt,turns:0}));window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));`);
-            const openForm=async()=>{if(!await evaluate(`!!document.querySelector('#evidence-options')`))await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);};
+            const openForm=async()=>{if(!await evaluate(`!!document.querySelector('#evidence-options')`))await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);if(!await evaluate(`!!document.querySelector('.tool-form form')`)){if(!await evaluate(`!!document.querySelector('#evidence-options[role="menu"]')`))await evaluate(`document.querySelector('[aria-label="Back to evidence options"]').click()`);await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Tool forms…').click()`);}await until(`!!document.querySelector('.tool-form form')`);};
             const fieldValue=label=>evaluate(`document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]')?.value`);
             const setField=async(label,value)=>{await evaluate(`(()=>{const field=document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]');if(!field)throw new Error('Missing field');field.value=${JSON.stringify(value)};field.dispatchEvent(new Event(field.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);await delay(25);};
             const selectTool=async tool=>{await setField('Operation',tool);await until(`document.querySelector('.tool-form [aria-label="Operation"]').value===${JSON.stringify(tool)}`);};
@@ -200,7 +200,7 @@ async function main(){
             assert.equal(await evaluate(`Object.hasOwn(window.fixture.session.turns[0].envelope,'source_coverage')`),false,'display warning does not manufacture native coverage metadata');
             checks.push({check:'legacy textual zero-hit fallback warns whole-query unknown without invented typed metadata/count/continuation',passed:true});
 
-            await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);
+            await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);await until(`!!document.querySelector('#evidence-options[role="menu"]')`);await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Tool forms…').click()`);await until(`!!document.querySelector('.tool-form form')`);
             await evaluate(`(()=>{const select=document.querySelector('.tool-form [aria-label=\"Operation\"]');select.value='symbols';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
             await until(`!!document.querySelector('.tool-form [aria-label="Name matching"]')`);
             const setField=async(label,value)=>{
@@ -388,12 +388,12 @@ async function main(){
             }
             if(scene==='welcome'){
                 assert.equal(await evaluate(`!!document.querySelector('.session')||!!document.querySelector('.tool-form')||document.body.textContent.includes('Publication unavailable')`),false,'advanced UI starts out of the transcript');
-                await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('#evidence-options input')`);
+                await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);await until(`!!document.querySelector('#evidence-options[role="menu"]')`);
                 if(width===650){const png=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(path.join(output,'workbench-1.7.1-add-menu.png'),Buffer.from(png.data,'base64'));}
                 assert.equal(await evaluate(`(()=>{const r=document.querySelector('#evidence-options').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})()`),true,'add menu remains in the viewport');
-                await evaluate(`(()=>{const el=document.querySelector('#evidence-options input');el.value='src/';el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+                await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Scope and recipe…').click()`);await until(`!!document.querySelector('#evidence-options input')`);await evaluate(`(()=>{const el=document.querySelector('#evidence-options input');el.value='src/';el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
                 await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await until(`!document.querySelector('#evidence-options')`);
-                await until(`document.activeElement?.getAttribute('aria-label')==='Add scope, recipe or tool'`);
+                await until(`document.activeElement?.getAttribute('aria-label')==='Evidence options'`);
                 await evaluate(`document.querySelector('[aria-label="Settings and session actions"]').click()`);await until(`!!document.querySelector('#session-settings')`);
                 await evaluate(`document.querySelector('.transcript').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);await until(`!document.querySelector('#session-settings')`);
                 await evaluate(`document.querySelector('[aria-label="Session history"]').click()`);await until(`document.querySelector('#session-history')?.textContent.includes('No saved sessions yet')`);

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Create a third-party license bundle from the locked Cargo graph, not local corpora."""
+"""Create pinned dependency, model and research notices; never local corpora."""
 import argparse
 import hashlib
 import json
@@ -11,6 +11,22 @@ from urllib.parse import quote
 
 MODEL_COMPANIONS = {
     'minilm-LICENSE.txt': ('LICENSE', 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'),
+}
+
+
+# Maintained legal texts only. This is not a Cargo dependency/data inventory.
+RESEARCH_COMPANIONS = {
+    'third_party/research/ARBITER-RESEARCH-NOTICES.md': ('research/ARBITER-RESEARCH-NOTICES.md', '5fdfc53e09b8d11306371ddb1697481a4a8060dc6008aa0b22e3d5beb39956e3'),
+    'third_party/research/CoCLR-MIT-LICENSE.txt': ('research/CoCLR-MIT-LICENSE.txt', '5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243'),
+    'third_party/research/C-UDA-1.0.md': ('research/C-UDA-1.0.md', '69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82'),
+    'third_party/research/CodeSearchNet-MIT-LICENSE.txt': ('research/CodeSearchNet-MIT-LICENSE.txt', '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22'),
+    'third_party/research/provenance.json': ('research/provenance.json', 'c01b711abf5d647ced19b516ace19ed83a53a0897d8c215963b9368ea8e7b56c'),
+    'third_party/models/minilm-v2-TRAINING-NOTICES.md': ('models/minilm-v2-TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
+    'third_party/models/minilm-v2-LICENSE.txt': ('models/minilm-v2-LICENSE.txt', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
+    'third_party/models/minilm-v2-provenance.json': ('models/minilm-v2-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
+    'third_party/models/CC-BY-4.0.txt': ('models/CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
+    'third_party/research/ContextBench-Apache-2.0-LICENSE.txt': ('research/ContextBench-Apache-2.0-LICENSE.txt', 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'),
+    'third_party/research/TechQA-CDLA-Permissive-1.0.pdf': ('research/TechQA-CDLA-Permissive-1.0.pdf', 'e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f'),
 }
 
 
@@ -38,6 +54,30 @@ def stage_model_notices(root, output):
         (destination / name).write_bytes(content)
     (destination / 'provenance.json').write_bytes(catalog_bytes)
     return catalog
+
+
+
+def stage_research_notices(root, output):
+    """Authenticate all maintained research/legal bytes before staging any."""
+    verified = {}
+    for source_name, (destination, expected) in RESEARCH_COMPANIONS.items():
+        source = root / source_name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError('Missing regular research notice: ' + source_name)
+        content = source.read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError('Research notice digest mismatch: ' + source_name)
+        verified[destination] = content
+    for name, content in verified.items():
+        destination = output / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    return research_notice_inventory()
+
+
+def research_notice_inventory():
+    """Exact current runtime legal paths; separate from generated Cargo rows."""
+    return {'notices/' + name: digest for name, digest in RESEARCH_COMPANIONS.values()}
 
 
 def declaration_provenance(source, record):
@@ -155,6 +195,7 @@ def main():
                 unresolved.append(package["name"] + " " + package["version"])
                 print("Release review needed for license declaration without separate text: " + package["name"])
     stage_model_notices(Path('.'), args.output)
+    stage_research_notices(Path('.'), args.output)
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     bom = software_bill_of_materials(metadata)
     runtime = json.loads(Path("crates/airk-retrieval/src/ort_runtime_catalog.json").read_text(encoding="utf-8"))

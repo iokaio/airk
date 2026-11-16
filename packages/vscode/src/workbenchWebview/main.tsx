@@ -174,7 +174,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
         {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
     </article>;
 }
-type Menu = 'history' | 'settings' | 'add' | 'selection';
+type Menu = 'history' | 'settings' | 'add' | 'selection' | 'context' | 'options' | 'forms';
 /** (U105) Choose explicitly named indexes and index sets (read whole, as a union) instead of the window's search scope. */
 function SelectionPicker({state,onDone}:{state:WorkbenchState;onDone:()=>void}){
     const choices=state.scopeChoices,current=state.openSelection;
@@ -232,6 +232,27 @@ function App(){
     };
     const setScope=(scope:string)=>changeForm({scope}),setRecipe=(recipe:string)=>changeForm({recipe});
     const composer=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+    const plusOpen=menu==='add'||menu==='context'||menu==='options'||menu==='forms';
+    const closeMenu=(restore=false)=>{setMenu(undefined);if(restore)requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus());};
+    const showContext=()=>{setContextQuestion(question=>question||input.trim());setContextIssue('');setMenu('context');};
+    const gatherContext=(custom=false)=>{
+        if(!state.project||state.busy)return;
+        try{
+            const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,...(custom?{budget:JSON.parse(contextBudget)}:{})});
+            if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
+            send(message);setContextIssue('');setContextQuestion('');if(contextQuestion===input.trim())setInput('');closeMenu(true);
+        }catch(error){setContextIssue(error instanceof Error?error.message:String(error));}
+    };
+    const menuKeys=(event:KeyboardEvent)=>{
+        const items=[...document.querySelectorAll<HTMLButtonElement>('#evidence-options [role="menuitem"]')].filter(button=>!button.disabled),position=items.indexOf(document.activeElement as HTMLButtonElement);
+        if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)&&items.length){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?items.length-1:event.key==='ArrowDown'?(position+1)%items.length:(position-1+items.length)%items.length;items[next]?.focus();}
+        else if(event.key==='Tab'){event.preventDefault();setMenu(undefined);requestAnimationFrame(()=>{const next=event.shiftKey?document.querySelector<HTMLButtonElement>('button[aria-controls="evidence-options"]'):document.querySelector<HTMLButtonElement>('.send-button:not(:disabled)');(next??composer.current)?.focus();});}
+    };
+    useLayoutEffect(()=>{
+        if(!plusOpen)return;
+        const panel=document.getElementById('evidence-options'),selector=menu==='add'?'[role="menuitem"]:not(:disabled)':menu==='context'?'[aria-label="Context question"]':menu==='options'?'input':'[aria-label="Operation"]';
+        (panel?.querySelector<HTMLElement>(selector)??panel?.querySelector<HTMLButtonElement>('button'))?.focus();
+    },[menu]);
     const latest=state.session?.turns.at(-1);
     // Reveal each new request from its query, including when results arrive.
     // Keep the question above its timestamp, plan and evidence. Status/save refreshes,
@@ -244,9 +265,9 @@ function App(){
     },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
     openMenu.current=menu;
     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefillForm'){setMenu('add');}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefillForm'){menuTrigger.current='evidence-options';setMenu('forms');}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
     useEffect(()=>{setHistory(-1);setFormIssue('');},[state.session?.id]);
-    useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
+    useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){event.preventDefault();setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
     const run=(prepare=false)=>{const current=currentDraft();if(current&&!state.busy&&(input.trim()||current.recipe)){send({type:'run',input,prepare,pathPrefix:current.scope,...(current.recipe?{recipe:current.recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
     const action=(message:WorkbenchMessage)=>{send(message);if(['new','clear','fork'].includes(message.type))setInput('');setMenu(undefined);};
     return <main>
@@ -270,28 +291,38 @@ function App(){
         <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>No reviewed AIRK Index or Project scope is active in this window. Trust the workspace and finish setup if needed, then review and use a scope in Management. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
         <div class="composer">
             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
-            <button type="button" disabled={!state.project || state.busy || !input.trim()} onClick={() => { send({ type: 'answer', question: input.trim() }); setInput(''); }}>Gather cited context</button>
-            <p class="note">Cited context uses bounded canonical reads and reports gaps. Optional local Arbiter models require explicit Service enrollment; unavailable models never imply a successful model decision.</p>
-            <details><summary>Cited context question and budget</summary>
-                <label>Context question (up to 16,384 UTF-8 bytes)<textarea aria-label="Context question" maxLength={16384} value={contextQuestion} onInput={e=>setContextQuestion(e.currentTarget.value)}/></label>
-                <label>Native context budget (JSON)<textarea aria-label="Native context budget" maxLength={2048} value={contextBudget} onInput={e=>setContextBudget(e.currentTarget.value)}/></label>
-                <p class="note">The native service validates budget limits. A smaller budget can return gaps or omissions.</p>
-                {contextIssue&&<p role="alert">{contextIssue}</p>}
-                <button type="button" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>{
-                    try { const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,budget:JSON.parse(contextBudget)});
-                        if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
-                        setContextIssue('');send(message);
-                    } catch(error) { setContextIssue(error instanceof Error?error.message:String(error)); }
-                }}>Gather with this budget</button>
-            </details>
             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}
             <textarea ref={composer} maxLength={4096} aria-label="Request indexed evidence" placeholder={recipe?'Enter a name or statement for this recipe':'Ask about this project, or type /'} value={input} onInput={e=>{setInput(e.currentTarget.value);setHistory(-1);}} onKeyDown={e=>{
                 if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();run();}
                 if(e.key==='ArrowUp'&&!input&&state.session?.turns.length){e.preventDefault();const next=history<0?state.session.turns.length-1:Math.max(0,history-1);setHistory(next);setInput(state.session.turns[next].input);}
             }}/>
-            <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Add scope, recipe or tool" aria-label="Add scope, recipe or tool" aria-expanded={menu==='add'} aria-controls="evidence-options" onClick={e=>toggle('add',e)}><Icon name="plus"/></button>
-                {menu==='add'&&<section class="popover above" id="evidence-options" aria-label="Evidence options"><h2>Collect evidence</h2><label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label><label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label><button disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button><button disabled={!state.project} onClick={()=>send({type:'forms'})}>Tool forms</button>{state.operations&&<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>}<button onClick={()=>action({type:'help'})}>Commands and help</button></section>}
-            </div><small title={state.save||'Requests read the local index'}>Sources read-only · Refresh requires review (no generative AI used in AIRK Workbench)</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
+            <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Evidence options" aria-label="Evidence options" aria-haspopup={menu==='context'||menu==='options'||menu==='forms'?'dialog':'menu'} aria-expanded={plusOpen} aria-controls="evidence-options" onClick={e=>plusOpen?closeMenu():toggle('add',e)}><Icon name="plus"/></button>
+                {menu==='add'&&<section class="popover above evidence-menu" id="evidence-options" role="menu" aria-label="Evidence options" onKeyDown={menuKeys}>
+                    <h2 role="presentation">Evidence options</h2>
+                    <div role="group" aria-label="Collect"><h3 role="presentation">Collect</h3>
+                        <button type="button" role="menuitem" disabled={!state.project||state.busy} onClick={showContext}>Gather cited context…</button>
+                        <button type="button" role="menuitem" disabled={!state.project||state.busy} onClick={()=>{setMenu('forms');send({type:'forms'});}}>Tool forms…</button></div>
+                    <div role="group" aria-label="Request options"><h3 role="presentation">Request options</h3>
+                        <button type="button" role="menuitem" disabled={!state.session} onClick={()=>setMenu('options')}>Scope and recipe…</button>
+                        <button type="button" role="menuitem" disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button></div>
+                    <div role="group" aria-label="Help"><button type="button" role="menuitem" onClick={()=>action({type:'help'})}>Commands and help</button></div>
+                </section>}
+                {plusOpen&&menu!=='add'&&<section class="popover above evidence-panel" id="evidence-options" role="dialog" aria-label={menu==='context'?'Gather cited context':menu==='options'?'Scope and recipe':'Tool forms'}>
+                    <div class="popover-heading"><button type="button" class="icon-button" aria-label="Back to evidence options" title="Back to evidence options" onClick={()=>setMenu('add')}>←</button><h2>{menu==='context'?'Gather cited context':menu==='options'?'Scope and recipe':'Tool forms'}</h2><button type="button" class="icon-button" aria-label="Close evidence options" title="Close" onClick={()=>closeMenu(true)}>×</button></div>
+                    {menu==='context'?<>
+                        <label>Question<textarea aria-label="Context question" maxLength={16384} value={contextQuestion} onInput={e=>setContextQuestion(e.currentTarget.value)}/></label>
+                        <p class="note">Collects cited evidence with bounded canonical reads and reports gaps. Optional Arbiter models require explicit Service enrollment.</p>
+                        <button type="button" class="context-submit" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>gatherContext()}>{state.busy?'Collecting evidence…':'Gather cited context'}</button>
+                        <details><summary>Adjust native budget</summary><label>Native context budget (JSON)<textarea aria-label="Native context budget" maxLength={2048} value={contextBudget} onInput={e=>setContextBudget(e.currentTarget.value)}/></label>
+                            <p class="note">The native service validates budget limits. A smaller budget can return gaps or omissions.</p>
+                            <button type="button" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>gatherContext(true)}>Gather with this budget</button></details>
+                        {contextIssue&&<p role="alert">{contextIssue}</p>}
+                    </>:menu==='options'?<>
+                        <label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label>
+                        <label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label>
+                    </>:state.operations?<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>:<><p role="status">Loading tool forms…</p><button type="button" disabled={!state.project||state.busy} onClick={()=>send({type:'forms'})}>Retry tool forms</button></>}
+                </section>}
+            </div><small title="Requests read the local index. Refresh requires review.">Sources read-only</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
         </div><div class="sr-only" aria-live="polite">{state.busy?'Collecting evidence':'Ready'}</div>
     </main>;
 }

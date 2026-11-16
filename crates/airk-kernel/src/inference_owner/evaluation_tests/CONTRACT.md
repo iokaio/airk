@@ -324,3 +324,74 @@ The three cheap controls cover independent distances/ties/nonfinite/dimension/
 live-ID refusals, complete roster/scope/mode refusals and changed/missing/extra/
 non-directory/relative source refusals. They execute no model. Compilation and
 controls do not prove the ignored fresh baseline or platform qualification.
+
+
+The fresh-query diagnostic accepts both existing canonical search representations.
+The current implicit singleton fixed query recipe admits exactly its five original
+query/mode/limit/max_bytes/response_mode arguments. Explicit index/index-set/
+Project/workspace selectors, member policy, per-index limits, origin publication,
+legacy project and unknown additional fields cannot silently enter that branch.
+The whole-index roster independently rejects fields outside its bounded recipe.
+The singleton deserializes Core SearchResponse, the native scope_observation as
+Core ScopeObservation with validate(), and the full VerificationReceipt. Its
+separate original read_scope disclosure must name the same sole expected index.
+Full publication/collection/generation, native source origins, original roots,
+frozen hashes, citation/reference pointers and bindings remain fenced. The
+combined branch retains its original Core materializer/member/publication checks.
+Native partial/unchecked/budget-exhausted/empty/readiness fields stay unchanged;
+metadata validation never upgrades them to saved-source verification success.
+The independent physical census still checks every original source, and all
+original Stop/lease/head/model/profile/deadline fences remain mandatory.
+
+## Public human TRAIN visible-input diagnostic
+
+A separate `train_units::public_human_visibility` child accepts the SHA-pinned
+source-backed CoSQA TRAIN intake (all1955 original rows), exact whole original
+source files and byte-span mappings, source/license/notice pins and the reviewed
+original MiniLM256/Focus512 assets. Historical TRAIN constants, consumers and
+fixtures remain unchanged. A fresh native image is required for this child.
+
+The diagnostic reuses canonical Kernel extraction (unpublished capture), the
+production semantic-unit recipe including all written context, exact citation
+members, original MiniLM planner and native input-tensor admission. No snippet
+files, Python token approximations, altered chunk recipe, gradients or forwards
+are used. The existing parity controls bind unpublished extraction/planning to
+actual lexical publications; this diagnostic does not publish an ANN graph or
+claim retrieval quality. Source and metadata output roots remain separate.
+
+Every original row remains in the denominator. A complete human function must
+match its pinned original UTF8 byte span; all candidate units/refs, context
+prefixes, outside-parent bytes and complete/union coverage are retained. Split
+union coverage cannot create a fragment positive. A unit expanded by unknown
+prefix or other source bytes has UNKNOWN label transfer for either sign. Native
+MiniLM visibility accepts only an unchanged complete labeled document/query
+within256 with no unadjudicated extra unit text. Focus separately compiles the
+unchanged original question and whole labeled source window through its owning
+512-token compiler, preserving refusals and never cropping or reinterpreting
+overflow. A source window and a Context action/whole-card are different targets.
+
+Output statuses are input-visibility diagnostics only, not gold admission,
+rights approval, semantic grading, training or qualification. Token-fit success
+is necessary and insufficient: Root must separately review source rights,
+label applicability, actual native units and the preregistered code-arm rubric.
+Python-only code pairs do not satisfy the document/general/cross-language pilot
+requirements; any smaller code arm requires explicit before-score acceptance.
+The CoSQA labels cover only the original binary question/function pairs. Other
+in-batch query/code combinations are unjudged and must not be synthesized as
+M1 negatives. A possible F2 binary-pair arm requires separate before-score size,
+strata and rights/visibility acceptance. Ordinary softmax/in-batch negatives remain unsupported without judged negative
+evidence. A separately reviewed masked known-pair sigmoid contrastive arm may
+use only published binary pairs; this diagnostic does not approve that objective.
+Full software document/general/cross-language coverage remains independent.
+Complete human-positive span visibility is also reported independently from the
+stricter unchanged-whole-unit observation: a fully covered positive source span
+remains visible with provenance or other unjudged context. Neither that observation
+nor a provenance-only prefix asserts a new human whole-unit judgment. A labeled
+negative cannot become a full expanded-unit negative from source overlap.
+
+The extraction report retains its actual extraction-stage counters. Model-forward
+counts have no observer in this diagnostic and are explicitly null/unobserved.
+The reviewed code dispatches no nonblank embedding request or Focus scorer
+request; these dispatch facts are stated separately and do not establish measured
+model-forward counts. The existing blank-input early-return control retains only
+its original scope. No telemetry framework or new measured-counter claim is added.
