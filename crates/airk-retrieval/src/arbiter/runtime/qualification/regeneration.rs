@@ -70,7 +70,13 @@ fn graph_request_scope_preserves_legacy_and_refuses_mixed_overrides() {
 }
 
 fn graph_request_scope_dense(schema: &str, compact: bool, large: bool, dense: bool) -> bool {
-    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large && !dense)
+    (matches!(
+        schema,
+        "airk.private.context-metadata-regeneration/1"
+            | "airk.private.context-metadata-regeneration/3"
+    ) && !compact
+        && !large
+        && !dense)
         || (schema == "airk.private.context-metadata-regeneration/2"
             && usize::from(compact) + usize::from(large) + usize::from(dense) == 1)
 }
@@ -111,6 +117,50 @@ fn graph_request_scope_dense_refuses_mixed_and_legacy_dense() {
     ] {
         assert!(!graph_request_scope_dense(schema, compact, large, dense));
     }
+}
+
+/// /3 changes only the source-bound Focus metadata. It never changes neural
+/// inputs, CPU execution requirements or public asset-source authority.
+fn validate_focus_metadata_transition(
+    old: &Profile,
+    current: &Profile,
+    source_only: bool,
+) -> Result<()> {
+    ensure!(
+        old.model == ModelChoice::FocusQwenReranker06B
+            && current.model == old.model
+            && old.max_tokens == 512
+            && current.max_tokens == 512
+            && current.compiler == old.compiler
+            && current.max_candidates == old.max_candidates
+            && current.memory_reservation_bytes == old.memory_reservation_bytes
+            && current.peak_disk_bytes == old.peak_disk_bytes
+            && current.runtime == old.runtime
+            && current.runtime == RUNTIME
+            && current.device_execution.is_none()
+            && old.device_execution.is_none()
+            && serde_json::to_value(&current.abi)? == serde_json::to_value(&old.abi)?
+            && serde_json::to_value(&current.cpu_fit)? == serde_json::to_value(&old.cpu_fit)?,
+        "Focus metadata transition changed its static compiler, ABI or CPU bounds"
+    );
+    if source_only {
+        let policy = crate::arbiter::compiler::focus::policy_digest()?;
+        ensure!(
+            current.stage == Some(Stage::Focus)
+                && current.tasks == BTreeSet::from([Task::FocusRank])
+                && current.policy == policy
+                && current.task_policies == BTreeMap::from([(Task::FocusRank, policy)]),
+            "Focus /3 metadata must bind the actual current native policy"
+        );
+    } else {
+        ensure!(
+            current.calibration == old.calibration
+                && current.policy == old.policy
+                && current.task_policies == old.task_policies,
+            "Focus source/metadata changed; independent original public availability cannot transfer"
+        );
+    }
+    Ok(())
 }
 
 fn pinned_metadata(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
@@ -409,7 +459,7 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
         "input":request_pin,"source_commit":input.source_commit,"source_files":input.source_files,
         "source_catalog":input.source_catalog,"native_build_receipt":input.native_build_receipt,"native_source_group":native_source_group,"original_acquisition_receipt":input.acquisition_receipt,"original_asset_census":input.asset_census,
         "resource_policy":policy,"resource_policy_digest":policy_digest,"native_binary":binary,"native_binary_sha256":binary_sha256,"started_unix_ms":started_unix_ms,"elapsed_us":started.elapsed().as_micros(),"profiles":rows,
-        "NN_invocations":0,"task_qualified":false,"release_qualified":false,"public_source_available":false,
+        "source_only_focus_policy_transition":input.schema == "airk.private.context-metadata-regeneration/3","NN_invocations":0,"task_qualified":false,"release_qualified":false,"public_source_available":false,
         "limits":"Private same-weight metadata staging only. Old2048 numeric fixtures remain historical controls. New metadata has no product download authority. Context terminals remain unsupported; Read uses an extreme raw-score-only bootstrap, not fitted positive evidence."})
     };
     let report_path = input
@@ -469,14 +519,11 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                 "native preparation lost exact resource policy"
             );
             if old.declared_stage() == Some(Stage::Focus) {
-                ensure!(
-                    prepared.profile.max_tokens == 512
-                        && prepared.profile.compiler == old.compiler
-                        && prepared.profile.calibration == old.calibration
-                        && prepared.profile.policy == old.policy
-                        && prepared.profile.task_policies == old.task_policies,
-                    "Focus source/metadata changed; independent original public availability cannot transfer"
-                );
+                validate_focus_metadata_transition(
+                    &old,
+                    &prepared.profile,
+                    input.schema == "airk.private.context-metadata-regeneration/3",
+                )?;
             } else {
                 ensure!(
                     prepared.profile.max_tokens == 8192
@@ -594,4 +641,64 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
         ))?,
     )?;
     run
+}
+
+#[test]
+fn source_only_v3_preserves_original_graph_scope() {
+    assert!(graph_request_scope_dense(
+        "airk.private.context-metadata-regeneration/3",
+        false,
+        false,
+        false
+    ));
+    for (compact, large, dense) in [
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+        (true, true, false),
+    ] {
+        assert!(!graph_request_scope_dense(
+            "airk.private.context-metadata-regeneration/3",
+            compact,
+            large,
+            dense
+        ));
+    }
+}
+
+#[test]
+fn source_only_focus_metadata_is_versioned_and_keeps_cpu_shape() -> Result<()> {
+    let catalog: OriginalCatalog =
+        serde_json::from_slice(include_bytes!("../../release-catalog.json"))?;
+    let old = catalog
+        .profiles
+        .into_iter()
+        .find(|value| value.model == ModelChoice::FocusQwenReranker06B)
+        .context("Focus fixture")?;
+    let mut current = old.clone();
+    let policy = crate::arbiter::compiler::focus::policy_digest()?;
+    current.policy = policy;
+    current.task_policies = BTreeMap::from([(Task::FocusRank, policy)]);
+    current.calibration = Sha256Digest::from_bytes([0x67; 32]);
+    validate_focus_metadata_transition(&old, &current, true)?;
+    assert!(validate_focus_metadata_transition(&old, &current, false).is_err());
+    validate_focus_metadata_transition(&old, &old, false)?;
+    for mutation in 0..7 {
+        let mut changed = current.clone();
+        match mutation {
+            0 => changed.max_tokens = 8192,
+            1 => changed.compiler = Sha256Digest::from_bytes([0x89; 32]),
+            2 => changed.memory_reservation_bytes += 1,
+            3 => changed.runtime = "onnxruntime-cuda/1.30.0".into(),
+            4 => changed.max_candidates += 1,
+            5 => changed.model = ModelChoice::ContextQwenCompact,
+            6 => changed.task_policies.clear(),
+            _ => unreachable!(),
+        }
+        assert!(
+            validate_focus_metadata_transition(&old, &changed, true).is_err(),
+            "mutation {mutation}"
+        );
+    }
+    Ok(())
 }

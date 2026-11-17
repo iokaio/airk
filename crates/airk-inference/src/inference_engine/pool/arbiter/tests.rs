@@ -11,6 +11,7 @@ fn default_disabled_lane_never_creates_a_warm_or_source_queue() -> Result<()> {
         closing: Arc::new(AtomicBool::new(false)),
         service,
         done: AtomicBool::new(false),
+        unsettled: AtomicBool::new(false),
         running: AtomicUsize::new(0),
         changed: tokio::sync::Notify::new(),
     });
@@ -21,8 +22,12 @@ fn default_disabled_lane_never_creates_a_warm_or_source_queue() -> Result<()> {
     assert!(queue.jobs.is_empty());
     assert!(queue.warm.is_empty());
     assert!(
-        !queue.configuration.as_ref().unwrap().focus.enabled
-            && !queue.configuration.as_ref().unwrap().context.enabled
+        !queue.configuration.as_ref().unwrap().enabled(Stage::Focus)
+            && !queue
+                .configuration
+                .as_ref()
+                .unwrap()
+                .enabled(Stage::Context)
     );
     drop(queue);
     handle.close();
@@ -92,6 +97,7 @@ fn shared_fixture() -> Arc<Shared> {
         closing: Arc::new(AtomicBool::new(false)),
         service: Incarnation::from_bytes([1; 16]),
         done: AtomicBool::new(false),
+        unsettled: AtomicBool::new(false),
         running: AtomicUsize::new(0),
         changed: tokio::sync::Notify::new(),
     })
@@ -525,13 +531,13 @@ fn disabling_one_stage_does_not_select_or_release_the_other_resident() -> Result
     config.validate()?;
     let released = BTreeSet::new();
     assert!(retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Focus,
         focus,
         &released
     ));
     assert!(retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Context,
         context,
         &released
@@ -539,25 +545,25 @@ fn disabling_one_stage_does_not_select_or_release_the_other_resident() -> Result
     config.context.enabled = false;
     config.revision += 1;
     assert!(retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Focus,
         focus,
         &released
     ));
     assert!(!retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Context,
         context,
         &released
     ));
     assert!(!retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Focus,
         context,
         &released
     ));
     assert!(!retains_resident(
-        Some(&config),
+        Some(&NativeConfiguration::Legacy(config.clone())),
         Stage::Focus,
         focus,
         &BTreeSet::from([focus])

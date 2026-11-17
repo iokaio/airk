@@ -196,3 +196,25 @@ FP32 arrays, raw<=.001/mass<=.05/unchanged argmax, real process/Job settlement,
 memory/time and source custody. The failed flash numerical run stays failed.
 No promotion, terminal labels, model-training acceptance, public source URL,
 release authority or scope/limit waiver is created by this private proposal.
+
+
+## D08 source-only current Focus metadata (/3)
+
+The additive private regeneration request `/3` admits exactly the original three
+selected asset closures and no graph override. Historical `/1` still requires
+Focus metadata/policy equality; `/2` still emits exactly one authorized Context
+graph override. `/3` reuses the unchanged Focus512 compiler, neural/tokenizer/
+notice/fixture bytes, ABI, CPU runtime/fit and resource bounds, while the native
+constructor emits current source-bound relative-relevance metadata, task policy
+and private manifest. No learned threshold or probability calibration is added.
+Context uses the existing current8192 metadata constructor with unchanged original
+graphs; a Compact GQA graph remains the separate explicit `/2` request.
+
+All current source/build/request seals and original physical asset authentication
+remain mandatory. Source-only regeneration grants no old qualification transfer,
+public source availability, URLs, product Import or provisioning permission. New
+metadata has empty qualification/targets/downloads and uses the actual native
+EvaluationOwner route. Legacy CPU compatibility, if activated, needs a separately
+reviewed exact native ExecutionProfile-owned row; metadata regeneration alone
+cannot bypass current policy or CAL validation. Historical evidence retains its
+original policies and hashes.

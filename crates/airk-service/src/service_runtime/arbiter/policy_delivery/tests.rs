@@ -55,6 +55,8 @@ fn fixture() -> Result<(
 }
 fn guard(store: Arc<ConfigurationStore>, binding: ContextDeliveryBinding) -> PolicyDelivery {
     PolicyDelivery {
+        #[cfg(feature = "local-inference")]
+        device: None,
         configuration: Some(store),
         expected: vec![binding],
         digest: Sha256Digest::from_bytes([9; 32]),
@@ -166,6 +168,8 @@ async fn actual_outer_pipe_partial_write_closes_after_policy_revocation_without_
 fn original_cancel_or_expiry_refuses_even_without_model_or_optional_state() -> Result<()> {
     let root = tempfile::tempdir()?;
     let mut policy = PolicyDelivery {
+        #[cfg(feature = "local-inference")]
+        device: None,
         configuration: None,
         expected: Vec::new(),
         digest: Sha256Digest::from_bytes([9; 32]),

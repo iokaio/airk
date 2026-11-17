@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The reviewed operation table (contracts §4.3): read from the checked-in
+//! The reviewed operation table (contracts Â§4.3): read from the checked-in
 //! fixture, never hand-copied, and validated once with
 //! `admin_contract::validate_table` before any row is served.
 use airk_endpoint::admin_contract::{NeverOverHttp, OperationRow, Surface, validate_table};
@@ -51,7 +51,7 @@ impl Table {
 }
 
 /// How a reviewed row is served when its `method` is not itself a
-/// `ControlMethod` variant (contracts §4.3 amendment, Phase 5b). Reviewed
+/// `ControlMethod` variant (contracts Â§4.3 amendment, Phase 5b). Reviewed
 /// here and recorded in `CONTRACT.md`; a row not listed is served by its own
 /// `method`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +143,14 @@ mod arbiter_tests {
         for action in [
             "Status",
             "Initialize",
+            "StatusDevice",
+            "InitializeDevice",
+            "ConfigureDevice",
+            "MigrateDevice",
+            "ProvisionDevice",
+            "CancelDevice",
+            "RemoveDevice",
+            "RecoverDevice",
             "Configure",
             "Provision",
             "Cancel",
@@ -154,6 +162,14 @@ mod arbiter_tests {
             for other in [
                 "Status",
                 "Initialize",
+                "StatusDevice",
+                "InitializeDevice",
+                "ConfigureDevice",
+                "MigrateDevice",
+                "ProvisionDevice",
+                "CancelDevice",
+                "RemoveDevice",
+                "RecoverDevice",
                 "Configure",
                 "Provision",
                 "Cancel",
@@ -178,5 +194,116 @@ mod arbiter_tests {
         assert!(table.never_over_http(&serde_json::json!({"arbiter_focus_application":{}})));
         assert!(table.never_over_http(&serde_json::json!({"arbiter_focus_rank":{}})));
         assert!(table.never_over_http(&serde_json::json!({"arbiter_import":{}})));
+        assert!(table.never_over_http(&serde_json::json!({"arbiter_import_device":{}})));
+    }
+}
+
+#[cfg(test)]
+mod device_operation_tests {
+    use super::*;
+    #[test]
+    fn current_rows_use_complete_core_requests_and_cannot_alias_cpu_operations() {
+        use airk_core::arbiter::device::{
+            DeviceStageConfiguration, GpuPrecisionPreference, SelectedModel,
+        };
+        use airk_core::arbiter::{ManagementRequest, Stage};
+        use airk_core::identity::Sha256Digest;
+        let mut configuration = DeviceStageConfiguration::disabled();
+        configuration.selected_model = Some(SelectedModel::ContextCompact);
+        configuration.gpu_precision = GpuPrecisionPreference::Fp16;
+        for (operation, method, request, legacy) in [
+            (
+                "arbiter.status",
+                "Arbiter.StatusDevice",
+                ManagementRequest::StatusDevice,
+                "Arbiter.Status",
+            ),
+            (
+                "arbiter.initialize",
+                "Arbiter.InitializeDevice",
+                ManagementRequest::InitializeDevice {
+                    expected_legacy_configuration: None,
+                },
+                "Arbiter.Initialize",
+            ),
+            (
+                "arbiter.configure",
+                "Arbiter.ConfigureDevice",
+                ManagementRequest::ConfigureDevice {
+                    stage: Stage::Context,
+                    expected_revision: 7,
+                    configuration,
+                },
+                "Arbiter.Configure",
+            ),
+            (
+                "arbiter.migrate",
+                "Arbiter.MigrateDevice",
+                ManagementRequest::MigrateDevice {
+                    expected_revision: 7,
+                    expected_configuration: Sha256Digest::from_bytes([17; 32]),
+                },
+                "Arbiter.Configure",
+            ),
+        ] {
+            let value =
+                serde_json::to_value(airk_core::service::ControlMethod::Arbiter { request })
+                    .unwrap();
+            let row = table().unwrap().admin_row(operation).unwrap();
+            assert_eq!(row.method, method);
+            assert!(names(method, &value));
+            assert!(!names(legacy, &value));
+            if operation == "arbiter.configure" {
+                assert_eq!(
+                    value["arbiter"]["request"]["configuration"]["gpu_precision"],
+                    "fp16"
+                );
+            }
+            assert!(!table().unwrap().never_over_http(&value));
+        }
+    }
+}
+
+#[cfg(test)]
+mod full_device_lifecycle_rows {
+    use super::*;
+    #[test]
+    fn current_lifecycle_and_retained_cpu_rows_are_disjoint_exact_native_operations() {
+        for (operation, current, old) in [
+            ("provision", "ProvisionDevice", "Provision"),
+            ("cancel", "CancelDevice", "Cancel"),
+            ("remove", "RemoveDevice", "Remove"),
+            ("recover", "RecoverDevice", "Recover"),
+        ] {
+            let row = table()
+                .unwrap()
+                .admin_row(&format!("arbiter.{operation}"))
+                .unwrap();
+            assert_eq!(row.method, format!("Arbiter.{current}"));
+            let legacy = table()
+                .unwrap()
+                .admin_row(&format!("arbiter.{operation}_legacy"))
+                .unwrap();
+            assert_eq!(legacy.method, format!("Arbiter.{old}"));
+            let mut request = serde_json::json!({"operation":snake(current),"expected_revision":7});
+            if matches!(operation, "cancel" | "recover") {
+                request["stage"] = serde_json::json!("focus");
+            } else {
+                request["profile"] = serde_json::json!(
+                    "1111111111111111111111111111111111111111111111111111111111111111"
+                );
+            }
+            let body = serde_json::json!({"arbiter":{"request":request}});
+            let typed: airk_core::service::ControlMethod =
+                serde_json::from_value(body.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), body);
+            assert!(names(&row.method, &body));
+            assert!(!names(&legacy.method, &body));
+        }
+        assert!(
+            table()
+                .unwrap()
+                .never_over_http(&serde_json::json!({"arbiter_import_device":{}}))
+        );
     }
 }

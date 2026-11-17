@@ -6671,3 +6671,132 @@ the plan's critical path. No further CPU Large research or data expansion.
 E/critical-path-selfcheck-20261117T0435Z.json records2 passed/10 in_progress/
 6 blocked steps. Next review06:35Z; authorized deadline remains
 2026-11-19T05:29:42.2081757Z (Wednesday10:29p.m. Denver).
+
+### 2026-11-17 07:00Z — R8 delivery, platform and GPU foundations
+
+D06 is committed in e306258a2b6913e6ba91a20fe0b50dbe6ae8361f. Genuine test
+images build in344.896561s; the matched Windows R5 pair builds in110.665538s
+and its16-file/model preflight passes126.466879s. Receipts:
+E/d06-integrated-images-build-r1.json, E/windows-runtime-debug-r5-build.json
+and E/windows-runtime-debug-r5-preflight-r1.json. These current artifacts do
+not retag the delivered signed c547 R3 candidate or older model evidence.
+
+Fresh R154 R8 reaches full753-source readiness and secure idle, then delivers
+one full canonical packet in62.964776s under original120/125-second limits.
+Seven NN calls return29 finite scores with the same raw bits as R7. Context's
+three input digests match; Focus's four differ, so this is not same-input
+numerical qualification. Inference totals38.100893s. All35 journal records
+settle with no drops/writer failures. Original service PID70520 HANDLE exits0
+and closes before cutoff; canonical Shutdown reacquires the lease. Outer
+elapsed552.891634s. No retry or limit change is involved.
+
+Delivery past the old55/60-second clamps is proved; useful Answer quality is
+not: paragraphs=[], stop=budget, gaps=[unsupported], omitted_count2 and
+coverage unassessed/basis_omitted. All three Context decisions abstain under
+the unchanged fitted margin. Native verification remains UNVERIFIED0/18,
+26 references, receipt_bytes3283. Core's existing64KiB frame formula exactly
+reproduces3283 from56921 quoted body bytes,2048 headroom and the /2 reserve;
+this is separate from the262144-byte request budget, not a demonstrated
+duplicate work charge. A separate read-only audit matches18 saved citation
+hashes and25 text/ranges; it does not replace native verification. One run
+is not p95. E/r154-r8-postrun-comparison-r1/completed-r2/handoff.json SHA
+1fa57ae54ebbd90c7f96490bf86cab8bc1f92fee9ff82e8ed97c82a7bb2895b8
+retains25/25 actual-byte audit controls and the full original evidence.
+
+The reviewed ten-file Mac protected-system-alias correction is applied. Windows
+Clippy/25 regressions pass; actual Mac Clippy passes116.872s and one metadata
+case passes. Missing Nextest stops the next affected phase. The failed batch
+and cleanup remain retained. The official-cache Nextest helper transfer passes
+in0.395s; Root alone is running the remaining three-phase continuation, with no
+outcome yet claimed. Exact refresh, platform completion and I4 remain unqualified:
+E/mac-system-control-native-diagnostics-r1/batch-result.json.
+
+Reviewed24-file Core/Store device-metadata foundations are applied. Scoped
+Clippy R2 passes48.094228s;166 selected regressions yield164 passes/two
+failures. Strict unknown-field correction is applied; Clippy R3 passes54.365377s.
+Rust schema/semantic-case generation passes2/2 in59.665s. The49 generated device
+cases are adopted at fixtures/split/arbiter/device_cases.json, SHA
+4c882de0c41996fd8013632d60305cadb477227b0cb4e5de3897de7684a388e8;
+they explicitly retain qualification=false. Native Arbiter TypeScript and the
+editor alias are regenerated in place with ownership/ACLs preserved. The repaired
+Core/Store batch passes166/166 in58.175s with unchanged native source group
+39701bbf902ad9e31b1bc0769b0c05834f98fa87ec77ce06eceaf8eeef3474c5.
+The original two-test failure stays failed. Receipts include
+E/gpu-core-store-regressions-r1.json, E/gpu-core-store-clippy-r3.json and
+E/gpu-core-store-regressions-r2.json. These scoped passes do not qualify GPU
+execution or replace a final workspace gate.
+
+CUDA R8 fails compilation on a protected C API; the producer now uses the
+public API. R9/R10 compiler exits0 remain nonpasses because cleanup is unproven.
+R11 process-tree witnesses pass separately: receipt
+C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/capi-tree-controls-r11/receipt.json
+SHA6a8e2441c3b81245a41bb65423ac1af41a7ecc6d8dcb37c445c4f90bf1c46811.
+The actual syntax check then fails its original120-second deadline; diagnosis
+is pending. No CUDA build, native FP32/FP16 model or GPU qualification passes.
+
+The existing1867 human binary F2 pairs support their exact question/function
+relevance claim independently of MiniLM's21 visible whole-unit rows and missing
+terminal labels. Accepted splits/clone/chronology/power, native-visible replay,
+instruction/card and ranking-quality gates remain specific blockers. No new
+data, scoring, gradients or scope waiver is created. The11/11-control audit is
+E/f2-existing-pairs-admission-audit-r1/handoff.json SHA
+df45393443325169408213e86e31c05523f44279e53f667e90f4835823aea6b3.
+
+The06:35Z self-check retains2 passed/10 in_progress/6 blocked steps and
+prioritizes actual FP32 before efficient FP16 and remaining product gates.
+Last reported D free space is about438GiB; earlier reviewed incremental cleanup
+recovered22.170GiB while preserving the warm target. Next review08:35Z; deadline
+remains2026-11-19T05:29:42.2081757Z. The plan is incomplete. No release,
+publication, quality, GPU or final qualification is claimed.
+
+### 2026-11-17 — Mac refresh passes; separate exact-target cleanup
+
+The actual Mac continuation passes all37 selected tests: affected controls31/31
+in92.302707s, private-log controls5/5 in103.062850s and exact reference refresh
+1/1 in145.798307s including build (71.10s test execution). Each phase exits0
+with naturally settled owned descendants and no signals. Inputs remain unchanged.
+The continuation batch remains nonpass because automatic cargo clean exits101:
+CACHEDIR.TAG is missing; the target is preserved. Prior missing-Nextest and
+refresh failures retain their original identities. Full retained receipts/logs:
+E/neo-system-control-continuation-monitor-r1/receipt.json SHA
+3741d490766336c5a3a4a9edc058798199800a4daf252e811b7f81ca41181716.
+
+After independent review and explicit user authorization for manual artifact
+cleanup, Root separately removes the exact isolated UID501 target with
+no-follow inode/path/owner/tree/process guards. Actual inner cleanup passes
+1.407811s (1.738s outer), removing6426 entries; target absence is reobserved.
+The missing tag is recorded, not repaired. Source and original dirty-checkout
+status hashes remain unchanged. Logical file size is4920275336B; observed
+whole-volume available space increases4333711360B (4.036083GiB), a separate
+measurement subject to background host activity. Original automatic cleanup
+and batch failures are not relabelled. Eleven retained tag/inventory/storage/
+process/result files are bound by E/neo-exact-target-manual-cleanup-harvest-r1/
+receipt.json SHA6ac1d97666c476ecd274918df45a1e70a49380e7303ec516e9af1eecaa29da7f.
+
+The reviewed77-file higher native/device consumer change is applied. Eleven-crate
+all-target/all-feature Clippy passes33.958642s with unchanged inputs:
+E/gpu-integrated-clippy-r7.json. Grouped native regressions first pass104/105 with one original-error display
+regression. The correction preserves primary typed errors through context/
+transfer settlement failures and retains the original assertion. Scoped Retrieval
+Clippy then passes54.727125s; the same native group passes105/105 in163.032611s
+(0.617s tests,1526 filtered), E/gpu-integrated-regressions-r2.json, native
+ccd36381bfee8ede9cdcc9e999708fd35a0226670275f0a69431f129283ddb9c.
+The original failure remains retained. Current UI source checks pass110/110 in1.833913s,
+Admin typecheck3.606194s and editor typecheck7.402405s, with unchanged inputs:
+E/gpu-device-ui-regressions-r1.json, E/gpu-device-admin-typecheck-r1.json and
+E/gpu-device-editor-typecheck-r1.json. These do not retag signed R3 artifacts
+or establish real transport/device behavior.
+
+C++ core execution now has actual natural process-tree settlement proof.
+The1259-object CUDA provider build remains active under its original08:27Z
+cutoff; no GPU model has run. Native GPU, numerical/resource/CAL, full-workspace,
+installed and release gates remain open. Deadline and score floors are unchanged.
+
+The current Admin bundle is regenerated by the maintained producer and sealed:
+E/gpu-admin-assets-build-r1.json passes4.442841s and
+E/gpu-admin-assets-seal-r1.json passes3.249150s with the existing locked modules.
+Fresh inventory is E/admin-assets-g1.json. These asset checks do not establish
+an embedded current runtime or real transport pass. Base README, documentation
+index, historical1.9 release note and extension Marketplace text remain accurate
+for source1.8.207 and unqualified1.9 work. The Arbiter README documents native
+model/device/precision controls while preserving its research-notice tail.

@@ -891,6 +891,38 @@ fn canonical_control(
                 state.supervisor.stop_embedding(worker, force).await
             }
             ControlMethod::SourceStatus => state.sources.status(),
+            ControlMethod::Arbiter { request }
+                if arbiter::device_management::current_request(&request) =>
+            {
+                match &state.arbiter {
+                    Some(owner) => match owner
+                        .manage_device(request, &state.supervisor, effect_check.clone())
+                        .await
+                    {
+                        Ok(observation) => ControlResponse::ArbiterDevice {
+                            observation: Box::new(observation),
+                        },
+                        Err(error) => arbiter::failure(error),
+                    },
+                    None => ControlResponse::Failure {
+                        code: "arbiter_catalog_required".into(),
+                    },
+                }
+            }
+            ControlMethod::ArbiterImportDevice { request } => match &state.arbiter {
+                Some(owner) => match owner
+                    .import_device(*request, &state.supervisor, effect_check.clone())
+                    .await
+                {
+                    Ok(observation) => ControlResponse::ArbiterDevice {
+                        observation: Box::new(observation),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
             ControlMethod::Arbiter { request } => match &state.arbiter {
                 Some(owner) => match owner
                     .manage(request, &state.supervisor, effect_check.clone())

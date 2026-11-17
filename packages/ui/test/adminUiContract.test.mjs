@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import {readFile} from 'node:fs/promises';
 const { build } = createRequire(new URL('../../vscode/package.json', import.meta.url))('esbuild');
 const bundle = await build({ entryPoints: [fileURLToPath(new URL('../../vscode/src/adminUiContract.ts', import.meta.url))],
   bundle: true, write: false, platform: 'node', format: 'esm' });
@@ -58,4 +59,19 @@ test('C9 Admin Close is strict and may revoke captured ownership without startin
   assert.ok(actual.parseAdminUiRequest(close)); assert.equal(actual.parseAdminUiRequest({ ...close, body: {} }), null);
   assert.equal(actual.admitAdminUiRequest(close, { epoch: 3, ready: false, trusted: false, nativeEnabled: false, management: false }), null);
   assert.equal(actual.admitAdminUiRequest(close, { ...ready, epoch: 4 }), 'admin_ui_context_changed');
+});
+
+const deviceCases=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/device_cases.json',import.meta.url),'utf8'));
+const deviceRequests=deviceCases.cases.filter(row=>row.request?.operation.endsWith('_device')).map(row=>row.request);
+const deviceOperationTokens={status_device:'arbiter.status',initialize_device:'arbiter.initialize',configure_device:'arbiter.configure',migrate_device:'arbiter.migrate',provision_device:'arbiter.provision',cancel_device:'arbiter.cancel',remove_device:'arbiter.remove',recover_device:'arbiter.recover'};
+test('C9 current device management operation/input catalog is exact and full native bodies are preserved',()=>{
+ assert.deepEqual([...new Set(deviceRequests.map(row=>row.operation))].sort(),['cancel_device','configure_device','initialize_device','migrate_device','provision_device','recover_device','remove_device','status_device']);
+ assert.equal(actual.OPS.arbiterMigrate,'arbiter.migrate');
+ for(const native of deviceRequests){const operation=deviceOperationTokens[native.operation],body={arbiter:{request:native}};const parsed=actual.parseAdminUiRequest(request({operation,payload:{body}}));assert.ok(parsed,operation);assert.deepEqual(parsed.payload.body,body);assert.ok(Object.isFrozen(parsed.payload.body));}
+});
+
+test('current Admin device methods equal the independent eight-row native catalog, with no legacy alias',async()=>{
+ const catalog=JSON.parse(await readFile(new URL('../../../fixtures/split/i3/admin_operations.json',import.meta.url),'utf8'));
+ const expected=[['arbiter.status','Arbiter.StatusDevice'],['arbiter.initialize','Arbiter.InitializeDevice'],['arbiter.configure','Arbiter.ConfigureDevice'],['arbiter.migrate','Arbiter.MigrateDevice'],['arbiter.provision','Arbiter.ProvisionDevice'],['arbiter.cancel','Arbiter.CancelDevice'],['arbiter.remove','Arbiter.RemoveDevice'],['arbiter.recover','Arbiter.RecoverDevice']];
+ for(const [operation,method]of expected){const row=catalog.operations.find(row=>row.operation===operation);assert.ok(row,operation);assert.equal(row.method,method);assert.ok(row.surfaces.includes('admin'));assert.ok(Object.values(actual.OPS).includes(operation));}
 });

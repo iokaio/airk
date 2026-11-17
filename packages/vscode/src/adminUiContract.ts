@@ -61,6 +61,7 @@ export const OPS = {
   arbiterStatus: 'arbiter.status',
   arbiterInitialize: 'arbiter.initialize',
   arbiterConfigure: 'arbiter.configure',
+  arbiterMigrate: 'arbiter.migrate',
   arbiterProvision: 'arbiter.provision',
   arbiterCancel: 'arbiter.cancel',
   arbiterRemove: 'arbiter.remove',

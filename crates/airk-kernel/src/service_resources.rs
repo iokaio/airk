@@ -78,6 +78,10 @@ pub struct OptionalReleaseWait {
     registration: Option<u64>,
 }
 impl OptionalRelease {
+    /// Exact native charge identity, not a manifest, counter or completion claim.
+    pub fn same_charge(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     pub fn wait(&self) -> OptionalReleaseWait {
         OptionalReleaseWait {
             state: self.0.clone(),
@@ -144,8 +148,13 @@ pub struct OptionalReuse {
     charges: Arc<Mutex<BTreeMap<Incarnation, u64>>>,
     policy: Arc<std::sync::atomic::AtomicU64>,
     epoch: u64,
+    warm_extra_bytes: u64,
 }
 impl OptionalReuse {
+    /// Extra unallocated host work, never a second resident model charge.
+    pub fn warm_extra_bytes(&self) -> u64 {
+        self.warm_extra_bytes
+    }
     pub fn validate(&self, reservation: &OptionalReservation) -> Result<()> {
         ensure!(
             self.id == reservation.id
@@ -339,6 +348,19 @@ impl Resources {
         reservation: &OptionalReservation,
         fresh_available: Option<u64>,
     ) -> Result<OptionalReuse> {
+        self.reuse_optional_with_extra(reservation, reservation.bytes, fresh_available)
+    }
+    /// Native variant-specific extra host demand reuses its existing peak charge.
+    pub fn reuse_optional_with_extra(
+        &self,
+        reservation: &OptionalReservation,
+        warm_extra_bytes: u64,
+        fresh_available: Option<u64>,
+    ) -> Result<OptionalReuse> {
+        ensure!(
+            warm_extra_bytes <= reservation.bytes,
+            "warm extra exceeds admitted resident peak"
+        );
         ensure!(
             Arc::ptr_eq(&self.optional, &reservation.charges),
             "optional reservation belongs to another resource owner"
@@ -353,7 +375,7 @@ impl Resources {
         );
         ensure!(
             fresh_available
-                .is_some_and(|available| available >= reservation.bytes.saturating_add(256 << 20)),
+                .is_some_and(|available| available >= warm_extra_bytes.saturating_add(256 << 20)),
             "resident optional compute has no fresh observed OS headroom"
         );
         ensure!(
@@ -365,6 +387,7 @@ impl Resources {
             bytes: reservation.bytes,
             charges: self.optional.clone(),
             policy: self.optional_policy.clone(),
+            warm_extra_bytes,
             epoch: self
                 .optional_policy
                 .load(std::sync::atomic::Ordering::Acquire),
@@ -1087,6 +1110,72 @@ mod tests {
         assert_eq!(resources.reserved(), before + (16 << 20));
         drop(actual);
         assert_eq!(resources.reserved(), before);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod warm_phase_tests {
+    use super::*;
+    #[test]
+    fn measured_extra_reuses_full_peak_without_requiring_resident_bytes_again() -> Result<()> {
+        let resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        let before = resources.reserved();
+        let resident = resources.reserve_optional(
+            Incarnation::from_bytes([81; 16]),
+            16 << 30,
+            Some(40 << 30),
+        )?;
+        assert_eq!(resources.reserved(), before + (16 << 30));
+        assert!(resources.reuse_optional(&resident, Some(3 << 30)).is_err());
+        let reuse = resources.reuse_optional_with_extra(&resident, 2 << 30, Some(3 << 30))?;
+        assert_eq!(reuse.warm_extra_bytes(), 2 << 30);
+        reuse.validate(&resident)?;
+        assert_eq!(resources.reserved(), before + (16 << 30));
+        assert!(
+            resources
+                .reuse_optional_with_extra(&resident, 2 << 30, Some(2 << 30))
+                .is_err()
+        );
+        assert!(
+            resources
+                .reuse_optional_with_extra(&resident, 17 << 30, Some(40 << 30))
+                .is_err()
+        );
+        assert!(
+            resources
+                .reuse_optional_with_extra(&resident, 0, None)
+                .is_err()
+        );
+        drop(resident);
+        assert_eq!(resources.reserved(), before);
+        Ok(())
+    }
+    #[test]
+    fn measured_extra_still_refuses_foreign_charge_pressure_and_stale_epoch() -> Result<()> {
+        let mut resources = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        let foreign = Resources::new(ResourceConfiguration::default(), 32, Some(128 << 30))?;
+        let resident = resources.reserve_optional(
+            Incarnation::from_bytes([82; 16]),
+            16 << 30,
+            Some(40 << 30),
+        )?;
+        assert!(
+            foreign
+                .reuse_optional_with_extra(&resident, 1, Some(40 << 30))
+                .is_err()
+        );
+        let reuse = resources.reuse_optional_with_extra(&resident, 1, Some(1 << 30))?;
+        resources.reconfigure(ResourceConfiguration {
+            memory_bytes: Some(8 << 30),
+            ..Default::default()
+        })?;
+        assert!(reuse.validate(&resident).is_err());
+        assert!(
+            resources
+                .reuse_optional_with_extra(&resident, 1, Some(40 << 30))
+                .is_err()
+        );
         Ok(())
     }
 }

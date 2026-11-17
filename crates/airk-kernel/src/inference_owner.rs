@@ -45,6 +45,10 @@ impl NativeInferenceOwner {
             Ok(result)
         })?
     }
+    /// Native identity comparison, never a serialized ownership claim.
+    pub fn same_lease(&self, lease: &Arc<airk_store::service::ServiceLease>) -> bool {
+        Arc::ptr_eq(&self.0, lease)
+    }
     pub fn run<T>(&self, work: impl FnOnce() -> T) -> Result<T> {
         // SAFETY: the opaque owner retains the actual exclusive service lease
         // across this synchronous call. Each lane has its own non-Send scope.

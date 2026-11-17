@@ -1,0 +1,567 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Authentic native device probes on the existing inference lane, never status.
+use super::*;
+use airk_core::arbiter::Profile;
+use airk_core::arbiter::device::{CandidateRejection, SelectedModel, SelectionReason};
+use airk_retrieval::arbiter::runtime;
+#[cfg(feature = "gpu-cuda")]
+use airk_retrieval::arbiter::runtime::cuda::CudaDevice;
+
+pub struct BoundDeviceCandidate {
+    pub profile: ExecutionProfile,
+    pub probe_only: bool,
+    pub device: NativeDevice,
+    pub uuid: [u8; 16],
+    pub epoch: u64,
+    pub host_warm_extra_bytes: u64,
+}
+pub struct DeviceProbe {
+    pub candidates: Vec<BoundDeviceCandidate>,
+    pub rejections: Vec<CandidateRejection>,
+}
+pub(super) struct Probe {
+    pub lease: Arc<airk_store::service::ServiceLease>,
+    pub host: Arc<Reservation>,
+    #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
+    pub evaluation: Option<EvaluationProbe>,
+    pub model: SelectedModel,
+    pub deadline: Instant,
+    pub authority: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub reply: oneshot::Sender<Result<DeviceProbe>>,
+    pub compute: accounting::ComputeCharge,
+    pub _delivery: accounting::DeliveryCharge,
+}
+fn live(probe: &Probe) -> Result<()> {
+    warm_admission(
+        Some(probe.deadline),
+        Some(probe.authority.as_ref()),
+        Instant::now,
+    )
+}
+pub(super) fn probe(
+    owner: &airk_kernel::inference_owner::NativeInferenceOwner,
+    probe: &Probe,
+) -> Result<DeviceProbe> {
+    ensure!(
+        owner.same_lease(&probe.lease),
+        "device probe differs from original native owner lease"
+    );
+    live(probe)?;
+    ensure!(
+        probe.host.bytes() > 0,
+        "runtime probe requires actual bounded host reservation"
+    );
+    #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
+    if let Some(evaluation) = &probe.evaluation {
+        return evaluation_probe(probe, evaluation);
+    }
+    let mut result = DeviceProbe {
+        candidates: Vec::new(),
+        rejections: Vec::new(),
+    };
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        for profile in runtime::catalog_profiles()?
+            .into_iter()
+            .filter(|p| p.model == probe.model.model() && p.device_execution.is_some())
+        {
+            result.rejections.push(CandidateRejection {
+                manifest: Some(profile.manifest),
+                adapter_key: None,
+                reason: SelectionReason::RuntimeUnavailable,
+            });
+        }
+        Ok(result)
+    }
+    #[cfg(feature = "gpu-cuda")]
+    {
+        let catalog = runtime::catalog_profiles()?;
+        let variants: Vec<_> = catalog
+            .iter()
+            .filter(|profile| {
+                profile.model == probe.model.model() && profile.device_execution.is_some()
+            })
+            .collect();
+        if variants.is_empty() {
+            return Ok(result);
+        }
+        let installed = airk_host::gpu_runtime::installed_paths()?;
+        let runtime = match airk_host::gpu_runtime::admit(
+            probe.lease.clone(),
+            &installed.0,
+            &installed.1,
+            probe.deadline,
+        ) {
+            Ok(runtime) => runtime,
+            Err(_) => {
+                live(probe)?;
+                for profile in variants {
+                    result.rejections.push(CandidateRejection {
+                        manifest: Some(profile.manifest),
+                        adapter_key: None,
+                        reason: SelectionReason::RuntimeUnavailable,
+                    });
+                }
+                return Ok(result);
+            }
+        };
+        let adapters = match runtime.adapters(probe.deadline) {
+            Ok(adapters) if adapters.len().saturating_mul(variants.len()) <= 16 => adapters,
+            _ => {
+                live(probe)?;
+                for profile in variants {
+                    result.rejections.push(CandidateRejection {
+                        manifest: Some(profile.manifest),
+                        adapter_key: None,
+                        reason: SelectionReason::DriverUnsupported,
+                    });
+                }
+                return Ok(result);
+            }
+        };
+        for adapter in adapters {
+            live(probe)?;
+            let device = match runtime.device(adapter.uuid, probe.deadline) {
+                Ok(device) => device,
+                Err(_) => {
+                    live(probe)?;
+                    for profile in &variants {
+                        result.rejections.push(CandidateRejection {
+                            manifest: Some(profile.manifest),
+                            adapter_key: Some(adapter_key(adapter.uuid)),
+                            reason: SelectionReason::DeviceUnsupported,
+                        });
+                    }
+                    continue;
+                }
+            };
+            for description in &variants {
+                live(probe)?;
+                let profile = match ExecutionProfile::from_release_device(
+                    description.manifest,
+                    device.clone(),
+                    probe.deadline,
+                ) {
+                    Ok(profile) => profile,
+                    Err(_) => {
+                        result.rejections.push(CandidateRejection {
+                            manifest: Some(description.manifest),
+                            adapter_key: Some(adapter_key(adapter.uuid)),
+                            reason: SelectionReason::Unqualified,
+                        });
+                        continue;
+                    }
+                };
+                let Some(extra) = profile
+                    .host_warm_extra_bytes()
+                    .filter(|extra| *extra <= profile.description().memory_reservation_bytes)
+                else {
+                    result.rejections.push(CandidateRejection {
+                        manifest: Some(profile.description().manifest),
+                        adapter_key: Some(adapter_key(adapter.uuid)),
+                        reason: SelectionReason::Unqualified,
+                    });
+                    continue;
+                };
+                if profile.device_evidence().is_none() {
+                    result.rejections.push(CandidateRejection {
+                        manifest: Some(profile.description().manifest),
+                        adapter_key: Some(adapter_key(adapter.uuid)),
+                        reason: SelectionReason::Unqualified,
+                    });
+                    continue;
+                }
+                live(probe)?;
+                result.candidates.push(BoundDeviceCandidate {
+                    profile,
+                    probe_only: false,
+                    device: NativeDevice {
+                        device: device.clone(),
+                        _private: (),
+                    },
+                    uuid: adapter.uuid,
+                    epoch: device.epoch(),
+                    host_warm_extra_bytes: extra,
+                });
+            }
+        }
+        live(probe)?;
+        Ok(result)
+    }
+}
+#[cfg(feature = "gpu-cuda")]
+fn adapter_key(uuid: [u8; 16]) -> String {
+    uuid.iter().map(|v| format!("{v:02x}")).collect()
+}
+
+/// All fields which could release native resources are manually dropped only
+/// after actual synchronization. Failure retains original lease/pins/charge.
+pub(super) trait NativeSettlement {
+    fn settle(&self, deadline: Instant) -> Result<()>;
+    fn is_settled(&self) -> bool;
+}
+impl NativeSettlement for Scorer {
+    fn settle(&self, deadline: Instant) -> Result<()> {
+        self.synchronize(deadline)
+    }
+    fn is_settled(&self) -> bool {
+        self.device_settled()
+    }
+}
+pub(super) struct GuardedResident<S: NativeSettlement = Scorer> {
+    native_device: Option<NativeDevice>,
+    session: std::mem::ManuallyDrop<ResidentSession<S>>,
+    charge: std::mem::ManuallyDrop<Arc<Reservation>>,
+    owner: Arc<dyn Send + Sync>,
+    shared: std::sync::Weak<Shared>,
+    pub deadline: std::cell::Cell<Option<Instant>>,
+}
+impl GuardedResident {
+    pub fn new(
+        session: ResidentSession<Scorer>,
+        charge: Arc<Reservation>,
+        owner: airk_kernel::inference_owner::NativeInferenceOwner,
+        shared: &Arc<Shared>,
+        deadline: Option<Instant>,
+        native_device: Option<NativeDevice>,
+    ) -> Self {
+        Self {
+            native_device,
+            session: std::mem::ManuallyDrop::new(session),
+            charge: std::mem::ManuallyDrop::new(charge),
+            owner: Arc::new(owner),
+            shared: Arc::downgrade(shared),
+            deadline: std::cell::Cell::new(deadline),
+        }
+    }
+    pub fn scorer(&self) -> &Scorer {
+        &self.session.scorer
+    }
+    pub fn charge(&self) -> &Arc<Reservation> {
+        &self.charge
+    }
+}
+impl<S: NativeSettlement> Drop for GuardedResident<S> {
+    fn drop(&mut self) {
+        // Cleanup always performs the real native wait even after deadline.
+        // A late but known settled wait permits cleanup, never timely delivery.
+        let _ = self
+            .session
+            .scorer
+            .settle(self.deadline.get().unwrap_or_else(Instant::now));
+        if !self.session.scorer.is_settled() {
+            if let Some(shared) = self.shared.upgrade() {
+                shared.unsettled.store(true, Ordering::Release);
+            }
+            std::mem::forget(self.owner.clone());
+            return;
+        }
+        // SAFETY: actual synchronous device settlement was observed above. Each
+        // field is dropped exactly once, session/source before host reservation.
+        // SessionOwner performs a final real CUDA wait during Scorer teardown.
+        // Pins and charge must survive a newly observed teardown failure too.
+        let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: this scorer field is dropped exactly once. The enclosing
+            // ResidentSession remains ManuallyDrop and is never dropped again.
+            unsafe {
+                std::ptr::drop_in_place(&mut self.session.scorer);
+            }
+        }));
+        if dropped.is_err()
+            || self
+                .native_device
+                .as_ref()
+                .is_some_and(|device| device.poisoned())
+        {
+            if let Some(shared) = self.shared.upgrade() {
+                shared.unsettled.store(true, Ordering::Release);
+            }
+            std::mem::forget(self.owner.clone());
+            if let Err(panic) = dropped {
+                std::panic::resume_unwind(panic);
+            }
+            return;
+        }
+        // SAFETY: scorer teardown and its final device wait returned without
+        // uncertainty. Each remaining field is dropped once, pins before charge.
+        unsafe {
+            std::ptr::drop_in_place(&mut self.session._source);
+            std::mem::ManuallyDrop::drop(&mut self.charge);
+        }
+    }
+}
+
+/// An actual native device witness. The disabled build has no constructor.
+#[derive(Clone)]
+pub struct NativeDevice {
+    _private: (),
+    #[cfg(feature = "gpu-cuda")]
+    device: Arc<CudaDevice>,
+}
+impl NativeDevice {
+    pub fn epoch(&self) -> u64 {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.device.epoch()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            unreachable!("no native device witness exists in this build")
+        }
+    }
+    pub fn poisoned(&self) -> bool {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.device.poisoned()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            true
+        }
+    }
+}
+pub(super) fn saved_device(profile: &ExecutionProfile) -> Option<NativeDevice> {
+    #[cfg(feature = "gpu-cuda")]
+    {
+        profile.cuda_device().map(|device| NativeDevice {
+            device,
+            _private: (),
+        })
+    }
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        let _ = profile;
+        None
+    }
+}
+
+/// Source/config observation may take time; clock is sampled AFTER it returns.
+pub(super) fn warm_admission(
+    deadline: Option<Instant>,
+    authority: Option<&(dyn Fn() -> bool + Send + Sync)>,
+    now: impl FnOnce() -> Instant,
+) -> Result<()> {
+    ensure!(
+        authority.is_none_or(|check| check()),
+        "native warm authority revoked before load"
+    );
+    ensure!(
+        deadline.is_none_or(|deadline| now() < deadline),
+        "original native warm deadline expired before load"
+    );
+    Ok(())
+}
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeviceFaultKey {
+    pub profile: Sha256Digest,
+    pub execution_identity: String,
+    pub runtime_build: Sha256Digest,
+    pub adapter: [u8; 16],
+    pub driver_api_version: i32,
+    pub driver_image_sha256: Sha256Digest,
+    pub configuration_revision: u64,
+    pub device_catalog: Sha256Digest,
+    pub catalog_source: Sha256Digest,
+}
+/// The compute lane alone constructs this from a genuine native fault and
+/// observed device settlement. Release observer still proves session teardown.
+pub struct DeviceFault {
+    key: DeviceFaultKey,
+    release: airk_kernel::service_resources::OptionalRelease,
+}
+impl DeviceFault {
+    pub fn key(&self) -> &DeviceFaultKey {
+        &self.key
+    }
+    pub fn release(&self) -> airk_kernel::service_resources::OptionalRelease {
+        self.release.clone()
+    }
+}
+pub type DeviceFailureNotifier = Arc<dyn Fn(DeviceFault) + Send + Sync>;
+impl NativeDevice {
+    pub fn uuid(&self) -> [u8; 16] {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.device.uuid()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            unreachable!("no native device witness exists in this build")
+        }
+    }
+    pub fn driver_image_sha256(&self) -> Sha256Digest {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.device.driver_image_sha256()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            unreachable!("no native device witness exists in this build")
+        }
+    }
+    pub fn driver_api_version(&self) -> i32 {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.device.driver_api_version()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            unreachable!("no native device witness exists in this build")
+        }
+    }
+}
+pub fn circuit_key(
+    profile: &Profile,
+    device: &NativeDevice,
+    document: &airk_core::arbiter::device::DeviceConfiguration,
+) -> Result<DeviceFaultKey> {
+    let execution = profile
+        .device_execution
+        .as_ref()
+        .context("CPU cannot acquire GPU fault circuit")?;
+    ensure!(
+        !device.poisoned() && device.epoch() > 0,
+        "device settlement/epoch unavailable"
+    );
+    stable_circuit_key(
+        DeviceFaultKey {
+            profile: profile.manifest,
+            execution_identity: profile.device_execution_identity()?,
+            runtime_build: execution.runtime_build,
+            adapter: device.uuid(),
+            driver_api_version: device.driver_api_version(),
+            driver_image_sha256: device.driver_image_sha256(),
+            configuration_revision: document.revision,
+            device_catalog: document.device_catalog.catalog,
+            catalog_source: document.device_catalog.source,
+        },
+        device.epoch(),
+    )
+}
+pub(super) fn known_fault(
+    result: &Result<Scored>,
+    resident: &GuardedResident,
+    configuration: &NativeConfiguration,
+) -> Option<DeviceFault> {
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        let _ = (result, resident, configuration);
+        None
+    }
+    #[cfg(feature = "gpu-cuda")]
+    {
+        let error = result.as_ref().err()?;
+        if !airk_retrieval::arbiter::runtime::is_native_device_failure(error)
+            || !resident.scorer().device_settled()
+        {
+            return None;
+        }
+        let NativeConfiguration::Device { document, .. } = configuration else {
+            return None;
+        };
+        let device = resident.native_device.as_ref()?;
+        let key = circuit_key(resident.scorer().profile(), device, document).ok()?;
+        Some(DeviceFault {
+            key,
+            release: resident.charge().release_observer(),
+        })
+    }
+}
+
+pub(super) fn fault_reporting_allowed(
+    genuine_device_failure: bool,
+    settled: bool,
+    authority_current: bool,
+    in_time: bool,
+    delivery_open: bool,
+) -> bool {
+    genuine_device_failure && settled && authority_current && in_time && delivery_open
+}
+
+#[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
+pub(super) struct EvaluationProbe {
+    pub profile: Mutex<Option<ExecutionProfile>>,
+    pub plan: runtime::cuda::DeviceCapacityPlan,
+    pub adapter: [u8; 16],
+    pub bounds: airk_core::arbiter::device::GpuProbeReservation,
+}
+#[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
+fn evaluation_probe(probe: &Probe, evaluation: &EvaluationProbe) -> Result<DeviceProbe> {
+    evaluation.bounds.validate()?;
+    let profile = evaluation
+        .profile
+        .lock()
+        .map_err(|_| anyhow::anyhow!("native evaluation admission unavailable"))?
+        .take()
+        .context("native evaluation probe consumed")?;
+    let lease: Arc<dyn Send + Sync> = probe.lease.clone();
+    ensure!(
+        profile.evaluation()
+            && profile.execution_authorized()
+            && !profile.release_qualified()
+            && profile.matches_evaluation_lease(&lease),
+        "GPU probe does not own this actual evaluation lease"
+    );
+    validate_probe_bounds(
+        &evaluation.bounds,
+        probe.host.bytes(),
+        profile.description().memory_reservation_bytes,
+        evaluation.plan.cold_peak_bytes(),
+        evaluation.plan.headroom_bytes(),
+    )?;
+    live(probe)?;
+    let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
+    let runtime =
+        airk_host::gpu_runtime::admit(probe.lease.clone(), &root, &manifest, probe.deadline)?;
+    let device = runtime.device(evaluation.adapter, probe.deadline)?;
+    let profile = profile.bind_cuda_probe(device.clone(), evaluation.plan, probe.deadline)?;
+    let observed = device.observation(probe.deadline)?;
+    live(probe)?;
+    Ok(DeviceProbe {
+        candidates: vec![BoundDeviceCandidate {
+            profile,
+            probe_only: true,
+            device: NativeDevice {
+                device: device.clone(),
+                _private: (),
+            },
+            uuid: observed.uuid,
+            epoch: device.epoch(),
+            host_warm_extra_bytes: evaluation.bounds.host_limit_bytes,
+        }],
+        rejections: vec![],
+    })
+}
+#[cfg(any(all(feature = "test-support", feature = "gpu-cuda"), test))]
+pub(super) fn validate_probe_bounds(
+    bounds: &airk_core::arbiter::device::GpuProbeReservation,
+    host: u64,
+    profile_peak: u64,
+    cold: u64,
+    headroom: u64,
+) -> Result<()> {
+    bounds.validate()?;
+    ensure!(
+        host == bounds.host_limit_bytes
+            && profile_peak <= host
+            && cold > 0
+            && headroom > 0
+            && cold
+                .checked_add(headroom)
+                .is_some_and(|total| total <= bounds.device_limit_bytes),
+        "native unqualified probe exceeds original explicit host/device bounds"
+    );
+    Ok(())
+}
+
+fn stable_circuit_key(key: DeviceFaultKey, dispatch_epoch: u64) -> Result<DeviceFaultKey> {
+    ensure!(
+        dispatch_epoch > 0,
+        "device witness generation is unavailable"
+    );
+    // A wrapper/dispatch epoch is freshness evidence, never a circuit reset.
+    Ok(key)
+}

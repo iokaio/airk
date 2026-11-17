@@ -497,3 +497,73 @@ The driver may forward its actual canonical registration selection as opaque
 JSON into the native-owned field after setup, retaining the exact file SHA and
 source cohort. It must never derive an arbitrary Project ID or alter memberships
 to make the old guard pass. No native run is authorized by this proposal.
+
+
+## D08 current native device configuration and lifecycle
+
+Device management retains typed configuration4/status3 and authentic compiled
+catalog/source binding throughout migration, CAS, lifecycle, import, read
+admission and final delivery. Historical operations retain their typed legacy
+contract and refuse current device state. Migration preserves model, consent,
+index enrollment and unrelated state; only the Store owner publishes retained
+original bytes and CAS. Auto selects the same model's admitted FP32 GPU first,
+then admitted FP16 GPU, then admitted FP32 CPU. A preference restricts GPU only.
+Runtime metadata, status and advisory candidates cannot mint ExecutionProfiles,
+capacity claims or GPU evidence. Runtime and adapter observation happen on the
+existing native compute lane, with the actual service lease and original
+operation deadline. No provider/model downloads occur during evidence reads.
+Unknown native work retains all pins/charges and cannot trigger an automatic
+score replay. Pre-work unsupported/runtime/initialization/capacity failure may
+try the next admitted variant under the same original budget and current
+consent. Post-work fallback is future-only after actual synchronization and settlement.
+The failed read remains failed and is never replayed or given a fresh budget.
+
+
+### Native device lifecycle review boundaries
+
+A successful retained resident activation and a cold activation use the same
+Ready commit: exact current document/selected profile, live source and original
+cancellation, authentic lane observation and existing host reservation, and the
+retained device epoch must validate before Ready. Reinstalling a selection clears
+Ready until that commit. Repeated borrowing of one actual reservation deduplicates
+its release observer by the reservation's unique Arc identity. Distinct unresolved
+charges are retained even when their manifests match; successful actual release
+is the only pruning proof.
+
+InitializeDevice itself holds both stage admission mutexes, in Focus then Context
+order, through the Store checked mutation and every original liveness callback.
+Busy, pending, draining, resident, queued, running, stopping or unreleased work
+refuses; a previously rendered disabled status grants no mutation authority.
+Lock order is lifecycle admission -> Store configuration -> native selection ->
+source/credential/native delivery gates. Selection install never enters Store,
+lifecycle or native gates while holding selection. The final Store checked
+commit holds that same native selection mutex through the real delivery effect;
+a sampled atomic generation alone is not a serialization fence.
+
+CancelDevice invalidates the stage continuation generation, removes its bounded
+pending device command, and cancels the current notifier token even when idle.
+Final native operation admission checks that generation while holding the same
+stage lifecycle mutex, so an already-popped command cannot start after Cancel.
+Actual active/warming stage profiles are asked to release through their native
+owner; unknown work and charges remain held. Other stages are not canceled.
+
+Fault circuits use actual adapter UUID, signed driver identity/API, runtime build,
+profile execution identity, configuration revision and catalog/source identity.
+An ephemeral wrapper/device dispatch epoch is freshness evidence and cannot
+clear a circuit merely because the wrapper was dropped or reprobed. Actual epoch
+checks still fence resident reuse and delivery. No advisory fallback helper can
+authorize replay of the failed current request.
+
+
+### Exact native CPU Focus source-transition caller
+
+Focus receipts obtain a CPU task identity only from the admitted native
+ExecutionProfile::validated_task_policy owner after exact complete description
+comparison. That owner validates current source or its closed, source-pinned
+CPU transition witness. Receipt identity retains the actually declared task;
+current native compiler input digests are unchanged and never retagged. The
+owning transition audit stays separate from canonical evidence bodies. GPU
+Focus remains current-policy-only and has no CPU transition path. Context has
+no compatibility exception. Raw Profile metadata or a manifest-specific branch
+cannot grant this admission. All source/deadline/native-session/delivery fences
+remain as before.

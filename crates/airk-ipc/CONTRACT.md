@@ -238,3 +238,29 @@ Historical 2048/30000 requests remain explicit controls; their old evidence is
 not qualification at the larger shipping default. Core's
 [runtime budget decision](../../docs/arbiter/runtime-budget-contract.md) records
 the additive fixture and unchanged graph/publication requirements.
+
+
+## D08 additive device-management values
+
+ControlMethod::Arbiter retains its native Core request wrapper. StatusDevice,
+InitializeDevice, ConfigureDevice and MigrateDevice are additive typed operations
+and return required nonnull ControlResponse::ArbiterDevice with native Status/3.
+The original Arbiter observation remains Status/2; old status/configure bytes
+retain exact CPU semantics and cannot decode a GPU outcome as CPU. The existing
+request/response frame caps, same-user owner admission, unknown-outcome rules
+and original operation deadline/settlement obligations apply unchanged.
+No serialized profile, device choice, precision or receipt grants execution.
+I1 remains fixtures-only; device views are generated from the owning Core schema.
+
+The complete current family also includes ProvisionDevice, CancelDevice,
+RemoveDevice and RecoverDevice, preserving their original revision/profile/stage
+payload fields. Current private ArbiterImportDevice retains the exact native
+offline-directory input and returns ArbiterDevice Status/3; it is forbidden over
+HTTP. Ordinary CLI/I3 operations use current device variants. Explicit CLI
+--legacy (status-legacy for reads) and I3 *_legacy operations retain old CPU
+requests only. After device configuration/4 is active, those old operations
+require an updated client and cannot write or project a GPU result into CPU
+Status/2. Versioned configuration migration creates and fsyncs an exact archived
+configuration/3 before atomic replacement; no read/missing-state inspection
+performs migration or model acquisition. Core/Store own the migration, actual
+DeviceCatalog/source binding and assets/4 plus partial/4 custody.

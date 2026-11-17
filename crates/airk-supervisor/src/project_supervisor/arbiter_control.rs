@@ -3,6 +3,7 @@
 use super::*;
 use airk_core::arbiter::Configuration;
 use airk_inference::inference_engine::pool::arbiter::Handle;
+use airk_kernel::arbiter::device_runtime::NativeConfiguration;
 use std::sync::Weak;
 
 #[derive(Clone)]
@@ -20,7 +21,7 @@ impl ArbiterManagement {
         );
         Ok(())
     }
-    async fn handle(&self, configuration: Option<Configuration>) -> Result<Handle> {
+    async fn handle(&self, configuration: Option<NativeConfiguration>) -> Result<Handle> {
         self.require_open()?;
         let (reply, receive) = oneshot::channel();
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -44,7 +45,29 @@ impl ArbiterManagement {
     }
     pub async fn ensure(&self, configuration: Configuration) -> Result<Handle> {
         configuration.validate()?;
-        self.handle(Some(configuration)).await
+        self.handle(Some(NativeConfiguration::Legacy(configuration)))
+            .await
+    }
+    pub async fn ensure_native(
+        &self,
+        configuration: NativeConfiguration,
+        deadline: Instant,
+    ) -> Result<Handle> {
+        self.require_open()?;
+        configuration.validate()?;
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .upgrade()
+            .context("Arbiter supervisor closed")?
+            .try_send(Envelope::ArbiterHandle {
+                configuration: Some(configuration),
+                deadline,
+                reply,
+            })?;
+        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), receive)
+            .await
+            .context("original native readiness deadline")?
+            .context("native readiness owner closed")?
     }
     pub async fn reserve(
         &self,
@@ -67,7 +90,7 @@ impl ArbiterManagement {
     }
 }
 pub(super) struct Waiting {
-    pub configuration: Configuration,
+    pub configuration: NativeConfiguration,
     pub deadline: Instant,
     pub reply: oneshot::Sender<Result<Handle>>,
 }
@@ -93,7 +116,7 @@ pub(super) fn settle(
         } else {
             pool.map(|pool| {
                 pool.arbiter().and_then(|handle| {
-                    handle.configure(entry.configuration.clone())?;
+                    handle.configure_native(entry.configuration.clone())?;
                     Ok(handle)
                 })
             })

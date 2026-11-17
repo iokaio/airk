@@ -31,6 +31,13 @@ fn root<T: JsonSchema>(generator: &mut SchemaGenerator, roots: &mut Vec<String>)
 pub fn document() -> serde_json::Value {
     let mut generator = SchemaSettings::draft2020_12().into_generator();
     let mut roots = Vec::new();
+    root::<device::DeviceConfiguration>(&mut generator, &mut roots);
+    root::<device::DeviceStageConfiguration>(&mut generator, &mut roots);
+    root::<device::DeviceStatus>(&mut generator, &mut roots);
+    root::<device::DeviceStageStatus>(&mut generator, &mut roots);
+    root::<device::DeviceCatalog>(&mut generator, &mut roots);
+    root::<device::DeviceSelection>(&mut generator, &mut roots);
+    root::<device::GpuProbeReservation>(&mut generator, &mut roots);
     root::<Configuration>(&mut generator, &mut roots);
     root::<StageConfiguration>(&mut generator, &mut roots);
     root::<StageStatus>(&mut generator, &mut roots);
@@ -63,7 +70,7 @@ pub fn document() -> serde_json::Value {
         .collect();
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "title":"AIRK Arbiter Core contract","arbiter_contract":2,
+        "title":"AIRK Arbiter Core contract","arbiter_contract":2,"arbiter_device_contract":1,
         "roots":roots,"$defs":definitions,
     })
 }

@@ -574,6 +574,7 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::ExplorerHandoff { .. }
         | ControlResponse::ExplorerOffline { .. }
         | ControlResponse::Arbiter { .. }
+        | ControlResponse::ArbiterDevice { .. }
         | ControlResponse::ArbiterApplication { .. }
         | ControlResponse::ArbiterAdvice { .. }
         | ControlResponse::ArbiterContextActionAdvice { .. }

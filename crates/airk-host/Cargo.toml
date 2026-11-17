@@ -13,6 +13,7 @@ publish.workspace = true
 default = []
 local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model"]
 bundled-model = []
+gpu-cuda = ["local-inference", "airk-retrieval/gpu-cuda"]
 parser-training = []
 # Test helpers for the tests of crates built on this one (never production).
 test-support = []

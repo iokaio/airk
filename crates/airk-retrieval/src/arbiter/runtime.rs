@@ -23,6 +23,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod cpu_source_transition;
+#[cfg(feature = "gpu-cuda")]
+pub mod cuda;
 #[cfg(test)]
 mod embedded_catalog_tests;
 mod input;
@@ -32,6 +35,7 @@ mod local_test_catalog_emitter;
 mod local_test_tests;
 #[cfg(feature = "test-support")]
 pub mod qualification;
+mod session_owner;
 
 /// Source-policy checks precede asset reads/session construction. New Context
 /// compiler policy is distinct from the whole-card semantic task policy.
@@ -141,6 +145,9 @@ pub struct ExecutionProfile {
     description: Profile,
     release: bool,
     evaluation: Option<Arc<dyn Send + Sync>>,
+    source_transition: Option<cpu_source_transition::CpuSourceTransition>,
+    #[cfg(feature = "gpu-cuda")]
+    gpu: Option<cuda::Binding>,
 }
 /// Descriptions come from the same immutable native owner as execution. A
 /// listed candidate is not an execution capability or qualification claim.
@@ -166,15 +173,55 @@ pub fn catalog_profiles() -> Result<Vec<Profile>> {
     }
     Ok(catalog.profiles)
 }
+fn admit_source_transition(
+    profile: &Profile,
+) -> Result<Option<cpu_source_transition::CpuSourceTransition>> {
+    match validate_selected_policies(profile) {
+        Ok(()) => Ok(None),
+        Err(current_error) => match cpu_source_transition::CpuSourceTransition::admit(profile) {
+            Ok(witness) => Ok(Some(witness)),
+            Err(_) => Err(current_error),
+        },
+    }
+}
 impl ExecutionProfile {
+    fn validate_native_source(&self) -> Result<()> {
+        match &self.source_transition {
+            Some(witness) => witness.validate(&self.description),
+            None => validate_selected_policies(&self.description),
+        }
+    }
+    /// Return this exact admitted profile's declared task identity, only after
+    /// current source or the closed native CPU witness has been revalidated.
+    pub fn validated_task_policy(&self, task: Task) -> Result<Sha256Digest> {
+        self.validate_native_source()?;
+        self.description
+            .task_policies
+            .get(&task)
+            .copied()
+            .context("task not in admitted native profile")
+    }
+    pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {
+        self.validate_native_source()?;
+        if let Some(witness) = &self.source_transition {
+            return Ok(Some(serde_json::to_value(
+                witness.record(&self.description)?,
+            )?));
+        }
+        Ok(None)
+    }
     pub fn from_release(manifest: Sha256Digest) -> Result<Self> {
         let description = catalog_profiles()?
             .into_iter()
             .find(|profile| profile.manifest == manifest)
             .context("Arbiter profile is not release-qualified")?;
         description.validate()?;
+        ensure!(
+            description.device_execution.is_none(),
+            "GPU release requires actual native device witness"
+        );
         description.validate_release_downloads()?;
-        validate_selected_policies(&description)?;
+        let source_transition = admit_source_transition(&description)?;
         release_qualification_gate(&description, env!("CARGO_PKG_VERSION"))?;
         if description.tasks.contains(&Task::ContextNextRead) {
             ensure!(
@@ -192,8 +239,9 @@ impl ExecutionProfile {
         }
         if description.tasks.contains(&Task::FocusRank) {
             ensure!(
-                description.task_policies.get(&Task::FocusRank)
-                    == Some(&super::compiler::focus::policy_digest()?),
+                source_transition.is_some()
+                    || description.task_policies.get(&Task::FocusRank)
+                        == Some(&super::compiler::focus::policy_digest()?),
                 "Arbiter Focus source policy differs from qualified profile"
             );
         }
@@ -201,6 +249,9 @@ impl ExecutionProfile {
             description,
             release: true,
             evaluation: None,
+            source_transition,
+            #[cfg(feature = "gpu-cuda")]
+            gpu: None,
         })
     }
     #[cfg(any(test, feature = "test-support"))]
@@ -210,6 +261,9 @@ impl ExecutionProfile {
             description,
             release: false,
             evaluation: None,
+            source_transition: None,
+            #[cfg(feature = "gpu-cuda")]
+            gpu: None,
         })
     }
     pub fn execution_authorized(&self) -> bool {
@@ -249,7 +303,7 @@ impl EvaluationCatalog {
         let mut seen = BTreeSet::new();
         for profile in &profiles {
             profile.validate()?;
-            validate_selected_policies(profile)?;
+            admit_source_transition(profile)?;
             ensure!(
                 profile.qualification.is_none(),
                 "evaluation cannot mint final qualification"
@@ -274,6 +328,7 @@ impl EvaluationCatalog {
             .find(|p| p.manifest == manifest)
             .context("profile outside private evaluation catalog")?
             .clone();
+        let source_transition = admit_source_transition(&description)?;
         if description.tasks.contains(&Task::ContextNextRead) {
             ensure!(
                 description.task_policies.get(&Task::ContextNextRead)
@@ -290,8 +345,9 @@ impl EvaluationCatalog {
         }
         if description.tasks.contains(&Task::FocusRank) {
             ensure!(
-                description.task_policies.get(&Task::FocusRank)
-                    == Some(&super::compiler::focus::policy_digest()?),
+                source_transition.is_some()
+                    || description.task_policies.get(&Task::FocusRank)
+                        == Some(&super::compiler::focus::policy_digest()?),
                 "evaluation Focus source policy differs from native constructor"
             );
         }
@@ -299,6 +355,9 @@ impl EvaluationCatalog {
             description,
             release: false,
             evaluation: Some(self.lease.clone()),
+            source_transition,
+            #[cfg(feature = "gpu-cuda")]
+            gpu: None,
         })
     }
 }
@@ -306,7 +365,7 @@ impl EvaluationCatalog {
 pub struct Scorer {
     profile: ExecutionProfile,
     compiler: Compiler,
-    session: Mutex<Session>,
+    session: Mutex<session_owner::SessionOwner>,
     _environment: crate::onnx::SessionEnvironmentLease,
     physical_cores: usize,
     joint_calibration:
@@ -352,12 +411,34 @@ impl Scorer {
     ) -> Result<Self> {
         crate::native_inference::require_service_compute()?;
         profile.description.validate()?;
-        validate_selected_policies(profile.description())?;
+        profile.validate_native_source()?;
+        #[cfg(feature = "gpu-cuda")]
+        let gpu = profile.gpu.clone();
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(binding) = &gpu {
+            binding.device.validate_profile(profile.description())?;
+            cuda::in_time(binding.load_deadline)?;
+        }
         ensure!(
-            profile.description.runtime == crate::model::ONNX_RUNTIME_ENGINE,
+            profile.description.runtime == crate::model::ONNX_RUNTIME_ENGINE || {
+                #[cfg(feature = "gpu-cuda")]
+                {
+                    gpu.is_some()
+                }
+                #[cfg(not(feature = "gpu-cuda"))]
+                {
+                    false
+                }
+            },
             "Arbiter runtime differs from native image"
         );
-        let fit = profile.description.cpu_fit.clone().unwrap_or_default();
+        let fit = profile
+            .description
+            .device_execution
+            .as_ref()
+            .map(|v| v.host_fit.clone())
+            .or_else(|| profile.description.cpu_fit.clone())
+            .unwrap_or_default();
         fit.validate()?;
         let physical_cores = airk_process::cpu_fit::usable_physical_cores()
             .context("usable physical-core observation unavailable")?;
@@ -431,17 +512,38 @@ impl Scorer {
         let large_initializers = external_data::large_initializers(&graph, &external)?;
         crate::onnx::initialize_runtime()?;
         let environment = crate::onnx::acquire_session_environment()?;
+        #[cfg(feature = "gpu-cuda")]
+        let cold = match &gpu {
+            Some(b) => Some(b.device.reserve_cold_load(
+                b.plan.cold_peak_bytes(),
+                b.plan.headroom_bytes(),
+                b.load_deadline,
+            )?),
+            None => None,
+        };
         let mut builder = Session::builder()?
             .with_intra_threads(fit.intra_threads)?
             .with_inter_threads(fit.inter_threads)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_parallel_execution(false)?
             .with_memory_pattern(false)?
-            .with_execution_providers([CPUExecutionProvider::default()
-                .with_arena_allocator(false)
-                .build()])?
             .with_config_entry("session.intra_op.allow_spinning", "0")?
             .with_config_entry("session.inter_op.allow_spinning", "0")?;
+        #[cfg(feature = "gpu-cuda")]
+        {
+            builder = match &gpu {
+                Some(binding) => binding.configure(builder)?,
+                None => builder.with_execution_providers([CPUExecutionProvider::default()
+                    .with_arena_allocator(false)
+                    .build()])?,
+            };
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            builder = builder.with_execution_providers([CPUExecutionProvider::default()
+                .with_arena_allocator(false)
+                .build()])?;
+        }
         builder = configure(builder)?;
         for asset in profile
             .description
@@ -488,9 +590,34 @@ impl Scorer {
         }
         // Every external reference has been audited and supplied from verified
         // memory. Native loading never reopens an asset path or source file.
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(binding) = &gpu {
+            cuda::in_time(binding.load_deadline)?;
+        }
         let session = builder
             .commit_from_memory(&graph)
+            .map_err(|error| {
+                #[cfg(feature = "gpu-cuda")]
+                if gpu.is_some() {
+                    return cuda::run_failure(error);
+                }
+                anyhow::Error::from(error)
+            })
             .context("Arbiter native model load failed")?;
+        let session = session_owner::SessionOwner::new(
+            session,
+            #[cfg(feature = "gpu-cuda")]
+            gpu.clone(),
+        );
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(claim) = cold {
+            claim.settle()?;
+        }
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(binding) = &gpu {
+            binding.device.placement(&session)?.require_strict()?;
+        }
+
         let focus = profile.description.abi.readout == Readout::FocusYesNo;
         let output_name = if focus { "logits" } else { "scores" };
         let expected = if focus {
@@ -620,6 +747,13 @@ impl Scorer {
             .into())
     }
     pub fn execution_identity(&self) -> Result<(String, usize)> {
+        #[cfg(feature = "gpu-cuda")]
+        if self.profile.gpu.is_some() {
+            return Ok((
+                self.profile.description.device_execution_identity()?,
+                self.physical_cores,
+            ));
+        }
         Ok((
             self.profile
                 .description
@@ -649,10 +783,52 @@ impl Scorer {
         question: &str,
         candidates: &[super::compiler::Candidate],
     ) -> Result<CompiledInput> {
+        self.profile.validate_native_source()?;
         self.compiler.compile(state, question, candidates)
     }
+    pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {
+        self.profile.source_transition_record()
+    }
+    pub fn source_transition_input(
+        &self,
+        input: &CompiledInput,
+    ) -> Result<Option<serde_json::Value>> {
+        self.profile.validate_native_source()?;
+        if let Some(witness) = &self.profile.source_transition {
+            return Ok(Some(serde_json::to_value(
+                witness.bind_input(self.profile.description(), input.input_digest)?,
+            )?));
+        }
+        Ok(None)
+    }
     pub fn score(&self, input: &CompiledInput) -> Result<Vec<f32>> {
+        #[cfg(feature = "gpu-cuda")]
+        ensure!(
+            self.profile.gpu.is_none(),
+            "GPU scoring requires caller original deadline"
+        );
+        self.score_owned(input, None)
+    }
+    pub fn score_with_deadline(
+        &self,
+        input: &CompiledInput,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<f32>> {
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "original scorer deadline expired"
+        );
+        self.score_owned(input, Some(deadline))
+    }
+    fn score_owned(
+        &self,
+        input: &CompiledInput,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Vec<f32>> {
         crate::native_inference::require_service_compute()?;
+        self.profile.validate_native_source()?;
+        #[cfg(not(feature = "gpu-cuda"))]
+        let _ = deadline;
         let tokens = input.input_ids.len();
         let candidates = input.candidate_positions.len();
         let focus = self.profile.description.abi.readout == Readout::FocusYesNo;
@@ -667,6 +843,16 @@ impl Scorer {
             .session
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(binding) = &self.profile.gpu {
+            return cuda::score_gpu(
+                &mut session,
+                binding,
+                input,
+                deadline.context("original GPU score deadline required")?,
+                focus,
+            );
+        }
         let output_name = if focus { "logits" } else { "scores" };
         let options =
             RunOptions::new()?.with_outputs(OutputSelector::no_default().with(output_name));
@@ -688,6 +874,12 @@ impl Scorer {
                 && scores.iter().all(|score| score.is_finite()),
             "Arbiter score shape or finite-value contract changed"
         );
+        if let Some(deadline) = deadline {
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "original scorer deadline expired before delivery"
+            );
+        }
         Ok(scores.to_vec())
     }
 }
@@ -986,3 +1178,226 @@ fn synthetic_gqa_profile_with_bias(
 
 #[cfg(test)]
 mod dense_synthetic_tests;
+
+/// Exact embedded bytes, never a caller supplied catalog/descriptor digest.
+pub fn catalog_source_digest() -> Sha256Digest {
+    airk_core::identity::framed_digest(
+        b"airk.native.arbiter-catalog-source/1",
+        &[include_bytes!("release-catalog.json")],
+    )
+}
+pub fn device_catalog() -> Result<airk_core::arbiter::device::DeviceCatalog> {
+    use airk_core::arbiter::device::*;
+    let profiles = catalog_profiles()?;
+    let mut value = DeviceCatalog {
+        schema: DEVICE_CATALOG_SCHEMA.into(),
+        focus: Vec::new(),
+        context_compact: Vec::new(),
+        context_large: Vec::new(),
+    };
+    for p in &profiles {
+        let row = VariantReference {
+            manifest: p.manifest,
+            execution_identity: p.device_execution_identity()?,
+        };
+        match SelectedModel::from_model(p.model)? {
+            SelectedModel::Focus => value.focus.push(row),
+            SelectedModel::ContextCompact => value.context_compact.push(row),
+            SelectedModel::ContextLarge => value.context_large.push(row),
+        }
+    }
+    value.validate(|sha| profiles.iter().find(|p| p.manifest == sha))?;
+    Ok(value)
+}
+impl ExecutionProfile {
+    pub fn device_evidence(&self) -> Option<airk_core::arbiter::device::DeviceEvidence> {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.gpu.as_ref().and_then(|b| b.evidence.clone())
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            None
+        }
+    }
+    pub fn host_warm_extra_bytes(&self) -> Option<u64> {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            self.gpu.as_ref().and_then(|b| b.host_warm_extra_bytes)
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            None
+        }
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn cuda_device(&self) -> Option<Arc<cuda::CudaDevice>> {
+        self.gpu.as_ref().map(|b| b.device.clone())
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn bound_device_epoch(&self) -> Option<u64> {
+        self.gpu.as_ref().map(|b| b.device.epoch())
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn bound_device_uuid(&self) -> Option<[u8; 16]> {
+        self.gpu.as_ref().map(|b| b.device.uuid())
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn bind_cuda_device(
+        mut self,
+        device: Arc<cuda::CudaDevice>,
+        deadline: std::time::Instant,
+    ) -> Result<Self> {
+        crate::native_inference::require_service_compute()?;
+        ensure!(
+            self.execution_authorized(),
+            "GPU binding requires native release/evaluation capability"
+        );
+        self.gpu = Some(cuda::Binding::qualified(
+            device,
+            self.description(),
+            deadline,
+        )?);
+        Ok(self)
+    }
+    #[cfg(all(feature = "gpu-cuda", any(test, feature = "test-support")))]
+    pub fn bind_cuda_probe(
+        mut self,
+        device: Arc<cuda::CudaDevice>,
+        plan: cuda::DeviceCapacityPlan,
+        deadline: std::time::Instant,
+    ) -> Result<Self> {
+        crate::native_inference::require_service_compute()?;
+        ensure!(
+            self.execution_authorized() && self.evaluation() && !self.release,
+            "unqualified GPU probe requires actual native evaluation lease"
+        );
+        self.gpu = Some(cuda::Binding::probe(
+            device,
+            self.description(),
+            plan,
+            deadline,
+        )?);
+        Ok(self)
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn from_release_device(
+        manifest: Sha256Digest,
+        device: Arc<cuda::CudaDevice>,
+        deadline: std::time::Instant,
+    ) -> Result<Self> {
+        crate::native_inference::require_service_compute()?;
+        let description = catalog_profiles()?
+            .into_iter()
+            .find(|p| p.manifest == manifest)
+            .context("GPU variant is outside compiled release catalog")?;
+        description.validate()?;
+        description.validate_release_downloads()?;
+        validate_selected_policies(&description)?;
+        ensure!(
+            description.device_execution.is_some()
+                && description.qualification.is_some()
+                && description
+                    .qualified_targets
+                    .iter()
+                    .any(|row| row.target == current_target()),
+            "GPU variant has no native release qualification"
+        );
+        Self {
+            description,
+            release: true,
+            evaluation: None,
+            source_transition: None,
+            gpu: None,
+        }
+        .bind_cuda_device(device, deadline)
+    }
+}
+impl Scorer {
+    pub fn device_settled(&self) -> bool {
+        self.session
+            .lock()
+            .map(|s| s.device_settled())
+            .unwrap_or(false)
+    }
+    pub fn synchronize(&self, deadline: std::time::Instant) -> Result<()> {
+        self.session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native session owner poisoned"))?
+            .synchronize(deadline)
+    }
+    #[cfg(feature = "gpu-cuda")]
+    pub fn device_observation(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<Option<cuda::AdapterObservation>> {
+        self.profile
+            .gpu
+            .as_ref()
+            .map(|b| b.device.observation(deadline))
+            .transpose()
+    }
+}
+
+/// Asset-management description only. This creates no execution capability.
+pub fn release_asset_profile(manifest: Sha256Digest) -> Result<Profile> {
+    let profile = catalog_profiles()?
+        .into_iter()
+        .find(|p| p.manifest == manifest)
+        .context("profile is outside compiled release catalog")?;
+    profile.validate()?;
+    profile.validate_release_downloads()?;
+    admit_source_transition(&profile)?;
+    if profile.device_execution.is_some() {
+        ensure!(
+            profile.qualification.is_some()
+                && profile
+                    .qualified_targets
+                    .iter()
+                    .any(|v| v.target == current_target()),
+            "GPU assets have no native release evidence"
+        );
+    } else {
+        release_qualification_gate(&profile, env!("CARGO_PKG_VERSION"))?;
+    }
+    Ok(profile)
+}
+
+#[cfg(feature = "gpu-cuda")]
+impl Scorer {
+    pub fn device_placement(&self) -> Result<Option<cuda::PlacementObservation>> {
+        crate::native_inference::require_service_compute()?;
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native session owner poisoned"))?;
+        self.profile
+            .gpu
+            .as_ref()
+            .map(|b| b.device.placement(&session))
+            .transpose()
+    }
+}
+
+/// Only private typed native execution faults qualify. Input, source, deadline,
+/// authority and cancellation strings are never a device-failure heuristic.
+pub fn is_native_device_failure(error: &anyhow::Error) -> bool {
+    #[cfg(feature = "gpu-cuda")]
+    {
+        error.chain().any(|v| v.is::<cuda::NativeDeviceFailure>())
+    }
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl ExecutionProfile {
+    pub fn matches_evaluation_lease(&self, lease: &Arc<dyn Send + Sync>) -> bool {
+        self.evaluation
+            .as_ref()
+            .is_some_and(|actual| Arc::ptr_eq(actual, lease))
+    }
+}

@@ -12,29 +12,31 @@ use tokio_util::sync::CancellationToken;
 pub(in crate::service_runtime) mod acquisition_fixture;
 
 pub(super) struct State {
-    serial: u64,
-    accepted_configure_revision: u64,
-    busy: bool,
-    stopping: bool,
-    settled: Arc<tokio::sync::Notify>,
-    charges: Vec<(
+    pub(super) serial: u64,
+    pub(super) device_tasks: usize,
+    pub(super) accepted_configure_revision: u64,
+    pub(super) busy: bool,
+    pub(super) stopping: bool,
+    pub(super) settled: Arc<tokio::sync::Notify>,
+    pub(super) charges: Vec<(
         Sha256Digest,
         airk_kernel::service_resources::OptionalRelease,
     )>,
-    profile: Option<Sha256Digest>,
-    phase: Availability,
-    reason: String,
-    cancel: CancellationToken,
-    handle: Option<Handle>,
+    pub(super) profile: Option<Sha256Digest>,
+    pub(super) phase: Availability,
+    pub(super) reason: String,
+    pub(super) cancel: CancellationToken,
+    pub(super) handle: Option<Handle>,
     pending: Option<PreparedLaunch>,
-    source_log: Option<airk_host::service_logs::Log>,
+    pub(super) source_log: Option<airk_host::service_logs::Log>,
     #[cfg(all(test, feature = "test-support"))]
-    warm_observer: Option<super::warm_observer::Observer>,
+    pub(super) warm_observer: Option<super::warm_observer::Observer>,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
             serial: 0,
+            device_tasks: 0,
             accepted_configure_revision: 0,
             busy: false,
             stopping: false,
@@ -56,7 +58,12 @@ impl Default for State {
 /// this note so no surface presents it as release-qualified.
 const LOCAL_TEST_NOTE: &str = "Unqualified local test profile (not release-qualified).";
 
-fn phase(shared: &Arc<Mutex<State>>, serial: u64, value: Availability, reason: &str) -> Result<()> {
+pub(super) fn phase(
+    shared: &Arc<Mutex<State>>,
+    serial: u64,
+    value: Availability,
+    reason: &str,
+) -> Result<()> {
     let mut state = shared
         .lock()
         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
@@ -72,10 +79,18 @@ fn phase(shared: &Arc<Mutex<State>>, serial: u64, value: Availability, reason: &
     state.reason = bounded_reason(reason);
     Ok(())
 }
-fn start(
+pub(super) fn start(
     shared: &Arc<Mutex<State>>,
     profile: Sha256Digest,
     effect_check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
+) -> Result<(u64, CancellationToken)> {
+    start_checked(shared, profile, effect_check, || Ok(()))
+}
+pub(super) fn start_checked(
+    shared: &Arc<Mutex<State>>,
+    profile: Sha256Digest,
+    effect_check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
+    admit: impl FnOnce() -> Result<()>,
 ) -> Result<(u64, CancellationToken)> {
     let mut state = shared
         .lock()
@@ -86,6 +101,7 @@ fn start(
         "Arbiter lifecycle operation remains active; cancel or wait for its original result"
     );
     super::super::native_admin::check_effect(effect_check)?;
+    admit()?;
     state.serial = state
         .serial
         .checked_add(1)
@@ -97,7 +113,7 @@ fn start(
     state.cancel = CancellationToken::new();
     Ok((state.serial, state.cancel.clone()))
 }
-fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
+pub(super) fn complete(shared: &Arc<Mutex<State>>, serial: u64, result: &Result<()>) {
     if let Ok(mut state) = shared.lock()
         && state.serial == serial
     {
@@ -135,7 +151,7 @@ pub(super) fn user_failure_reason(error: &anyhow::Error) -> String {
         _ => format!("{error:#}"),
     }
 }
-fn cancel_current(state: &mut State) {
+pub(super) fn cancel_current(state: &mut State) {
     state.pending = None;
     if state.busy {
         state.cancel.cancel();
@@ -303,7 +319,7 @@ struct WarmContext<'a> {
     rollback_pins: &'a mut Vec<PinnedAssets>,
     admission: Option<&'a DeferredAdmission>,
 }
-async fn remember_charge(
+pub(super) async fn remember_charge(
     shared: &Arc<Mutex<State>>,
     manifest: Sha256Digest,
     charge: airk_kernel::service_resources::OptionalRelease,
@@ -328,6 +344,16 @@ async fn remember_charge(
                 std::task::Poll::Ready(Ok(()))
             )
         });
+        if let Some((current, _)) = state
+            .charges
+            .iter_mut()
+            .find(|(_, known)| known.same_charge(&charge))
+        {
+            // One runtime-init charge can transfer to the actual selected warm.
+            // Update its target association without adding/releasing an observer.
+            *current = manifest;
+            return std::task::Poll::Ready(Ok(()));
+        }
         if state.charges.len() >= airk_kernel::service_resources::MAX_OPTIONAL_RESERVATIONS {
             return std::task::Poll::Ready(Err(anyhow::anyhow!(
                 "Actual optional charge observation capacity remains occupied"
@@ -339,7 +365,7 @@ async fn remember_charge(
     .await
 }
 
-async fn release_actual(
+pub(super) async fn release_actual(
     handle: &Handle,
     manifest: Sha256Digest,
     release: airk_kernel::service_resources::OptionalRelease,
@@ -1327,6 +1353,16 @@ impl StageOwner {
     ) -> Result<StageStatus> {
         let management = supervisor.arbiter_management();
         match request {
+            ManagementRequest::StatusDevice
+            | ManagementRequest::InitializeDevice { .. }
+            | ManagementRequest::MigrateDevice { .. }
+            | ManagementRequest::ConfigureDevice { .. }
+            | ManagementRequest::ProvisionDevice { .. }
+            | ManagementRequest::CancelDevice { .. }
+            | ManagementRequest::RemoveDevice { .. }
+            | ManagementRequest::RecoverDevice { .. } => {
+                anyhow::bail!("current device operation requires typed status3 native owner")
+            }
             ManagementRequest::Status => {}
             ManagementRequest::Initialize { .. } => {
                 anyhow::bail!("Initialization belongs to the common Arbiter owner")
@@ -1780,7 +1816,7 @@ async fn wait_for_settlement(shared: &Arc<Mutex<State>>, deadline: Instant) -> R
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
             ensure!(state.stopping, "Arbiter shutdown was not fenced");
-            if !state.busy {
+            if !state.busy && state.device_tasks == 0 {
                 return Ok(());
             }
         }

@@ -120,3 +120,10 @@ remain separate from these deterministic controls.
 The ignored selected vector configuration emitter serializes actual Core Vectors, InstallModel and VectorSelection drafts, plus the inspected CPU-selected MiniLM object plan/pipeline identity, before the private fixture starts. It reads no task data, runs no neural session, grants no readiness or qualification and emits only under a fresh native private artifact root. Actual service status and configured native inference must independently match that identity.
 
 The ignored selected synthetic fixture emitter creates fresh authored sources and validates Search, Reference, Read and Answer cases against their actual native MCP types; Resources serializes Core directly. Its separate source/index identities support included/excluded composition checks. It never reads CAL/confirmation data or grants readiness, authority, model fit or quality.
+
+
+Current Arbiter device control explicitly dispatches Core's eight Device
+operations and ArbiterImportDevice to the native typed status3 owner. Historical
+operations retain status2 and refuse configuration4 with a typed failure. No
+wildcard treats a device operation as a legacy CPU operation. Ordinary service
+and CPU embedding remain available when the optional CUDA runtime is absent.

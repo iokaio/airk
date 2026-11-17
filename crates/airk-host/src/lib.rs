@@ -34,3 +34,6 @@ pub mod service_resource_policy;
 pub mod session_protocol;
 pub mod source_protocol;
 pub mod user_paths;
+
+#[cfg(feature = "gpu-cuda")]
+pub mod gpu_runtime;

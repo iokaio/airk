@@ -197,3 +197,31 @@ browser must display the native path/text and never generate JSON or TOML.
 `AgentManualEntry` and `AgentConfigRefusal` are additional shared Core roots in
 the generated I3 schema. This changes no operation, admission, persisted
 endpoint digest or source authority.
+
+
+## D08 additive current device management
+
+The current typed rows arbiter.status, arbiter.initialize, arbiter.configure,
+arbiter.migrate, arbiter.provision, arbiter.cancel, arbiter.remove and arbiter.recover match only their exact
+ManagementRequest operation inside the original Arbiter wrapper. StatusDevice is
+read-only; other rows retain owner-pipe or authenticated Admin+CSRF mutation
+authority, natural revision/digest fencing and original nonreplayable outcomes.
+They carry complete native configuration/4 and Status/3; all precision, selected
+execution, availability, reason and candidate-refusal facts survive unchanged.
+Old rows keep their original CPU configuration/3 and Status/2 semantics.
+The generated Core Arbiter document owns these DTOs; I3 does not invent a second
+status shape. Native evidence, source and offline-import operations remain
+forbidden over HTTP. No device status field is an execution capability.
+
+The complete current family also includes ProvisionDevice, CancelDevice,
+RemoveDevice and RecoverDevice, preserving their original revision/profile/stage
+payload fields. Current private ArbiterImportDevice retains the exact native
+offline-directory input and returns ArbiterDevice Status/3; it is forbidden over
+HTTP. Ordinary CLI/I3 operations use current device variants. Explicit CLI
+--legacy (status-legacy for reads) and I3 *_legacy operations retain old CPU
+requests only. After device configuration/4 is active, those old operations
+require an updated client and cannot write or project a GPU result into CPU
+Status/2. Versioned configuration migration creates and fsyncs an exact archived
+configuration/3 before atomic replacement; no read/missing-state inspection
+performs migration or model acquisition. Core/Store own the migration, actual
+DeviceCatalog/source binding and assets/4 plus partial/4 custody.

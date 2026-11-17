@@ -9,6 +9,7 @@ use airk_core::{
 use anyhow::Context;
 #[cfg(feature = "local-inference")]
 mod assets;
+pub(super) mod device_management;
 #[cfg(feature = "local-inference")]
 mod download;
 #[cfg(all(test, feature = "local-inference"))]
@@ -57,6 +58,8 @@ impl Owner {
         let context = StageOwner::new(ownership.clone(), gate.clone(), Stage::Context)?;
         let focus = StageOwner {
             stage: Stage::Focus,
+            #[cfg(feature = "local-inference")]
+            devices: context.devices.clone(),
             #[cfg(feature = "local-inference")]
             joint_ledger: context.joint_ledger.clone(),
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -130,6 +133,7 @@ impl Owner {
         self.context.configuration()
     }
     fn status(&self) -> Result<Status> {
+        self.context.require_legacy_operation()?;
         let configuration = match self.configuration() {
             Ok(configuration) => configuration,
             Err(error) => {
@@ -231,10 +235,10 @@ impl Owner {
         let limits = if observed.availability == Availability::Ready {
             #[cfg(feature = "local-inference")]
             {
-                let execution = self
-                    .focus
-                    .execution_profile(observed.profile.context("Ready Focus profile missing")?)?;
-                let profile = execution.description();
+                let execution = self.focus.profile_description(
+                    observed.profile.context("Ready Focus profile missing")?,
+                )?;
+                let profile = &execution;
                 profile.validate_stage(Stage::Focus)?;
                 Some(FocusProfileLimits {
                     max_candidates: profile.max_candidates,
@@ -252,13 +256,13 @@ impl Owner {
         let identity = if observed.availability == Availability::Ready {
             #[cfg(feature = "local-inference")]
             {
-                let execution = self
-                    .focus
-                    .execution_profile(observed.profile.context("Ready Focus profile missing")?)?;
-                let profile = execution.description();
+                let execution = self.focus.profile_description(
+                    observed.profile.context("Ready Focus profile missing")?,
+                )?;
+                let profile = &execution;
                 Some(FocusIdentity {
                     profile: profile.manifest,
-                    runtime: profile.runtime.clone(),
+                    runtime: profile.advice_runtime()?,
                     compiler: profile.compiler,
                     calibration: profile.calibration,
                     task_policy: *profile
@@ -286,21 +290,20 @@ impl Owner {
         &self,
         index: airk_core::index_catalog::IndexId,
     ) -> Result<Option<FocusProfileLimits>> {
-        let current = self.configuration()?;
+        let current = self.context.read_configuration()?;
         if !current.eligible_for(Stage::Focus, index, Task::FocusRank)
-            || self.focus.status()?.availability != Availability::Ready
+            || self.focus.read_stage_status()?.availability != Availability::Ready
         {
             return Ok(None);
         }
         #[cfg(feature = "local-inference")]
         {
-            let execution = self.focus.execution_profile(
+            let execution = self.focus.profile_description(
                 current
-                    .focus
-                    .selected_profile
+                    .selected_profile(Stage::Focus)
                     .context("Ready Focus profile missing")?,
             )?;
-            let profile = execution.description();
+            let profile = &execution;
             profile.validate_stage(Stage::Focus)?;
             let limits = FocusProfileLimits {
                 max_candidates: profile.max_candidates,
@@ -309,7 +312,7 @@ impl Owner {
             };
             limits.validate()?;
             ensure!(
-                self.configuration()? == current,
+                self.context.read_configuration()?.same_selection(&current),
                 "Focus allocation configuration changed"
             );
             Ok(Some(limits))
@@ -361,7 +364,18 @@ impl Owner {
         supervisor: &airk_supervisor::project_supervisor::Supervisor,
         effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
     ) -> Result<Status> {
+        self.context.require_legacy_operation()?;
         let target = match &request {
+            ManagementRequest::StatusDevice
+            | ManagementRequest::InitializeDevice { .. }
+            | ManagementRequest::MigrateDevice { .. }
+            | ManagementRequest::ConfigureDevice { .. }
+            | ManagementRequest::ProvisionDevice { .. }
+            | ManagementRequest::CancelDevice { .. }
+            | ManagementRequest::RemoveDevice { .. }
+            | ManagementRequest::RecoverDevice { .. } => {
+                anyhow::bail!("current device operation requires typed status3 native owner")
+            }
             ManagementRequest::Status => return self.status(),
             ManagementRequest::Initialize {
                 expected_legacy_configuration,
@@ -436,13 +450,47 @@ impl Owner {
         &self,
         supervisor: &airk_supervisor::project_supervisor::Supervisor,
     ) -> Result<()> {
-        self.focus.restore_verified(supervisor).await?;
-        self.context.restore_verified(supervisor).await
+        #[cfg(feature = "test-support")]
+        if self.context.evaluation.is_some() {
+            self.focus.restore_verified(supervisor).await?;
+            return self.context.restore_verified(supervisor).await;
+        }
+        match self.current_device_configuration() {
+            Ok(document) => {
+                for stage in [Stage::Focus, Stage::Context] {
+                    if document.stage(stage).enabled {
+                        self.stage(stage).launch_device(
+                            document.clone(),
+                            supervisor,
+                            None,
+                            device_management::DeviceAction::Warm,
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+            Err(error) => {
+                // Ordinary service remains available; do not reinterpret corrupt,
+                // foreign or unknown device state as legacy CPU enablement.
+                for owner in [&self.focus, &self.context] {
+                    let mut state = owner
+                        .lifecycle
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("native lifecycle unavailable"))?;
+                    state.phase = Availability::Failed;
+                    state.reason =
+                        bounded_reason(format!("Native device restore refused: {error:#}"));
+                }
+                Ok(())
+            }
+        }
     }
 }
 
 struct StageOwner {
     stage: Stage,
+    #[cfg(feature = "local-inference")]
+    devices: Arc<device_management::Shared>,
     #[cfg(feature = "local-inference")]
     joint_ledger: Arc<Mutex<joint_ledger::Ledger>>,
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -480,6 +528,8 @@ impl StageOwner {
         )?;
         Ok(Self {
             stage,
+            #[cfg(feature = "local-inference")]
+            devices: Arc::new(device_management::Shared::default()),
             #[cfg(feature = "local-inference")]
             joint_ledger: Arc::new(Mutex::new(joint_ledger::Ledger::default())),
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -561,18 +611,17 @@ impl StageOwner {
         publication: airk_core::evidence::RevisionEnvelope,
     ) -> Result<IndexApplication> {
         self.validate_scope(worker, authority)?;
-        let configuration = match self.configuration() {
+        let configuration = match self.read_configuration() {
             Ok(value) => value,
             Err(_) => return self.failed_application(worker, authority, publication),
         };
-        let (availability, reason) = if !configuration.stage(self.stage).enabled {
+        let (availability, reason) = if !configuration.enabled(self.stage) {
             (
                 Availability::Disabled,
                 "Optional local Arbiter is disabled.".to_string(),
             )
         } else if !configuration
-            .stage(self.stage)
-            .indexes
+            .indexes(self.stage)
             .iter()
             .any(|index| index.index_id == authority.index_id)
         {
@@ -588,19 +637,18 @@ impl StageOwner {
                     Err(_) => return self.failed_application(worker, authority, publication),
                 };
                 let enrollment = configuration
-                    .stage(self.stage)
-                    .indexes
+                    .indexes(self.stage)
                     .iter()
                     .find(|index| index.index_id == authority.index_id);
                 let selected = catalog.iter().find(|profile| {
-                    Some(profile.manifest) == configuration.stage(self.stage).selected_profile
+                    Some(profile.manifest) == configuration.selected_profile(self.stage)
                 });
                 if let (Some(enrollment), Some(selected)) = (enrollment, selected)
                     && !supports_stage_task(self.stage, &enrollment.tasks, &selected.tasks)
                 {
                     (Availability::UnsupportedTask, "No current context task is supported by both this index enrollment and the selected native profile; no answer advice was applied.".to_string())
                 } else {
-                    let status = match self.status() {
+                    let status = match self.read_stage_status() {
                         Ok(value) => value,
                         Err(_) => return self.failed_application(worker, authority, publication),
                     };
@@ -627,17 +675,17 @@ impl StageOwner {
                 catalog: self.namespace,
                 index_id: authority.index_id,
                 authorization: authority.fingerprint,
-                configuration_revision: configuration.revision,
+                configuration_revision: configuration.revision(),
                 publication,
             },
-            profile: stage_profile_for_index(&configuration, self.stage, authority.index_id),
+            profile: configuration.profile_for_index(self.stage, authority.index_id),
             availability,
             reason: bounded_reason(reason),
         };
         self.validate_scope(worker, authority)?;
         if self
-            .configuration()
-            .is_ok_and(|current| current == configuration)
+            .read_configuration()
+            .is_ok_and(|current| current.same_selection(&configuration))
         {
             Ok(application)
         } else {
@@ -676,6 +724,16 @@ impl StageOwner {
         effect_check: Option<airk_https::admin_plane::NativeDispatchCheck>,
     ) -> Result<StageStatus> {
         match request {
+            ManagementRequest::StatusDevice
+            | ManagementRequest::InitializeDevice { .. }
+            | ManagementRequest::MigrateDevice { .. }
+            | ManagementRequest::ConfigureDevice { .. }
+            | ManagementRequest::ProvisionDevice { .. }
+            | ManagementRequest::CancelDevice { .. }
+            | ManagementRequest::RemoveDevice { .. }
+            | ManagementRequest::RecoverDevice { .. } => {
+                anyhow::bail!("current device operation requires typed status3 native owner")
+            }
             ManagementRequest::Status => {}
             ManagementRequest::Initialize { .. } => {
                 anyhow::bail!("Initialization belongs to common native owner")
@@ -756,6 +814,7 @@ fn profile_for_index(
 ) -> Option<airk_core::identity::Sha256Digest> {
     stage_profile_for_index(configuration, Stage::Context, index_id)
 }
+#[cfg(test)]
 fn stage_profile_for_index(
     configuration: &Configuration,
     stage: Stage,
@@ -803,6 +862,11 @@ fn supports_stage_task(
 pub(super) fn failure(error: anyhow::Error) -> ControlResponse {
     ControlResponse::Failure {
         code: if error
+            .downcast_ref::<device_management::CurrentDeviceRequired>()
+            .is_some()
+        {
+            "arbiter_device_contract_required"
+        } else if error
             .downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>()
             .is_some()
         {

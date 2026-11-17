@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Finite canonical indexed evidence gathering. No model or transport recursion.
+pub mod device_runtime;
 use airk_core::service::NativeNextReadRequest;
 use airk_core::{
     Hit,

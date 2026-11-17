@@ -219,6 +219,38 @@ pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
     prepare_declared(input, output, None)
 }
 
+/// Native uncalibrated Focus metadata shared by CPU and private GPU probes.
+pub(super) fn focus_raw_metadata(profile: &Profile, policy: Sha256Digest) -> Result<Vec<u8>> {
+    #[derive(serde::Serialize)]
+    struct RelevanceMetadata {
+        schema: &'static str,
+        model: ModelChoice,
+        compiler: Sha256Digest,
+        task_policy: Sha256Digest,
+        score_abi: ScoreAbi,
+        assets: BTreeMap<String, JointAssetBinding>,
+        readout_order: [&'static str; 2],
+        readout_tokens: [u32; 2],
+        interpretation: &'static str,
+        learned_probability_calibration: bool,
+        release_qualified: bool,
+    }
+    let metadata = RelevanceMetadata {
+        schema: "airk.private.focus-relevance-metadata/1",
+        model: profile.model,
+        compiler: profile.compiler,
+        task_policy: policy,
+        score_abi: profile.abi.clone(),
+        assets: trained_assets(profile),
+        readout_order: ["no", "yes"],
+        readout_tokens: [2152, 9693],
+        interpretation: "Uncalibrated relative relevance: exp(yes-max)/(exp(no-max)+exp(yes-max)); no action/sufficiency confidence",
+        learned_probability_calibration: false,
+        release_qualified: false,
+    };
+    Ok(serde_json::to_vec_pretty(&metadata)?)
+}
+
 /// Additive software-v2 metadata only. Historical prepare keeps its 2048 Context
 /// compiler and /1 private identity; this path binds the separately frozen /2
 /// resource policy without claiming that the graph or host has measured fit.
@@ -375,6 +407,7 @@ fn prepare_declared(
         task_policies: BTreeMap::from([(task, policy)]),
         qualified_targets: vec![],
         cpu_fit: Some(input.cpu_fit),
+        device_execution: None,
         downloads: vec![],
         model: input.model,
         profile_id: input.profile_id,
@@ -408,36 +441,9 @@ fn prepare_declared(
             numeric_raw_only,
             "Focus cannot consume a Context/learned-decision calibration"
         );
-        #[derive(serde::Serialize)]
-        struct RelevanceMetadata {
-            schema: &'static str,
-            model: ModelChoice,
-            compiler: Sha256Digest,
-            task_policy: Sha256Digest,
-            score_abi: ScoreAbi,
-            assets: BTreeMap<String, JointAssetBinding>,
-            readout_order: [&'static str; 2],
-            readout_tokens: [u32; 2],
-            interpretation: &'static str,
-            learned_probability_calibration: bool,
-            release_qualified: bool,
-        }
-        let metadata = RelevanceMetadata {
-            schema: "airk.private.focus-relevance-metadata/1",
-            model: profile.model,
-            compiler: profile.compiler,
-            task_policy: policy,
-            score_abi: profile.abi.clone(),
-            assets: trained_assets(&profile),
-            readout_order: ["no", "yes"],
-            readout_tokens: [2152, 9693],
-            interpretation: "Uncalibrated relative relevance: exp(yes-max)/(exp(no-max)+exp(yes-max)); no action/sufficiency confidence",
-            learned_probability_calibration: false,
-            release_qualified: false,
-        };
         (
             "focus-relevance-metadata.json",
-            serde_json::to_vec_pretty(&metadata)?,
+            focus_raw_metadata(&profile, policy)?,
         )
     } else {
         match input.calibration {

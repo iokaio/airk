@@ -93,6 +93,12 @@ export type Budget = {
     rounds: number;
 };
 
+export type CandidateRejection = {
+    adapter_key?: string | null;
+    manifest?: Sha256Digest | null;
+    reason: SelectionReason;
+};
+
 export type ClassDisposition = {
     action: ContextActionClass;
     support: ClassSupport;
@@ -257,6 +263,132 @@ export type Decision = {
     value: Sha256Digest;
 };
 
+export type DeviceCatalog = {
+    context_compact: Array<VariantReference>;
+    context_large: Array<VariantReference>;
+    focus: Array<VariantReference>;
+    schema: string;
+};
+
+export type DeviceCatalogBinding = {
+    catalog: Sha256Digest;
+    source: Sha256Digest;
+};
+
+export type DeviceConfiguration = {
+    catalog: Incarnation;
+    context: DeviceStageConfiguration;
+    device_catalog: DeviceCatalogBinding;
+    focus: DeviceStageConfiguration;
+    installation: Sha256Digest;
+    revision: number;
+    schema: string;
+};
+
+export type DeviceEvidence = {
+    execution_identity: string;
+    numerical: Sha256Digest;
+    placement: Sha256Digest;
+    resources: Sha256Digest;
+    target: string;
+};
+
+/**
+ * GPU-only additive Profile field. None preserves every legacy CPU serialization.
+ * Hashes name compiled, authenticated native policies, not ambient strings or capabilities.
+ */
+export type DeviceExecution = {
+    backend: GpuBackend;
+    compatibility_policy: Sha256Digest;
+    graph: Sha256Digest;
+    host_fit: CpuFit;
+    math_policy: Sha256Digest;
+    memory: DeviceMemory;
+    placement: PlacementPolicy;
+    precision: DevicePrecision;
+    provider_options: Sha256Digest;
+    runtime_build: Sha256Digest;
+    schema: string;
+    tf32: boolean;
+};
+
+export type DeviceMemory = {
+    headroom_bytes: number;
+    kind: "dedicated";
+    required_peak_bytes: number;
+} | {
+    headroom_bytes: number;
+    kind: "unified";
+    required_joint_peak_bytes: number;
+};
+
+export type DeviceModelStatus = {
+    availability: Availability;
+    model: SelectedModel;
+    reason: string;
+    tasks: Array<Task>;
+    variants: Array<DeviceVariantStatus>;
+};
+
+export type DevicePolicy = "auto" | "cpu";
+
+export type DevicePrecision = "float32" | "float16";
+
+export type DeviceSelection = {
+    gpu_precision: GpuPrecisionPreference;
+    model: SelectedModel;
+    operation_failure?: SelectionReason | null;
+    policy: DevicePolicy;
+    reasons: Array<CandidateRejection>;
+    schema: string;
+    selected?: SelectedVariant | null;
+};
+
+export type DeviceStageConfiguration = {
+    device_policy: DevicePolicy;
+    enabled: boolean;
+    gpu_precision: GpuPrecisionPreference;
+    indexes: Array<Enrollment>;
+    selected_model?: SelectedModel | null;
+};
+
+export type DeviceStageStatus = {
+    active_profile?: Sha256Digest | null;
+    availability: Availability;
+    device_policy: DevicePolicy;
+    gpu_precision: GpuPrecisionPreference;
+    models: Array<DeviceModelStatus>;
+    queued: number;
+    reason: string;
+    running: number;
+    selected_model?: SelectedModel | null;
+    selection?: DeviceSelection | null;
+};
+
+export type DeviceStatus = {
+    configuration: DeviceConfiguration;
+    context: DeviceStageStatus;
+    focus: DeviceStageStatus;
+    initialization?: InitializationStatus | null;
+    schema: string;
+};
+
+export type DeviceVariantStatus = {
+    availability: Availability;
+    backend?: GpuBackend | null;
+    cpu_fit?: CpuFit | null;
+    device_evidence?: DeviceEvidence | null;
+    download_bytes?: number | null;
+    execution_identity: string;
+    manifest: Sha256Digest;
+    memory_reservation_bytes?: number | null;
+    model_admission: ModelAdmissionStatus;
+    precision?: DevicePrecision | null;
+    qualified_targets?: Array<QualifiedTarget>;
+    reason: string;
+    tasks: Array<Task>;
+};
+
 export type Enrollment = {
     index_id: IndexId;
     tasks: Array<Task>;
@@ -375,6 +507,21 @@ export type FocusScore = {
 
 export type Gap = "sufficient" | "definition" | "constraint" | "example" | "test" | "counterevidence" | "ambiguous" | "unsupported";
 
+export type GpuBackend = "cuda" | "direct_ml" | "core_ml";
+
+export type GpuPrecisionPreference = "auto" | "fp32" | "fp16";
+
+/**
+ * Unqualified probe request bounds only, never measured fit, residency or
+ * release authority. Actual native owner must independently admit these limits.
+ */
+export type GpuProbeReservation = {
+    deadline_ms: number;
+    device_limit_bytes: number;
+    host_limit_bytes: number;
+    schema: string;
+};
+
 export type GroundedParagraph = {
     evidence: Array<Sha256Digest>;
     interpretation: boolean;
@@ -441,6 +588,36 @@ export type JointRule = {
 };
 
 export type ManagementRequest = {
+    operation: "status_device";
+} | {
+    expected_legacy_configuration?: Sha256Digest | null;
+    operation: "initialize_device";
+} | {
+    expected_configuration: Sha256Digest;
+    expected_revision: number;
+    operation: "migrate_device";
+} | {
+    configuration: DeviceStageConfiguration;
+    expected_revision: number;
+    operation: "configure_device";
+    stage: Stage;
+} | {
+    expected_revision: number;
+    operation: "provision_device";
+    profile: Sha256Digest;
+} | {
+    expected_revision: number;
+    operation: "cancel_device";
+    stage: Stage;
+} | {
+    expected_revision: number;
+    operation: "remove_device";
+    profile: Sha256Digest;
+} | {
+    expected_revision: number;
+    operation: "recover_device";
+    stage: Stage;
+} | {
     operation: "status";
 } | {
     expected_legacy_configuration?: Sha256Digest | null;
@@ -469,6 +646,8 @@ export type ManagementRequest = {
     operation: "recover";
     stage: Stage;
 };
+
+export type ModelAdmissionStatus = "qualified" | "local_candidate" | "unavailable";
 
 export type ModelChoice = "arbiter-small-intern-08b" | "arbiter-small-strands-2b" | "arbiter-large-intern-4b" | "arbiter-large-kev-4b" | "arbiter-focus-qwen3-reranker-06b" | "arbiter-context-qwen3-17b" | "arbiter-context-qwen3-4b";
 
@@ -507,12 +686,20 @@ export type PartitionCoverage = {
 
 export type PartitionTermination = "pending" | "covered" | "clarification_required" | "no_justified_read" | "no_progress" | "budget" | "deadline" | "refused" | "stale" | "unsupported";
 
+export type PlacementPolicy = {
+    mode: "strict_gpu";
+} | {
+    mode: "bounded_hybrid";
+    policy: Sha256Digest;
+};
+
 export type Profile = {
     abi: ScoreAbi;
     assets: Array<Asset>;
     calibration: Sha256Digest;
     compiler: Sha256Digest;
     cpu_fit?: CpuFit | null;
+    device_execution?: DeviceExecution | null;
     downloads?: Array<AssetDownload>;
     manifest: Sha256Digest;
     max_candidates: number;
@@ -592,6 +779,19 @@ export type ScoreAbi = {
     output: TensorContract;
     readout: Readout;
 };
+
+export type SelectedModel = "focus" | "context_compact" | "context_large";
+
+export type SelectedVariant = {
+    adapter_key: string;
+    backend?: GpuBackend | null;
+    capability_epoch: number;
+    execution_identity: string;
+    manifest: Sha256Digest;
+    precision?: DevicePrecision | null;
+};
+
+export type SelectionReason = "forced_cpu" | "no_gpu" | "unqualified" | "target_unsupported" | "runtime_unavailable" | "driver_unsupported" | "device_unsupported" | "graph_unsupported" | "provider_initialization_failed" | "allocation_failed" | "device_memory_unknown" | "device_memory_insufficient" | "host_memory_unknown" | "host_memory_insufficient" | "cpu_fit_insufficient" | "circuit_open" | "authority_changed" | "observation_stale" | "deadline_expired" | "settlement_unknown" | "no_qualified_cpu" | "gpu_precision_excluded";
 
 export type Sha256Digest = string;
 
@@ -722,6 +922,15 @@ export type TerminalRawRow = {
     input_tokens?: number | null;
     scores?: Array<number> | null;
     visible_input: Sha256Digest;
+};
+
+/**
+ * Exactly three logical model slots; variants do not add selected models.
+ * Each reference resolves only through the authenticated native catalog owner.
+ */
+export type VariantReference = {
+    execution_identity: string;
+    manifest: Sha256Digest;
 };
 
 export type Work = {

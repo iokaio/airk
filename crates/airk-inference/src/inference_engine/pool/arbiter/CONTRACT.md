@@ -466,3 +466,68 @@ and pass its own unchanged gates; unsupported shapes or OOM/timeouts stay
 refusals. Structural all1..8192 preservation belongs to the independently
 validated native graph/source chain, not inferred interpolation of tiny results.
 No task/data/training/CAL/release qualification is granted by this proposal.
+
+## D08 typed device execution owner
+
+The existing native lane retains distinct legacy configuration3 and device
+configuration4; configuration4 is never decoded or projected as configuration3.
+Actual admitted ExecutionProfiles and authenticated runtime/device witnesses
+bind its selected variants. Advisory Core selection is never compute authority.
+The exact catalog/configuration, adapter epoch and original deadline are checked
+before dispatch and before delivery. All source/nonce/publication guards remain.
+GPU score calls use the original operation deadline and synchronize actual CUDA
+work before delivery or release. Unknown device settlement quarantines the
+entire resident, source pins and host charge under the original native owner;
+it cannot become a known zero-work failure, CPU fallback, or completed barrier.
+No-GPU and unavailable-runtime builds preserve the admitted CPU route. Device
+preference never changes the model; GPU precision preferences do not prohibit
+an admitted FP32 CPU fallback. Known failed CPU variants are not fallback fit.
+
+
+Actual typed GPU runtime/provider score failures alone may issue an opaque
+native fault notification. The original read receives its measured failure; no
+query is replayed. The key binds actual adapter UUID/driver API/runtime build,
+profile/execution identity, device epoch and current catalog/configuration.
+Source revocation, caller cancellation, exhausted time and compiler/input errors
+do not constitute runtime faults. The notifier carries the exact original host
+charge release observer; a future cached lifecycle continuation must observe
+session/source teardown and that final release before a different admitted
+variant can warm. Failed native synchronization leaves the provider barrier
+incomplete and prevents notifications/recovery. No serializer creates a fault.
+
+
+Runtime initialization itself holds a real host reservation on the existing
+native lane. A cold product probe uses an approved compiled model host peak;
+its one charge transfers into model warm, rather than being counted twice. An
+already authenticated GPU resident may retain its existing full host peak for
+the serialized shared-runtime probe; no second full peak is required. Every
+probe holds that charge and actual ServiceLease until it really returns, even
+if delivery times out. GPU model allocation/work retains its independent actual
+device reservations. No uncharged DLL/driver initialization qualifies a model.
+
+The distinct test-support evaluation method accepts a genuine same-lease
+EvaluationProfile, explicit Core GpuProbeReservation, native phase-capacity plan,
+actual adapter UUID, real host charge and the original deadline. It refuses
+foreign leases, overflows, exceeded host/device bounds or release-qualification
+claims. Its bound candidate remains explicitly probe_only and cannot enter
+product selection/status Ready. Runtime/model qualification is still absent
+until actual numeric/resource/placement evidence and the owning promoter pass.
+The no-GPU build creates no device witness; it preserves the admitted CPU path.
+
+
+Native device fault circuit identity excludes ephemeral witness generations.
+Epoch remains mandatory for dispatch/reuse freshness, while actual UUID, driver,
+static runtime build, execution profile and current document/source identity
+retain the fault across wrapper recreation. A known settled fault can notify only
+the bounded future-management owner; no current score retry or budget reset is
+introduced. Evaluation probes require the actual matching ServiceLease, explicit
+host/device bounds and the original deadline; generated metadata is no permit.
+
+Private GPU component diagnostics are owned by
+qualification/software_v2/cuda_qualification/CONTRACT.md. They reuse the actual
+lease/compute owner and native resource charge, one original absolute deadline
+and maintained watchdog journal. They emit Rust-owned private requests and
+metadata before measured CUDA work; no scalar request or metadata grants product
+admission, class support or release qualification. Unknown GPU settlement
+retains the full real native custody. Historical CPU qualification and timing
+records retain their original identities.

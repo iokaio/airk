@@ -14,6 +14,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+pub mod device;
+
 const DIRECTORY: &str = "arbiter-v3";
 const LEGACY_DIRECTORIES: [&str; 2] = ["arbiter-v1", "arbiter-v2"];
 const CONFIGURATION: &str = "configuration.json";

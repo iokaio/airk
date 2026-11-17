@@ -96,3 +96,23 @@ The full native event is retained. Complete Store-result observation survives
 early control failure and every worker join; phase/observer errors cannot mask
 original I/O. Native I/O/phase/cancel observations remain distinct and no
 unobserved NN count is reported as measured zero.
+
+
+D08 current GPU assets use only Store's device/v4 custody. Exact existing CPU
+profiles may reuse their original authenticated v3 cache read-only; GPU cannot
+be projected into that custody. Explicit current Provision/Import validates the
+compiled native asset profile even if no adapter is available, and never changes
+enablement, selected model, enrolled indexes or GPU precision policy. Evidence
+reads and future-only runtime-fault recovery never download/import assets.
+
+Current device commands use the existing stage lifecycle and Notify under one
+bounded pending slot per stage. Shutdown counts the continuation owner as well
+as active work, cancels it and waits its actual completion. Unknown native device
+settlement retains session/source pins/charges and original lease; it cannot be
+pruned as a completed release. A genuine device/provider fault may queue one
+future cached same-model recovery only after actual session and host-charge
+release, current Auto consent and original adapter/driver/build/profile/catalog/
+configuration circuit identity. The failed read remains failed without replay.
+The future management warm has a separate explicit120s allowance and cannot
+renew that failed read. Source, deadline or delivery cancellation alone is no
+runtime fault. CPU and device charge observations remain separate.

@@ -123,8 +123,14 @@ fn verify_files(files: &Files, profile: &Profile) -> Result<()> {
 fn inputs() -> Result<(ResourceRunInput, Profile, Files, Sha256Digest)> {
     let path = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_INPUT")?);
     let expected: Sha256Digest = std::env::var("AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256")?.parse()?;
-    let raw = small(&path, 1 << 20)?;
-    ensure!(sha(&raw) == expected, "native resource request changed");
+    inputs_from(&ResourceFilePin {
+        path: path.to_str().context("native request path")?.into(),
+        sha256: expected,
+    })
+}
+fn inputs_from(pin: &ResourceFilePin) -> Result<(ResourceRunInput, Profile, Files, Sha256Digest)> {
+    let raw = pinned(pin, 1 << 20)?;
+    let expected = pin.sha256;
     let input: ResourceRunInput = serde_json::from_slice(&raw)?;
     input.validate()?;
     pinned(&input.source_manifest, 16 << 20)?;
@@ -804,3 +810,6 @@ mod original_sources;
 mod tests;
 
 mod attention_diagnostic;
+
+#[cfg(feature = "gpu-cuda")]
+mod cuda_qualification;

@@ -417,6 +417,34 @@
       ],
       "type": "object"
     },
+    "CandidateRejection": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/SelectionReason"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
     "ClassDisposition": {
       "additionalProperties": false,
       "properties": {
@@ -1151,6 +1179,574 @@
         }
       ]
     },
+    "DeviceCatalog": {
+      "additionalProperties": false,
+      "properties": {
+        "context_compact": {
+          "items": {
+            "$ref": "#/$defs/VariantReference"
+          },
+          "type": "array"
+        },
+        "context_large": {
+          "items": {
+            "$ref": "#/$defs/VariantReference"
+          },
+          "type": "array"
+        },
+        "focus": {
+          "items": {
+            "$ref": "#/$defs/VariantReference"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "focus",
+        "context_compact",
+        "context_large"
+      ],
+      "type": "object"
+    },
+    "DeviceCatalogBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "source": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "catalog",
+        "source"
+      ],
+      "type": "object"
+    },
+    "DeviceConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {
+          "$ref": "#/$defs/Incarnation"
+        },
+        "context": {
+          "$ref": "#/$defs/DeviceStageConfiguration"
+        },
+        "device_catalog": {
+          "$ref": "#/$defs/DeviceCatalogBinding"
+        },
+        "focus": {
+          "$ref": "#/$defs/DeviceStageConfiguration"
+        },
+        "installation": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "installation",
+        "catalog",
+        "revision",
+        "device_catalog",
+        "focus",
+        "context"
+      ],
+      "type": "object"
+    },
+    "DeviceEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "execution_identity": {
+          "type": "string"
+        },
+        "numerical": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "placement": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "resources": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "execution_identity",
+        "numerical",
+        "resources",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "DeviceExecution": {
+      "additionalProperties": false,
+      "description": "GPU-only additive Profile field. None preserves every legacy CPU serialization.\nHashes name compiled, authenticated native policies, not ambient strings or capabilities.",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/GpuBackend"
+        },
+        "compatibility_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "graph": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "host_fit": {
+          "$ref": "#/$defs/CpuFit"
+        },
+        "math_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "memory": {
+          "$ref": "#/$defs/DeviceMemory"
+        },
+        "placement": {
+          "$ref": "#/$defs/PlacementPolicy"
+        },
+        "precision": {
+          "$ref": "#/$defs/DevicePrecision"
+        },
+        "provider_options": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "runtime_build": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "tf32": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "backend",
+        "runtime_build",
+        "compatibility_policy",
+        "provider_options",
+        "math_policy",
+        "precision",
+        "tf32",
+        "placement",
+        "graph",
+        "host_fit",
+        "memory"
+      ],
+      "type": "object"
+    },
+    "DeviceMemory": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "headroom_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "dedicated",
+              "type": "string"
+            },
+            "required_peak_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "required_peak_bytes",
+            "headroom_bytes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "headroom_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "unified",
+              "type": "string"
+            },
+            "required_joint_peak_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "required_joint_peak_bytes",
+            "headroom_bytes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DeviceModelStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "model": {
+          "$ref": "#/$defs/SelectedModel"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/Task"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/$defs/DeviceVariantStatus"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "availability",
+        "reason",
+        "tasks",
+        "model",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "DevicePolicy": {
+      "enum": [
+        "auto",
+        "cpu"
+      ],
+      "type": "string"
+    },
+    "DevicePrecision": {
+      "enum": [
+        "float32",
+        "float16"
+      ],
+      "type": "string"
+    },
+    "DeviceSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "gpu_precision": {
+          "$ref": "#/$defs/GpuPrecisionPreference"
+        },
+        "model": {
+          "$ref": "#/$defs/SelectedModel"
+        },
+        "operation_failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectionReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/DevicePolicy"
+        },
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/CandidateRejection"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "selected": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedVariant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "policy",
+        "gpu_precision",
+        "reasons"
+      ],
+      "type": "object"
+    },
+    "DeviceStageConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "device_policy": {
+          "$ref": "#/$defs/DevicePolicy"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gpu_precision": {
+          "$ref": "#/$defs/GpuPrecisionPreference"
+        },
+        "indexes": {
+          "items": {
+            "$ref": "#/$defs/Enrollment"
+          },
+          "type": "array"
+        },
+        "selected_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "device_policy",
+        "gpu_precision",
+        "indexes"
+      ],
+      "type": "object"
+    },
+    "DeviceStageStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "active_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "device_policy": {
+          "$ref": "#/$defs/DevicePolicy"
+        },
+        "gpu_precision": {
+          "$ref": "#/$defs/GpuPrecisionPreference"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/DeviceModelStatus"
+          },
+          "type": "array"
+        },
+        "queued": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "running": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "selected_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "device_policy",
+        "gpu_precision",
+        "availability",
+        "reason",
+        "queued",
+        "running",
+        "models"
+      ],
+      "type": "object"
+    },
+    "DeviceStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "$ref": "#/$defs/DeviceConfiguration"
+        },
+        "context": {
+          "$ref": "#/$defs/DeviceStageStatus"
+        },
+        "focus": {
+          "$ref": "#/$defs/DeviceStageStatus"
+        },
+        "initialization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InitializationStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "configuration",
+        "focus",
+        "context"
+      ],
+      "type": "object"
+    },
+    "DeviceVariantStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpuBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CpuFit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "download_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "execution_identity": {
+          "type": "string"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "memory_reservation_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model_admission": {
+          "$ref": "#/$defs/ModelAdmissionStatus"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DevicePrecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "qualified_targets": {
+          "items": {
+            "$ref": "#/$defs/QualifiedTarget"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/Task"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "tasks",
+        "manifest",
+        "execution_identity",
+        "availability",
+        "reason",
+        "model_admission"
+      ],
+      "type": "object"
+    },
     "Enrollment": {
       "additionalProperties": false,
       "properties": {
@@ -1602,6 +2198,53 @@
       ],
       "type": "string"
     },
+    "GpuBackend": {
+      "enum": [
+        "cuda",
+        "direct_ml",
+        "core_ml"
+      ],
+      "type": "string"
+    },
+    "GpuPrecisionPreference": {
+      "enum": [
+        "auto",
+        "fp32",
+        "fp16"
+      ],
+      "type": "string"
+    },
+    "GpuProbeReservation": {
+      "additionalProperties": false,
+      "description": "Unqualified probe request bounds only, never measured fit, residency or\nrelease authority. Actual native owner must independently admit these limits.",
+      "properties": {
+        "deadline_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device_limit_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host_limit_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "host_limit_bytes",
+        "device_limit_bytes",
+        "deadline_ms"
+      ],
+      "type": "object"
+    },
     "GroundedParagraph": {
       "additionalProperties": false,
       "properties": {
@@ -1850,6 +2493,184 @@
           "additionalProperties": false,
           "properties": {
             "operation": {
+              "const": "status_device",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_legacy_configuration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Sha256Digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operation": {
+              "const": "initialize_device",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_configuration": {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "migrate_device",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "expected_configuration"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "configuration": {
+              "$ref": "#/$defs/DeviceStageConfiguration"
+            },
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "configure_device",
+              "type": "string"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "stage",
+            "configuration"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "provision_device",
+              "type": "string"
+            },
+            "profile": {
+              "$ref": "#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "profile"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "cancel_device",
+              "type": "string"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "stage"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "remove_device",
+              "type": "string"
+            },
+            "profile": {
+              "$ref": "#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "profile"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operation": {
+              "const": "recover_device",
+              "type": "string"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            }
+          },
+          "required": [
+            "operation",
+            "expected_revision",
+            "stage"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
               "const": "status",
               "type": "string"
             }
@@ -2019,6 +2840,14 @@
           "type": "object"
         }
       ]
+    },
+    "ModelAdmissionStatus": {
+      "enum": [
+        "qualified",
+        "local_candidate",
+        "unavailable"
+      ],
+      "type": "string"
     },
     "ModelChoice": {
       "enum": [
@@ -2208,6 +3037,40 @@
       ],
       "type": "string"
     },
+    "PlacementPolicy": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "strict_gpu",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "bounded_hybrid",
+              "type": "string"
+            },
+            "policy": {
+              "$ref": "#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "mode",
+            "policy"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Profile": {
       "additionalProperties": false,
       "properties": {
@@ -2230,6 +3093,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/CpuFit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceExecution"
             },
             {
               "type": "null"
@@ -2579,6 +3452,87 @@
         "output"
       ],
       "type": "object"
+    },
+    "SelectedModel": {
+      "enum": [
+        "focus",
+        "context_compact",
+        "context_large"
+      ],
+      "type": "string"
+    },
+    "SelectedVariant": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_key": {
+          "type": "string"
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpuBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capability_epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "execution_identity": {
+          "type": "string"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DevicePrecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "manifest",
+        "execution_identity",
+        "adapter_key",
+        "capability_epoch"
+      ],
+      "type": "object"
+    },
+    "SelectionReason": {
+      "enum": [
+        "forced_cpu",
+        "no_gpu",
+        "unqualified",
+        "target_unsupported",
+        "runtime_unavailable",
+        "driver_unsupported",
+        "device_unsupported",
+        "graph_unsupported",
+        "provider_initialization_failed",
+        "allocation_failed",
+        "device_memory_unknown",
+        "device_memory_insufficient",
+        "host_memory_unknown",
+        "host_memory_insufficient",
+        "cpu_fit_insufficient",
+        "circuit_open",
+        "authority_changed",
+        "observation_stale",
+        "deadline_expired",
+        "settlement_unknown",
+        "no_qualified_cpu",
+        "gpu_precision_excluded"
+      ],
+      "type": "string"
     },
     "Sha256Digest": {
       "pattern": "^[0-9a-f]{64}$",
@@ -3097,6 +4051,23 @@
       ],
       "type": "object"
     },
+    "VariantReference": {
+      "additionalProperties": false,
+      "description": "Exactly three logical model slots; variants do not add selected models.\nEach reference resolves only through the authenticated native catalog owner.",
+      "properties": {
+        "execution_identity": {
+          "type": "string"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "manifest",
+        "execution_identity"
+      ],
+      "type": "object"
+    },
     "Work": {
       "additionalProperties": false,
       "properties": {
@@ -3176,7 +4147,15 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "arbiter_contract": 2,
+  "arbiter_device_contract": 1,
   "roots": [
+    "DeviceConfiguration",
+    "DeviceStageConfiguration",
+    "DeviceStatus",
+    "DeviceStageStatus",
+    "DeviceCatalog",
+    "DeviceSelection",
+    "GpuProbeReservation",
     "Configuration",
     "StageConfiguration",
     "StageStatus",

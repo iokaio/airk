@@ -20,10 +20,11 @@ pub fn semantic_policy_digest() -> Result<Sha256Digest> {
         ))
     }
     Ok(crate::identity::framed_digest(
-        b"airk.arbiter.focus-core-semantics/1",
+        b"airk.arbiter.focus-core-semantics/2",
         &[
             source(include_bytes!("focus.rs"))?.as_bytes(),
             source(include_bytes!("../native_focus.rs"))?.as_bytes(),
+            source(include_bytes!("device/receipt_runtime.rs"))?.as_bytes(),
         ],
     ))
 }
@@ -64,7 +65,7 @@ impl FocusApplication {
                     .as_ref()
                     .is_some_and(
                         |identity| Some(identity.profile) == self.application.profile
-                            && identity.runtime == RUNTIME
+                            && device::valid_advice_runtime(&identity.runtime)
                     ),
                 "ready Focus profile identity absent or mismatched"
             );
@@ -298,7 +299,7 @@ impl FocusApplicationReceipt {
                     && self
                         .identity
                         .as_ref()
-                        .is_some_and(|identity| identity.runtime == RUNTIME),
+                        .is_some_and(|identity| device::valid_advice_runtime(&identity.runtime)),
                 "observed Focus work requires its current profile identity"
             );
         }
@@ -323,7 +324,7 @@ impl FocusApplicationReceipt {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("applied Focus identity absent"))?;
             ensure!(
-                identity.runtime == RUNTIME
+                device::valid_advice_runtime(&identity.runtime)
                     && self.availability == Availability::Ready
                     && self.scope.configuration_revision > 0
                     && !self.scores.is_empty()

@@ -740,6 +740,27 @@
   },
   {
    "operation": "arbiter.status",
+   "method": "Arbiter.StatusDevice",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "arbiter.status_legacy",
    "method": "Arbiter.Status",
    "plane": "management",
    "surfaces": [
@@ -1273,8 +1294,29 @@
    ]
   },
   {
+   "operation": "arbiter.migrate",
+   "method": "Arbiter.MigrateDevice",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
    "operation": "arbiter.initialize",
-   "method": "Arbiter.Initialize",
+   "method": "Arbiter.InitializeDevice",
    "plane": "management",
    "surfaces": [
     "pipe",
@@ -1295,7 +1337,7 @@
   },
   {
    "operation": "arbiter.configure",
-   "method": "Arbiter.Configure",
+   "method": "Arbiter.ConfigureDevice",
    "plane": "management",
    "surfaces": [
     "pipe",
@@ -1316,7 +1358,7 @@
   },
   {
    "operation": "arbiter.provision",
-   "method": "Arbiter.Provision",
+   "method": "Arbiter.ProvisionDevice",
    "plane": "management",
    "surfaces": [
     "pipe",
@@ -1337,7 +1379,7 @@
   },
   {
    "operation": "arbiter.cancel",
-   "method": "Arbiter.Cancel",
+   "method": "Arbiter.CancelDevice",
    "plane": "management",
    "surfaces": [
     "pipe",
@@ -1358,7 +1400,7 @@
   },
   {
    "operation": "arbiter.remove",
-   "method": "Arbiter.Remove",
+   "method": "Arbiter.RemoveDevice",
    "plane": "management",
    "surfaces": [
     "pipe",
@@ -1379,6 +1421,132 @@
   },
   {
    "operation": "arbiter.recover",
+   "method": "Arbiter.RecoverDevice",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.initialize_legacy",
+   "method": "Arbiter.Initialize",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.configure_legacy",
+   "method": "Arbiter.Configure",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.provision_legacy",
+   "method": "Arbiter.Provision",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.cancel_legacy",
+   "method": "Arbiter.Cancel",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.remove_legacy",
+   "method": "Arbiter.Remove",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "arbiter.recover_legacy",
    "method": "Arbiter.Recover",
    "plane": "management",
    "surfaces": [
@@ -2154,7 +2322,8 @@
     "ArbiterContextAction",
     "ArbiterFocusApplication",
     "ArbiterFocusRank",
-    "ArbiterImport"
+    "ArbiterImport",
+    "ArbiterImportDevice"
    ],
    "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."
   },

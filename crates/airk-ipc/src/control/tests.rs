@@ -237,3 +237,34 @@ async fn tools_call_frame_retains_original_parent_until_response_and_sends_once(
     assert!(duplicate.is_none());
     Ok(())
 }
+
+#[test]
+fn device_management_frame_keeps_exact_policy_precision_and_legacy_cpu_separate() -> Result<()> {
+    let literal = serde_json::json!({"arbiter":{"request":{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}}});
+    let method: airk_core::service::ControlMethod = serde_json::from_value(literal.clone())?;
+    assert_eq!(serde_json::to_value(method)?, literal);
+    let legacy = serde_json::json!({"arbiter":{"request":{"operation":"configure","stage":"focus","expected_revision":7,"enabled":false,"selected_profile":null,"indexes":[]}}});
+    let method: airk_core::service::ControlMethod = serde_json::from_value(legacy.clone())?;
+    assert_eq!(serde_json::to_value(method)?, legacy);
+    let mut foreign = literal.clone();
+    foreign["arbiter"]["request"]["configuration"]["gpu_precision"] = serde_json::json!("bf16");
+    assert!(serde_json::from_value::<airk_core::service::ControlMethod>(foreign).is_err());
+    let mut legacy_gpu = legacy;
+    legacy_gpu["arbiter"]["request"]["gpu_precision"] = serde_json::json!("fp16");
+    assert!(serde_json::from_value::<airk_core::service::ControlMethod>(legacy_gpu).is_err());
+    Ok(())
+}
+
+#[test]
+fn current_private_import_preserves_directory_and_cannot_become_public_management() -> Result<()> {
+    let directory = if cfg!(windows) {
+        r"D:\AIRK Models\verified"
+    } else {
+        "/opt/AIRK Models/verified"
+    };
+    let literal = serde_json::json!({"arbiter_import_device":{"request":{"expected_revision":7,"profile":"1111111111111111111111111111111111111111111111111111111111111111","directory":directory}}});
+    let method: airk_core::service::ControlMethod = serde_json::from_value(literal.clone())?;
+    assert_eq!(serde_json::to_value(method)?, literal);
+    assert!(serde_json::from_value::<airk_core::arbiter::ManagementRequest>(serde_json::json!({"operation":"import_device","expected_revision":7,"profile":"1111111111111111111111111111111111111111111111111111111111111111","directory":directory})).is_err());
+    Ok(())
+}

@@ -7,6 +7,7 @@ fn profile() -> Profile {
         task_policies: std::collections::BTreeMap::from([(Task::ContextAction, digest)]),
         qualified_targets: vec![],
         cpu_fit: None,
+        device_execution: None,
         downloads: vec![],
         stage: Some(Stage::Context),
         model: ModelChoice::ContextQwenCompact,
@@ -929,3 +930,5 @@ fn failed_source_restart_native_posthash_admission_refuses_before_disposition() 
     );
     Ok(())
 }
+
+mod device_tests;

@@ -98,3 +98,24 @@ actual installed SelectionScopeRef identity (and an installed selection).
 The service Focus scorer applies that same purpose distinction after native
 request/worker/source/parent/partition validation, so nested Focus retains the
 original whole-selection accounting identity without creating an allowance.
+
+
+## D08 native host capacity phases
+
+A resident retains its full admitted host peak charge through actual session
+teardown. Warm compute may carry a separately authenticated extra-host bound;
+it never requires the full resident allocation to be free a second time. The
+broker checks that bound against actual fresh OS availability and its unchanged
+policy epoch, and the compute lane repeats the same bound before dispatch.
+Legacy callers retain their existing conservative full-peak warm bound. Unknown
+headroom, foreign charges, policy pressure and stale epochs refuse. Pending
+GPU reservations cover future, unallocated work only; real resident device
+usage is already reflected in actual driver free memory and is not subtracted
+again. A GPU capacity reservation never authorizes a model or runtime.
+
+
+Release-observer equivalence is exact Arc identity of the authentic reservation
+release state, not manifest equality. Service may deduplicate repeated borrowing
+of one charge without forgetting distinct unresolved charges. NativeConfiguration
+selection equality retains the complete typed document and selected descriptions;
+it never narrows configuration4 to a CPU model-only identity.

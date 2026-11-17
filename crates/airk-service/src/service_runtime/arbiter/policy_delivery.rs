@@ -9,6 +9,8 @@ use airk_mcp::read_attempt::{ReadDeliveryGuard, ReadDeliveryGuardFactory};
 use std::{collections::BTreeSet, task::Poll};
 
 struct PolicyDelivery {
+    #[cfg(feature = "local-inference")]
+    device: Option<super::device_management::Delivery>,
     configuration: Option<Arc<airk_store::service::arbiter::ConfigurationStore>>,
     expected: Vec<ContextDeliveryBinding>,
     digest: Sha256Digest,
@@ -26,6 +28,10 @@ impl PolicyDelivery {
             (self.service_live)(),
             "native delivery service ended or draining"
         );
+        #[cfg(feature = "local-inference")]
+        if let Some(device) = &self.device {
+            device.live()?;
+        }
         Ok(())
     }
 }
@@ -60,6 +66,22 @@ impl ReadDeliveryGuard for PolicyDelivery {
         let Some(configuration) = &self.configuration else {
             return refused();
         };
+        #[cfg(feature = "local-inference")]
+        if let Some(device) = &self.device {
+            return configuration
+                .device(device.binding.clone())
+                .with_current(
+                    || self.live(),
+                    |current| {
+                        device.with_selection(current, || {
+                            validate_native_policy(&device.policy, &self.expected)?;
+                            self.live()?;
+                            Ok(effect())
+                        })
+                    },
+                )
+                .unwrap_or_else(|_| refused());
+        }
         configuration
             .with_current(
                 || self.live(),
@@ -75,6 +97,15 @@ impl ReadDeliveryGuard for PolicyDelivery {
     }
 }
 fn validate_policy(current: &Configuration, expected: &[ContextDeliveryBinding]) -> Result<()> {
+    validate_native_policy(
+        &airk_kernel::arbiter::device_runtime::NativeConfiguration::Legacy(current.clone()),
+        expected,
+    )
+}
+fn validate_native_policy(
+    current: &airk_kernel::arbiter::device_runtime::NativeConfiguration,
+    expected: &[ContextDeliveryBinding],
+) -> Result<()> {
     ensure!(
         !expected.is_empty()
             && expected.len() <= airk_core::combined_context::MAX_DELIVERY_BINDINGS,
@@ -84,14 +115,13 @@ fn validate_policy(current: &Configuration, expected: &[ContextDeliveryBinding])
     for binding in expected {
         ensure!(
             indexes.insert((binding.stage, binding.scope.index_id))
-                && binding.scope.installation == current.installation
-                && binding.scope.catalog == current.catalog
-                && binding.scope.configuration_revision == current.revision,
+                && binding.scope.installation == current.installation()
+                && binding.scope.catalog == current.catalog()
+                && binding.scope.configuration_revision == current.revision(),
             "context delivery configuration changed"
         );
         ensure!(
-            stage_profile_for_index(current, binding.stage, binding.scope.index_id)
-                == binding.profile,
+            current.profile_for_index(binding.stage, binding.scope.index_id) == binding.profile,
             "context delivery profile changed"
         );
         if binding.profile.is_some() {
@@ -137,7 +167,20 @@ pub(in crate::service_runtime) fn factory(
             &[&serde_json::to_vec(expected)?],
         );
         let live = weak.clone();
+        #[cfg(feature = "local-inference")]
+        let device = if expected.is_empty() {
+            None
+        } else {
+            state
+                .arbiter
+                .as_ref()
+                .context("native policy owner unavailable")?
+                .context
+                .device_delivery()?
+        };
         Ok(Arc::new(PolicyDelivery {
+            #[cfg(feature = "local-inference")]
+            device,
             configuration,
             expected: expected.to_vec(),
             digest,

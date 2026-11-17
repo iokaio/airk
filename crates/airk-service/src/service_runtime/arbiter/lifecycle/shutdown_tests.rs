@@ -318,12 +318,19 @@ async fn authentic_charge_roster_refuses_capacity_without_evicting_owned_observa
         .map(|(manifest, _)| *manifest)
         .collect::<Vec<_>>();
     assert_eq!(before.len(), 16);
-    // Even an authentic extra observation cannot displace an unfinished one.
+    // A distinct authentic seventeenth charge cannot displace an unfinished
+    // owner. A repeated observer of an existing charge is intentionally deduped.
+    let independent_resources = airk_kernel::service_resources::Resources::new(
+        airk_core::service_resources::ResourceConfiguration::default(),
+        32,
+        Some(128 << 30),
+    )?;
+    let seventeenth = actual_reservation(&independent_resources, 99)?;
     assert!(
         remember_charge(
             &shared,
             Sha256Digest::from_bytes([99; 32]),
-            actual[0].release_observer()
+            seventeenth.release_observer()
         )
         .await
         .is_err()
@@ -336,5 +343,105 @@ async fn authentic_charge_roster_refuses_capacity_without_evicting_owned_observa
         .map(|(manifest, _)| *manifest)
         .collect::<Vec<_>>();
     assert_eq!(after, before);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_waits_for_bounded_device_continuation_owner_not_only_active_native_work()
+-> Result<()> {
+    use std::{
+        future::Future,
+        task::{Context as TaskContext, Poll, Waker},
+    };
+    let shared = Arc::new(Mutex::new(State::default()));
+    {
+        let mut state = shared.lock().unwrap();
+        state.device_tasks = 1;
+    }
+    begin_shutdown(&shared, Stage::Context)?;
+    let wait = wait_for_settlement(&shared, Instant::now() + Duration::from_secs(5));
+    tokio::pin!(wait);
+    assert!(matches!(
+        wait.as_mut()
+            .poll(&mut TaskContext::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    {
+        let mut state = shared.lock().unwrap();
+        assert!(state.stopping);
+        state.device_tasks = 0;
+        state.settled.notify_waiters();
+    }
+    assert!(matches!(
+        wait.as_mut()
+            .poll(&mut TaskContext::from_waker(Waker::noop())),
+        Poll::Ready(Ok(()))
+    ));
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn repeated_borrowed_probe_observation_deduplicates_actual_charge_and_preserves_distinct_unresolved_owners()
+-> Result<()> {
+    use std::{
+        future::Future,
+        task::{Context as TaskContext, Poll, Waker},
+    };
+    let shared = Arc::new(Mutex::new(State::default()));
+    let resources = airk_kernel::service_resources::Resources::new(
+        airk_core::service_resources::ResourceConfiguration::default(),
+        8,
+        Some(64 << 30),
+    )?;
+    let manifest = Sha256Digest::from_bytes([73; 32]);
+    let first = Arc::new(resources.reserve_optional(
+        airk_core::identity::Incarnation::from_bytes([71; 16]),
+        1,
+        Some(8 << 30),
+    )?);
+    let release = first.release_observer();
+    for _ in 0..64 {
+        remember_charge(&shared, manifest, release.clone()).await?;
+    }
+    assert_eq!(shared.lock().unwrap().charges.len(), 1);
+    let other = resources.reserve_optional(
+        airk_core::identity::Incarnation::from_bytes([72; 16]),
+        1,
+        Some(8 << 30),
+    )?;
+    assert!(!release.same_charge(&other.release_observer()));
+    remember_charge(&shared, manifest, other.release_observer()).await?;
+    assert_eq!(
+        shared.lock().unwrap().charges.len(),
+        2,
+        "same manifest never collapses distinct unresolved charges"
+    );
+    let actual_owner = first.clone();
+    drop(first);
+    let mut waiting = Box::pin(release.wait());
+    assert!(matches!(
+        waiting
+            .as_mut()
+            .poll(&mut TaskContext::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    for _ in 0..64 {
+        remember_charge(&shared, manifest, other.release_observer()).await?;
+    }
+    assert_eq!(shared.lock().unwrap().charges.len(), 2);
+    drop(actual_owner);
+    assert!(matches!(
+        waiting
+            .as_mut()
+            .poll(&mut TaskContext::from_waker(Waker::noop())),
+        Poll::Ready(Ok(()))
+    ));
+    remember_charge(&shared, manifest, other.release_observer()).await?;
+    assert_eq!(
+        shared.lock().unwrap().charges.len(),
+        1,
+        "only actual released charge is pruned"
+    );
+    drop(other);
     Ok(())
 }

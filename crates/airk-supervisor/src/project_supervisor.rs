@@ -979,11 +979,12 @@ impl ResourceCache {
 enum Envelope {
     #[cfg(feature = "local-inference")]
     ArbiterHandle {
-        configuration: Option<airk_core::arbiter::Configuration>,
+        configuration: Option<airk_kernel::arbiter::device_runtime::NativeConfiguration>,
         deadline: Instant,
         reply: oneshot::Sender<Result<airk_inference::inference_engine::pool::arbiter::Handle>>,
     },
     ReuseOptional {
+        warm_extra_bytes: Option<u64>,
         reservation: Arc<airk_kernel::service_resources::OptionalReservation>,
         reply: oneshot::Sender<Result<airk_kernel::service_resources::OptionalReuse>>,
     },
@@ -2463,8 +2464,8 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                 let _ = reply.send(result);
                             }
                         },
-                        Ok(Envelope::ReuseOptional {reservation,reply})=> {
-                            let result=if checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) {Err(anyhow::anyhow!("optional admission closed for checkpoint"))}else{resources.reuse_optional(&reservation,airk_kernel::service_resource_observations::available_memory())};
+                        Ok(Envelope::ReuseOptional {reservation,warm_extra_bytes,reply})=> {
+                            let result=if checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) {Err(anyhow::anyhow!("optional admission closed for checkpoint"))}else{resources.reuse_optional_with_extra(&reservation,warm_extra_bytes.unwrap_or(reservation.bytes()),airk_kernel::service_resource_observations::available_memory())};
                             let _=reply.send(result);
                         },
                         Ok(Envelope::ReserveOptional {id, bytes, reply}) => {
@@ -3135,7 +3136,27 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
         self.sender
             .as_ref()
             .context("supervisor closed")?
-            .try_send(Envelope::ReuseOptional { reservation, reply })?;
+            .try_send(Envelope::ReuseOptional {
+                reservation,
+                warm_extra_bytes: None,
+                reply,
+            })?;
+        receive.await.context("optional resource owner closed")?
+    }
+    pub async fn reuse_optional_with_extra(
+        &self,
+        reservation: Arc<airk_kernel::service_resources::OptionalReservation>,
+        warm_extra_bytes: u64,
+    ) -> Result<airk_kernel::service_resources::OptionalReuse> {
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .context("supervisor closed")?
+            .try_send(Envelope::ReuseOptional {
+                reservation,
+                warm_extra_bytes: Some(warm_extra_bytes),
+                reply,
+            })?;
         receive.await.context("optional resource owner closed")?
     }
     pub async fn reserve_optional(

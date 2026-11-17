@@ -355,3 +355,42 @@ retired-source refusal. It is checked before installation discovery, target
 resolution or service admission, and never falls through to URL-only editing.
 Existing connection/selection combinations keep their explicit retired-source
 refusal; modern `connect` omits both flags.
+
+
+## D08 additive native device-management transport
+
+The current command `arbiter status` dispatches Core StatusDevice and returns
+complete Status/3 with configuration/4, actual native selected execution and
+precision/fallback facts. `arbiter status-legacy` retains Status/2 and the exact
+configuration/3 CPU interpretation. The old Profile selected_profile never
+implicitly grants GPU execution. New InitializeDevice and MigrateDevice are
+explicit mutations; migration binds the exact old configuration digest and
+revision under native ownership. Automatic upgrade uses that same authenticated
+owner transaction and is not a read effect.
+
+Configure files are complete Rust ManagementRequest values. ConfigureDevice
+carries an explicit stage, expected_revision and complete DeviceStageConfiguration,
+including independent device_policy and gpu_precision. CLI passes every native
+field intact and refuses a foreign stage or unknown precision before admission.
+Retained Configure remains its original CPU request; it is never converted to
+a device request or given invented consent. Status/3 is accepted only for the
+new device operations, and legacy operations retain Status/2. Full native errors
+and original unknown-outcome/nonreplayable mutation semantics remain unchanged.
+
+The shared Core Arbiter schema and Rust semantic fixtures own all device DTOs.
+I2 session responses carry their complete native result, without an alternate
+handwritten view or a new clock/token allowance. Device selection data is not
+qualification, source authority, a reservation or proof of device settlement.
+
+The complete current family also includes ProvisionDevice, CancelDevice,
+RemoveDevice and RecoverDevice, preserving their original revision/profile/stage
+payload fields. Current private ArbiterImportDevice retains the exact native
+offline-directory input and returns ArbiterDevice Status/3; it is forbidden over
+HTTP. Ordinary CLI/I3 operations use current device variants. Explicit CLI
+--legacy (status-legacy for reads) and I3 *_legacy operations retain old CPU
+requests only. After device configuration/4 is active, those old operations
+require an updated client and cannot write or project a GPU result into CPU
+Status/2. Versioned configuration migration creates and fsyncs an exact archived
+configuration/3 before atomic replacement; no read/missing-state inspection
+performs migration or model acquisition. Core/Store own the migration, actual
+DeviceCatalog/source binding and assets/4 plus partial/4 custody.

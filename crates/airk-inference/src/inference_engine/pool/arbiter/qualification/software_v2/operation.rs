@@ -69,6 +69,7 @@ struct Attempt<'a> {
     ordinal: usize,
     input: Option<Sha256Digest>,
     deadline_ms: u64,
+    absolute_expires_ns: Option<u64>,
 }
 fn observe<T>(
     attempt: Attempt<'_>,
@@ -83,6 +84,7 @@ fn observe<T>(
         ordinal,
         input,
         deadline_ms,
+        absolute_expires_ns,
     } = attempt;
     ensure!(
         (1..=120_000).contains(&deadline_ms),
@@ -101,13 +103,18 @@ fn observe<T>(
         "native operation input identity differs"
     );
     let started = clock()?;
-    let expires = started
+    let relative_expires = started
         .checked_add(
             deadline_ms
                 .checked_mul(1_000_000)
                 .context("operation duration overflow")?,
         )
         .context("operation deadline overflow")?;
+    let expires = absolute_expires_ns.unwrap_or(relative_expires);
+    ensure!(
+        expires <= relative_expires,
+        "absolute operation expiry exceeds original allowed span"
+    );
     *sequence = sequence
         .checked_add(1)
         .context("operation sequence overflow")?;
@@ -189,6 +196,7 @@ pub(super) struct Journal {
     identity: Identity,
     deadline_ms: u64,
     sequence: u64,
+    absolute_expires_ns: Option<u64>,
 }
 impl Journal {
     pub fn create(output: &Path, identity: Identity, deadline_ms: u64) -> Result<Self> {
@@ -200,7 +208,21 @@ impl Journal {
             identity,
             deadline_ms,
             sequence: 0,
+            absolute_expires_ns: None,
         })
+    }
+    /// Additive component probe: all operations share the original native clock
+    /// expiry. Historical create/relative behavior and event schema stay exact.
+    #[cfg(feature = "gpu-cuda")]
+    pub fn create_until(output: &Path, identity: Identity, expires_ns: u64) -> Result<Self> {
+        let now = airk_process::monotonic::now_ns()?;
+        ensure!(
+            expires_ns > now && expires_ns - now <= 120_000_000_000,
+            "invalid original native CUDA expiry"
+        );
+        let mut journal = Self::create(output, identity, 120_000)?;
+        journal.absolute_expires_ns = Some(expires_ns);
+        Ok(journal)
     }
     pub fn observe<T>(
         &mut self,
@@ -217,6 +239,7 @@ impl Journal {
                 ordinal,
                 input,
                 deadline_ms: self.deadline_ms,
+                absolute_expires_ns: self.absolute_expires_ns,
             },
             &mut self.sequence,
             &mut airk_process::monotonic::now_ns,

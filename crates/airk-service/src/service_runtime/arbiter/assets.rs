@@ -244,3 +244,16 @@ fn source_failure_code(
 ) -> String {
     format!("arbiter_source_{asset}_{ordinal}_{}", failure.class())
 }
+
+/// Source custody only, never an execution capability. Runtime verifies the
+/// actual independently admitted ExecutionProfile before consuming these pins.
+pub(super) fn source_for_store(
+    profile: Profile,
+    store: Arc<AssetStore>,
+) -> Box<dyn AssetSource + Send> {
+    Box::new(Source {
+        store,
+        profile,
+        pinned: Mutex::new(None),
+    })
+}

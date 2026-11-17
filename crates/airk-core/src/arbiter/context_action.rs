@@ -422,7 +422,7 @@ impl ContextActionAdvice {
         ensure!(
             self.schema == ADVICE_SCHEMA_V2
                 && self.task == Task::ContextAction
-                && self.runtime == RUNTIME
+                && device::valid_advice_runtime(&self.runtime)
                 && self.scope.configuration_revision > 0
                 && (1..=8192).contains(&self.reserved_input_tokens)
                 && self.work.input_tokens == self.observed_input_tokens.unwrap_or(0)

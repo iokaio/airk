@@ -1,0 +1,618 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Explicit component probes. No product admission or qualified GPU fit follows.
+use super::*;
+use airk_core::{
+    arbiter::device::GpuProbeReservation,
+    identity::Incarnation,
+    service_resources::{ResourceConfiguration, ResourcePreset},
+};
+use airk_retrieval::arbiter::runtime::cuda::{self, DeviceCapacityPlan, RuntimeAssemblyInput};
+use std::time::{Duration, Instant};
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum Request {
+    Assembly {
+        schema: String,
+        assembly: RuntimeAssemblyInput,
+        deadline_ms: u64,
+    },
+    Prepare {
+        schema: String,
+        cpu_input: ResourceFilePin,
+        runtime_manifest: ResourceFilePin,
+        bounds: GpuProbeReservation,
+        cold_bytes: u64,
+        warm_bytes: u64,
+        headroom_bytes: u64,
+        job_limit_bytes: u64,
+    },
+    Probe {
+        schema: String,
+        gpu_input: ResourceFilePin,
+        runtime_manifest: ResourceFilePin,
+        bounds: GpuProbeReservation,
+        cold_bytes: u64,
+        warm_bytes: u64,
+        headroom_bytes: u64,
+        job_limit_bytes: u64,
+    },
+}
+const SCHEMA: &str = "airk.private.cuda-component-probe-request/1";
+fn text(key: &str) -> Result<String> {
+    std::env::var(key).with_context(|| format!("missing {key}"))
+}
+fn number(key: &str) -> Result<u64> {
+    Ok(text(key)?.parse()?)
+}
+fn env_pin(path: &str, hash: &str) -> Result<ResourceFilePin> {
+    let pin = ResourceFilePin {
+        path: text(path)?,
+        sha256: text(hash)?.parse()?,
+    };
+    pin.validate()?;
+    Ok(pin)
+}
+fn list(key: &str) -> Result<Vec<String>> {
+    let value = text(key)?;
+    if value.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows = value.split(';').map(str::to_owned).collect::<Vec<_>>();
+    ensure!(
+        rows.len() <= 256 && rows.iter().all(|r| !r.is_empty()),
+        "native request name-list bound"
+    );
+    Ok(rows)
+}
+fn output() -> Result<PathBuf> {
+    Ok(PathBuf::from(text("AIRK_CUDA_QUALIFICATION_OUTPUT")?))
+}
+fn write_new(path: &Path, bytes: &[u8]) -> Result<ResourceFilePin> {
+    ensure!(bytes.len() <= 16 << 20, "CUDA component output cap");
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(ResourceFilePin {
+        path: path.to_str().context("native output UTF8 path")?.into(),
+        sha256: sha(bytes),
+    })
+}
+fn write_json(path: &Path, value: &impl Serialize) -> Result<ResourceFilePin> {
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    write_new(path, &bytes)
+}
+fn request() -> Result<(Request, ResourceFilePin)> {
+    let pin = env_pin(
+        "AIRK_CUDA_QUALIFICATION_INPUT",
+        "AIRK_CUDA_QUALIFICATION_INPUT_SHA256",
+    )?;
+    let raw = pinned(&pin, 1 << 20)?;
+    Ok((serde_json::from_slice(&raw)?, pin))
+}
+fn bounds_validate(
+    bounds: &GpuProbeReservation,
+    cold: u64,
+    warm: u64,
+    headroom: u64,
+    job: u64,
+    profile_peak: u64,
+) -> Result<DeviceCapacityPlan> {
+    bounds.validate()?;
+    ensure!(
+        bounds.host_limit_bytes >= profile_peak
+            && job >= bounds.host_limit_bytes
+            && job
+                <= bounds
+                    .host_limit_bytes
+                    .checked_add(8 << 30)
+                    .context("Job limit overflow")?,
+        "original explicit component host/Job bounds differ"
+    );
+    ensure!(
+        cold.checked_add(headroom)
+            .is_some_and(|v| v <= bounds.device_limit_bytes),
+        "device planning bound exceeds explicit reservation"
+    );
+    DeviceCapacityPlan::probe(cold, warm, headroom)
+}
+fn final_host_peak(peak: Option<u64>, limit: u64) -> Result<u64> {
+    let value = peak.context("actual final persistent host RSS peak unavailable")?;
+    ensure!(
+        value > 0 && value <= limit,
+        "final persistent host RSS peak exceeds original bound or is invalid"
+    );
+    Ok(value)
+}
+#[derive(Clone, Copy)]
+enum CaseKind {
+    Context17,
+    Context128,
+    Focus512,
+}
+fn selected_rows(
+    kind: CaseKind,
+    profile: &Profile,
+    fixture: &NumericFixture,
+) -> Result<Vec<usize>> {
+    match kind {
+        CaseKind::Context17 | CaseKind::Context128 => {
+            ensure!(
+                matches!(
+                    profile.model,
+                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+                ),
+                "Context selector cannot consume Focus"
+            );
+            let index = if matches!(kind, CaseKind::Context17) {
+                0
+            } else {
+                1
+            };
+            let width = if index == 0 { 17 } else { 128 };
+            ensure!(
+                fixture.rows.len() == 3 && fixture.rows[index].input.input_ids.len() == width,
+                "literal native Context row differs"
+            );
+            Ok(vec![index])
+        }
+        CaseKind::Focus512 => {
+            ensure!(
+                profile.model == ModelChoice::FocusQwenReranker06B
+                    && fixture.rows.len() == 12
+                    && fixture.rows.iter().all(|r| r.input.input_ids.len() == 512),
+                "full twelve-case static512 Focus roster required"
+            );
+            Ok((0..12).collect())
+        }
+    }
+}
+#[cfg(windows)]
+fn job_limits(host: u64, job: u64) -> Result<serde_json::Value> {
+    use windows_sys::Win32::System::JobObjects::*;
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        QueryInformationJobObject(
+            std::ptr::null_mut(),
+            JobObjectExtendedLimitInformation,
+            (&mut info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of_val(&info) as u32,
+            std::ptr::null_mut(),
+        )
+    };
+    ensure!(ok != 0, "actual outer Job information unavailable");
+    let flags = info.BasicLimitInformation.LimitFlags;
+    ensure!(
+        flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
+            && flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY != 0
+            && flags & JOB_OBJECT_LIMIT_JOB_MEMORY != 0
+            && info.ProcessMemoryLimit as u64 == host
+            && info.JobMemoryLimit as u64 == job,
+        "actual owned-process memory/Job bounds differ from reviewed request"
+    );
+    Ok(
+        json!({"process_memory_limit_bytes":info.ProcessMemoryLimit,"job_memory_limit_bytes":info.JobMemoryLimit,"flags":flags}),
+    )
+}
+#[cfg(not(windows))]
+fn job_limits(_: u64, _: u64) -> Result<Value> {
+    anyhow::bail!("CUDA component probe requires real Windows Job limits")
+}
+struct Custody<'a> {
+    scorer: Option<Scorer>,
+    device: Option<Arc<cuda::CudaDevice>>,
+    owner: Arc<airk_kernel::inference_owner::NativeInferenceOwner>,
+    lease: Arc<airk_store::service::ServiceLease>,
+    charge: Option<Arc<airk_kernel::service_resources::OptionalReservation>>,
+    control: &'a mut Option<tempfile::TempDir>,
+    files: Option<Files>,
+}
+impl Drop for Custody<'_> {
+    fn drop(&mut self) {
+        drop(self.scorer.take());
+        if cuda::process_poisoned() || self.device.as_ref().is_some_and(|d| d.poisoned()) {
+            std::mem::forget(self.owner.clone());
+            std::mem::forget(self.lease.clone());
+            if let Some(value) = self.charge.take() {
+                std::mem::forget(value);
+            }
+            if let Some(value) = self.control.take() {
+                std::mem::forget(value);
+            }
+            if let Some(value) = self.files.take() {
+                std::mem::forget(value);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "metadata only: actual reviewed paths/pins/scalars required; emits owning Rust request DTO"]
+fn emit_cuda_component_probe_request() -> Result<()> {
+    let mode = text("AIRK_CUDA_REQUEST_KIND")?;
+    let value = if mode == "assembly" {
+        Request::Assembly {
+            schema: SCHEMA.into(),
+            assembly: RuntimeAssemblyInput {
+                directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
+                producer_name: text("AIRK_CUDA_PRODUCER_NAME")?,
+                producer_sha256: text("AIRK_CUDA_PRODUCER_SHA256")?.parse()?,
+                module_names: list("AIRK_CUDA_MODULE_NAMES")?,
+                load_order: list("AIRK_CUDA_LOAD_ORDER")?,
+                system_imports: list("AIRK_CUDA_SYSTEM_IMPORTS")?.into_iter().collect(),
+            },
+            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
+        }
+    } else {
+        ensure!(mode == "prepare", "unknown native request kind");
+        let cpu_input = env_pin(
+            "AIRK_SOFTWARE_V2_NATIVE_INPUT",
+            "AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256",
+        )?;
+        let (_, profile, _, _) = inputs_from(&cpu_input)?;
+        let bounds = GpuProbeReservation {
+            schema: "airk.arbiter.gpu-probe-reservation/1".into(),
+            host_limit_bytes: number("AIRK_CUDA_HOST_LIMIT_BYTES")?,
+            device_limit_bytes: number("AIRK_CUDA_DEVICE_LIMIT_BYTES")?,
+            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
+        };
+        let (cold_bytes, warm_bytes, headroom_bytes, job_limit_bytes) = (
+            number("AIRK_CUDA_COLD_BYTES")?,
+            number("AIRK_CUDA_WARM_BYTES")?,
+            number("AIRK_CUDA_HEADROOM_BYTES")?,
+            number("AIRK_CUDA_JOB_LIMIT_BYTES")?,
+        );
+        bounds_validate(
+            &bounds,
+            cold_bytes,
+            warm_bytes,
+            headroom_bytes,
+            job_limit_bytes,
+            profile.memory_reservation_bytes,
+        )?;
+        Request::Prepare {
+            schema: SCHEMA.into(),
+            cpu_input,
+            runtime_manifest: env_pin(
+                "AIRK_CUDA_RUNTIME_MANIFEST",
+                "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
+            )?,
+            bounds,
+            cold_bytes,
+            warm_bytes,
+            headroom_bytes,
+            job_limit_bytes,
+        }
+    };
+    let path = PathBuf::from(text("AIRK_CUDA_REQUEST_OUTPUT")?);
+    write_json(&path, &value)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "NN0 requires exact reviewed producer+staged DLLs; emits UNAPPROVED fits-empty native manifest"]
+fn emit_cuda_runtime_manifest_from_held_native_closure() -> Result<()> {
+    let started = Instant::now();
+    let (request, pin) = request()?;
+    let Request::Assembly {
+        schema,
+        assembly,
+        deadline_ms,
+    } = request
+    else {
+        anyhow::bail!("assembly request required")
+    };
+    ensure!(
+        schema == SCHEMA && (1..=120000).contains(&deadline_ms),
+        "assembly schema/deadline differs"
+    );
+    let deadline = started + Duration::from_millis(deadline_ms);
+    let (_parent, control) = private_control()?;
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
+    let bytes = owner.run(|| -> Result<Vec<u8>> {
+        // SAFETY: the erased Arc is this exact actual exclusive lease, and run owns
+        // the existing real ServiceComputeScope throughout metadata observation.
+        unsafe { cuda::observe_runtime_assembly(lease.clone(), assembly, deadline) }
+    })??;
+    ensure!(
+        Instant::now() < deadline,
+        "original metadata deadline exceeded"
+    );
+    let path = output()?;
+    let manifest = write_new(&path, &bytes)?;
+    write_json(
+        &path.with_extension("receipt.json"),
+        &json!({"schema":"airk.private.cuda-runtime-assembly-emission/1","input":pin,"manifest":manifest,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"runtime_admission_dispatched":false,"forward_count_observed":null,"approved":false,"fits_empty":true,"scope":"Actual held native assembly metadata only; no compiled runtime approval or GPU execution capability"}),
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "NN0 uses current native CPU source metadata + actual raw RuntimeManifest; creates fresh GPU Profile/CAL/request"]
+fn emit_cuda_fp32_probe_metadata() -> Result<()> {
+    let started = Instant::now();
+    let (request, request_pin) = request()?;
+    let Request::Prepare {
+        schema,
+        cpu_input,
+        runtime_manifest,
+        bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+    } = request
+    else {
+        anyhow::bail!("prepare request required")
+    };
+    ensure!(schema == SCHEMA, "unknown metadata schema");
+    let (mut input, profile, files, _) = inputs_from(&cpu_input)?;
+    let plan = bounds_validate(
+        &bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+        profile.memory_reservation_bytes,
+    )?;
+    let deadline = started + Duration::from_millis(bounds.deadline_ms);
+    let raw = pinned(&runtime_manifest, 128 << 10)?;
+    let prepared =
+        cuda::prepare_fp32_probe_profile(&profile, &files, &raw, runtime_manifest.sha256, plan)?;
+    ensure!(
+        Instant::now() < deadline,
+        "original metadata expiry reached"
+    );
+    let directory = PathBuf::from(text("AIRK_CUDA_METADATA_DIRECTORY")?);
+    std::fs::create_dir(&directory)?;
+    let calibration = write_new(
+        &directory.join(&prepared.calibration_name),
+        &prepared.calibration_bytes,
+    )?;
+    let profile_pin = write_json(&directory.join("profile.json"), &prepared.profile)?;
+    input.profile = profile_pin;
+    input
+        .files
+        .insert(prepared.calibration_name, calibration.path);
+    input.validate()?;
+    let gpu_input = write_json(&directory.join("native-input.json"), &input)?;
+    let probe = Request::Probe {
+        schema: SCHEMA.into(),
+        gpu_input,
+        runtime_manifest,
+        bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+    };
+    let probe_pin = write_json(&directory.join("probe-request.json"), &probe)?;
+    let selectors = if profile.model == ModelChoice::FocusQwenReranker06B {
+        vec!["cuda_selected_focus_fp32_512_component"]
+    } else {
+        vec![
+            "cuda_original_context_fp32_t17_component",
+            "cuda_original_context_fp32_t128_component",
+        ]
+    };
+    let prefix =
+        "inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::";
+    let commands=selectors.into_iter().map(|selector|json!({"program":std::env::current_exe().ok(),"args":["--exact",format!("{prefix}{selector}"),"--ignored","--nocapture"],"env":{"AIRK_CUDA_QUALIFICATION_INPUT":probe_pin.path,"AIRK_CUDA_QUALIFICATION_INPUT_SHA256":probe_pin.sha256},"requires":"fresh explicit AIRK_CUDA_QUALIFICATION_OUTPUT and reviewed same-human bounded owner; no native run authorized by this data"})).collect::<Vec<_>>();
+    write_json(&directory.join("commands.json"), &commands)?;
+    write_json(
+        &directory.join("metadata-receipt.json"),
+        &json!({"schema":"airk.private.cuda-probe-metadata/1","request":request_pin,"probe_request":probe_pin,"cpu_input":cpu_input,"model":profile.model,"profile":prepared.profile.manifest,"model_requests_dispatched":false,"forward_count_observed":null,"qualified":false,"elapsed_us":started.elapsed().as_micros()}),
+    )?;
+    ensure!(
+        Instant::now() < deadline,
+        "original metadata deadline exceeded during retention"
+    );
+    Ok(())
+}
+
+fn probe(kind: CaseKind) -> Result<()> {
+    let started_ns = airk_process::monotonic::now_ns()?;
+    let started = Instant::now();
+    let (request, request_pin) = request()?;
+    let Request::Probe {
+        schema,
+        gpu_input,
+        runtime_manifest,
+        bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+    } = request
+    else {
+        anyhow::bail!("native-emitted probe request required")
+    };
+    ensure!(schema == SCHEMA, "unknown probe schema");
+    bounds.validate()?;
+    let deadline = started + Duration::from_millis(bounds.deadline_ms);
+    let expires_ns = started_ns
+        .checked_add(bounds.deadline_ms * 1_000_000)
+        .context("absolute probe expiry overflow")?;
+    let (input, profile, files, _) = inputs_from(&gpu_input)?;
+    let plan = bounds_validate(
+        &bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+        profile.memory_reservation_bytes,
+    )?;
+    let manifest_bytes = pinned(&runtime_manifest, 128 << 10)?;
+    let _ = manifest_bytes;
+    ensure!(
+        profile.device_execution.is_some() && profile.cpu_fit.is_none(),
+        "new GPU metadata required"
+    );
+    let fixture_pin = input
+        .numeric_fixture
+        .as_ref()
+        .context("pinned independent numeric fixture required")?;
+    let fixture: NumericFixture = serde_json::from_slice(&pinned(fixture_pin, 16 << 20)?)?;
+    numeric_shape(&fixture, &profile, &input.policy)?;
+    let producer = fixture
+        .reference_producer
+        .as_ref()
+        .context("independent producer closure pin required")?;
+    pinned(producer, 16 << 20)?;
+    ensure!(
+        !fixture.original_reference_assets.is_empty(),
+        "independent original source asset roster missing"
+    );
+    let selected = selected_rows(kind, &profile, &fixture)?;
+    for &index in &selected {
+        for reference in [
+            &fixture.rows[index].reference_same_artifact,
+            &fixture.rows[index].reference_original_fp32,
+        ] {
+            let scores = reference
+                .as_ref()
+                .context("both exact independent reference arrays required before model load")?;
+            ensure!(
+                scores.len() == fixture.rows[index].input.candidate_positions.len()
+                    && scores.iter().all(|v| v.is_finite()),
+                "numeric reference shape/finite mismatch"
+            );
+        }
+    }
+    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
+    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
+        preset: ResourcePreset::Throughput,
+        ..ResourceConfiguration::default()
+    })?;
+    let available = airk_kernel::service_resource_observations::available_memory();
+    resources.observe(
+        airk_kernel::service_resource_observations::rss(std::process::id()),
+        available,
+        true,
+    );
+    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
+    let charge =
+        Arc::new(resources.reserve_optional(incarnation, bounds.host_limit_bytes, available)?);
+    let charge_release = charge.release_observer();
+    let resource_snapshot = resources.snapshot();
+    let (parent, control) = private_control()?;
+    let mut control_parent = Some(parent);
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
+        lease.clone(),
+    )?);
+    let output = output()?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)?;
+    let binary = file_hash(&std::env::current_exe()?)?;
+    let mut receipt = json!({"schema":"airk.private.cuda-component-result/1","complete":false,"qualified":false,"product_admission":false,"measured_peak_device_bytes":null,"request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"model":profile.model,"fixture":fixture_pin,"reference_producer":producer,"source_manifest":input.source_manifest,"runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,"bounds":bounds,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resource_snapshot,"original_expires_monotonic_ns":expires_ns,"rows":[],"scope":"Actual component CUDA score, final placement and exact independent references at stated rows only; no full8192, resources20, semantic/CAL, product lane or public qualification"});
+    flush(&mut file, &receipt)?;
+    let mut operations = operation::Journal::create_until(
+        &output,
+        operation::Identity {
+            input_sha256: request_pin.sha256,
+            profile: profile.manifest,
+            process_id: std::process::id(),
+            native_binary_sha256: binary,
+        },
+        expires_ns,
+    )?;
+    let run=owner.run(||->Result<()>{
+  let mut custody=Custody{scorer:None,device:None,owner:owner.clone(),lease:lease.clone(),charge:Some(charge),control:&mut control_parent,files:Some(files)};
+  ensure!(Instant::now()<deadline,"original probe deadline expired before preflight");verify_files(custody.files.as_ref().unwrap(),&profile)?;
+  let(root,manifest)=airk_host::gpu_runtime::installed_paths()?;ensure!(manifest.as_path()==Path::new(&runtime_manifest.path),"probe manifest differs from authenticated installed runtime path");
+  let runtime=airk_host::gpu_runtime::admit(lease.clone(),&root,&manifest,deadline)?;ensure!(runtime.manifest_identity()==runtime_manifest.sha256,"actual runtime manifest differs from frozen request");
+  let adapters=runtime.adapters(deadline)?;ensure!(adapters.len()==1,"first scientific component probe requires exactly one observed adapter");let device=runtime.device(adapters[0].uuid,deadline)?;custody.device=Some(device.clone());receipt["adapter_before"]=serde_json::to_value(device.observation(deadline)?)?;flush(&mut file,&receipt)?;
+  let catalog=airk_kernel::inference_owner::evaluation_catalog(lease.clone(),vec![profile.clone()])?;let execution=catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device.clone(),plan,deadline)?;
+  let loaded=operations.observe(operation::Kind::Load,0,None,||Scorer::open(execution,custody.files.as_ref().unwrap()))?;receipt["load_us"]=json!(loaded.elapsed_us);flush(&mut file,&receipt)?;custody.scorer=Some(loaded.value?);ensure!(loaded.within_deadline,"original CUDA load expiry exceeded");
+  let scorer=custody.scorer.as_ref().unwrap();receipt["execution_identity"]=json!(scorer.execution_identity()?);receipt["final_placement"]=serde_json::to_value(scorer.device_placement()?.context("actual final SessionState map missing")?)?;flush(&mut file,&receipt)?;
+  for index in selected{
+   let row=&fixture.rows[index];let scored=operations.observe(operation::Kind::Numeric,index+1,Some(row.input.input_digest),||scorer.score_with_deadline(&row.input,deadline))?;let actual=scored.value?;
+   let(same_raw,same_mass,same_argmax)=comparison(&actual,row.reference_same_artifact.as_ref().unwrap())?;let(original_raw,original_mass,original_argmax)=comparison(&actual,row.reference_original_fp32.as_ref().unwrap())?;
+   receipt["rows"].as_array_mut().unwrap().push(json!({"name":row.name,"tokens":row.input.input_ids.len(),"input_digest":row.input.input_digest,"raw_scores":actual,"elapsed_us":scored.elapsed_us,"native_call_elapsed_us":scored.native_call_elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,"original_fp32_raw_error":original_raw,"original_fp32_mass_error":original_mass,"argmax_matches":same_argmax&&original_argmax}));flush(&mut file,&receipt)?;
+   let focus=profile.model==ModelChoice::FocusQwenReranker06B;ensure!(scored.within_deadline&&same_raw<=0.001&&same_mass<=if focus{0.00001}else{0.05}&&original_raw<=if focus{0.25}else{0.001}&&original_mass<=0.05&&same_argmax&&original_argmax,"original absolute timing/numeric tolerance refused");
+   ensure!(peak_rss().is_some_and(|v|v<=bounds.host_limit_bytes),"actual component host peak unavailable/exceeds original bound");
+  }
+  scorer.synchronize(deadline)?;ensure!(scorer.device_settled(),"CUDA work remains unsettled");receipt["adapter_after"]=serde_json::to_value(device.observation(deadline)?)?;
+  drop(custody.scorer.take());ensure!(!device.poisoned(),"native session teardown settlement unknown");verify_files(custody.files.as_ref().unwrap(),&profile)?;pinned(&runtime_manifest,128<<10)?;pinned(&request_pin,1<<20)?;pinned(&gpu_input,1<<20)?;pinned(&input.profile,1<<20)?;pinned(&input.source_manifest,16<<20)?;pinned(fixture_pin,16<<20)?;pinned(producer,16<<20)?;ensure!(Instant::now()<deadline,"original component expiry exceeded during teardown/posthash");Ok(())
+ });
+    let result = run.and_then(std::convert::identity);
+    drop(owner);
+    drop(lease);
+    let control_retained = control_parent.is_none();
+    let cleanup = control_parent
+        .take()
+        .map(tempfile::TempDir::close)
+        .transpose();
+    receipt["native_control_retained_for_unknown_cuda"] = json!(control_retained);
+    receipt["native_control_cleanup_observed"] = json!(matches!(&cleanup, Ok(Some(()))));
+    receipt["native_control_cleanup_error"] =
+        json!(cleanup.as_ref().err().map(ToString::to_string));
+    let mut released = std::pin::pin!(charge_release.wait());
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let host_released = matches!(
+        std::future::Future::poll(released.as_mut(), &mut cx),
+        std::task::Poll::Ready(Ok(()))
+    );
+    receipt["native_host_charge_release_observed"] = json!(host_released);
+    let result = match (result, cleanup) {
+        (Ok(()), Ok(_)) if host_released => Ok(()),
+        (Ok(()), Ok(_)) => Err(anyhow::anyhow!(
+            "native host charge release remains unknown"
+        )),
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+    };
+    let final_peak = peak_rss();
+    let peak_decision = final_host_peak(final_peak, bounds.host_limit_bytes);
+    receipt["peak_process_rss_bytes"] = json!(final_peak);
+    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
+    let result = match (result, peak_decision) {
+        (Err(primary), _) => Err(primary),
+        (Ok(()), Ok(_)) => Ok(()),
+        (Ok(()), Err(peak_error)) => Err(peak_error),
+    };
+    receipt["complete"] = json!(result.is_ok());
+    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
+    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+    if let Err(error) = &result {
+        receipt["error"] = json!(format!("{error:#}"));
+        if let Some(refusal) = error.downcast_ref::<cuda::PlacementRefusal>() {
+            receipt["placement_refusal"] = json!(&refusal.observation);
+        }
+    }
+    flush(&mut file, &receipt)?;
+    if Instant::now() >= deadline {
+        receipt["complete"] = json!(false);
+        receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
+        flush(&mut file, &receipt)?;
+        return result.and_then(|_| {
+            Err(anyhow::anyhow!(
+                "original CUDA component deadline exceeded during final report retention"
+            ))
+        });
+    }
+    result
+}
+#[test]
+#[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
+fn cuda_original_context_fp32_t17_component() -> Result<()> {
+    probe(CaseKind::Context17)
+}
+#[test]
+#[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
+fn cuda_original_context_fp32_t128_component() -> Result<()> {
+    probe(CaseKind::Context128)
+}
+#[test]
+#[ignore = "actual approved CUDA runtime + current native Focus512 metadata + all twelve independent cases; original120s/caps"]
+fn cuda_selected_focus_fp32_512_component() -> Result<()> {
+    probe(CaseKind::Focus512)
+}
+
+#[cfg(test)]
+mod tests;

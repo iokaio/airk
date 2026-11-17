@@ -207,7 +207,42 @@ fn remove_verified_with(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum AssetGeneration {
+    LegacyV3,
+    DeviceV4,
+}
+impl AssetGeneration {
+    fn directory(self) -> &'static str {
+        match self {
+            Self::LegacyV3 => "arbiter-v3",
+            Self::DeviceV4 => "arbiter-v4",
+        }
+    }
+    fn receipt(self) -> &'static str {
+        match self {
+            Self::LegacyV3 => "airk.arbiter.assets/3",
+            Self::DeviceV4 => "airk.arbiter.assets/4",
+        }
+    }
+    fn configuration(self) -> &'static str {
+        match self {
+            Self::LegacyV3 => CONFIGURATION_SCHEMA,
+            Self::DeviceV4 => airk_core::arbiter::device::DEVICE_CONFIGURATION_SCHEMA,
+        }
+    }
+}
+fn partial_schema(record: &Record) -> Result<&'static str> {
+    match (record.schema.as_str(), record.configuration_schema.as_str()) {
+        ("airk.arbiter.assets/3", CONFIGURATION_SCHEMA) => Ok("airk.arbiter.partial/3"),
+        ("airk.arbiter.assets/4", airk_core::arbiter::device::DEVICE_CONFIGURATION_SCHEMA) => {
+            Ok("airk.arbiter.partial/4")
+        }
+        _ => anyhow::bail!("unknown asset generation partial proof"),
+    }
+}
 pub struct AssetStore {
+    generation: AssetGeneration,
     root: SetupDirectory,
     installation: Sha256Digest,
     catalog: Incarnation,
@@ -220,7 +255,24 @@ impl AssetStore {
         installation: Sha256Digest,
         catalog: Incarnation,
     ) -> Result<Arc<Self>> {
+        Self::open_generation(ownership, installation, catalog, AssetGeneration::LegacyV3)
+    }
+    /// New transactions/partials4 use a separate protected root; no assets3 adoption.
+    pub fn open_device(
+        ownership: Arc<ServiceLease>,
+        installation: Sha256Digest,
+        catalog: Incarnation,
+    ) -> Result<Arc<Self>> {
+        Self::open_generation(ownership, installation, catalog, AssetGeneration::DeviceV4)
+    }
+    fn open_generation(
+        ownership: Arc<ServiceLease>,
+        installation: Sha256Digest,
+        catalog: Incarnation,
+        generation: AssetGeneration,
+    ) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
+            generation,
             root: SetupDirectory::open_canonical(ownership.root())?,
             installation,
             catalog,
@@ -228,11 +280,22 @@ impl AssetStore {
             pins: Mutex::new(BTreeMap::new()),
         }))
     }
+    fn checked_profile(&self, profile: &Profile) -> Result<()> {
+        checked_profile(profile)?;
+        ensure!(
+            !matches!(self.generation, AssetGeneration::LegacyV3)
+                || profile.device_execution.is_none(),
+            "legacy assets3 cannot mint GPU device custody"
+        );
+        Ok(())
+    }
     fn parent(&self, create: bool) -> Result<SetupDirectory> {
         let optional = if create {
-            self.root.create_dir(OsStr::new("arbiter-v3"))?
+            self.root
+                .create_dir(OsStr::new(self.generation.directory()))?
         } else {
-            self.root.open_dir(OsStr::new("arbiter-v3"))?
+            self.root
+                .open_dir(OsStr::new(self.generation.directory()))?
         };
         if create {
             optional.create_dir(OsStr::new("assets"))
@@ -264,8 +327,8 @@ impl AssetStore {
         let record: Record = serde_json::from_slice(&bytes)?;
         ensure!(
             canonical(&record)? == bytes
-                && record.schema == "airk.arbiter.assets/3"
-                && record.configuration_schema == CONFIGURATION_SCHEMA
+                && record.schema == self.generation.receipt()
+                && record.configuration_schema == self.generation.configuration()
                 && record.installation == self.installation
                 && record.catalog == self.catalog
                 && record.manifest == manifest
@@ -391,7 +454,7 @@ impl AssetStore {
         Ok(self.observation(profile)?.map(|record| record.phase))
     }
     pub fn observation(&self, profile: &Profile) -> Result<Option<Observation>> {
-        checked_profile(profile)?;
+        self.checked_profile(profile)?;
         let directory = match self.directory(profile.manifest, false) {
             Ok(d) => d,
             Err(e) if missing(&e) => return Ok(None),
@@ -411,7 +474,7 @@ impl AssetStore {
         profile: &Profile,
         configuration_revision: u64,
     ) -> Result<Transaction> {
-        checked_profile(profile)?;
+        self.checked_profile(profile)?;
         ensure!(
             configuration_revision > 0,
             "Arbiter configuration revision missing"
@@ -479,8 +542,8 @@ impl AssetStore {
             prior.as_ref().map_or(0, |(record, _)| record.revision),
         )?;
         let record = Record {
-            schema: "airk.arbiter.assets/3".into(),
-            configuration_schema: CONFIGURATION_SCHEMA.into(),
+            schema: self.generation.receipt().into(),
+            configuration_schema: self.generation.configuration().into(),
             stage: profile
                 .declared_stage()
                 .context("Asset operation requires an explicit stage profile")?,
@@ -537,7 +600,7 @@ impl AssetStore {
         })
     }
     pub fn pin(&self, profile: &Profile) -> Result<PinnedAssets> {
-        checked_profile(profile)?;
+        self.checked_profile(profile)?;
         let mut pins = self
             .pins
             .lock()
@@ -584,7 +647,7 @@ impl AssetStore {
         })
     }
     pub fn remove(&self, profile: &Profile, configuration_revision: u64) -> Result<()> {
-        checked_profile(profile)?;
+        self.checked_profile(profile)?;
         let directory = self.directory(profile.manifest, false)?;
         self.read(&directory, profile)?
             .context("Arbiter asset receipt missing")?;
@@ -613,7 +676,7 @@ impl AssetStore {
             let root = OpenedDirectory::open(self.ownership.root())?;
             same_directory(&root, &self.root)?;
             let raw = root
-                .open_child(OsStr::new("arbiter-v3"))?
+                .open_child(OsStr::new(self.generation.directory()))?
                 .open_child(OsStr::new("assets"))?
                 .open_child(OsStr::new(&manifest.to_string()))?;
             same_directory(&raw, &directory)?;
@@ -727,6 +790,8 @@ fn cleanup_stages(
         ensure!(
             canonical(&intent)? == operation
                 && intent.schema == record.schema
+                && intent.configuration_schema == record.configuration_schema
+                && intent.stage == record.stage
                 && intent.installation == record.installation
                 && intent.catalog == record.catalog
                 && intent.manifest == record.manifest
@@ -772,7 +837,7 @@ fn cleanup_stages(
             let partial: PartialRecord = serde_json::from_slice(&bytes)?;
             ensure!(
                 canonical(&partial)? == bytes
-                    && partial.schema == "airk.arbiter.partial/3"
+                    && partial.schema == partial_schema(&intent)?
                     && partial.operation == intent
                     && partial.asset == *asset
                     && partial.written_bytes <= asset.bytes,
@@ -957,7 +1022,7 @@ impl Transaction {
         let partial: PartialRecord = serde_json::from_slice(&bytes)?;
         ensure!(
             canonical(&partial)? == bytes
-                && partial.schema == "airk.arbiter.partial/3"
+                && partial.schema == partial_schema(&self.record)?
                 && partial.operation == self.record
                 && partial.asset == asset
                 && partial.written_bytes == written_bytes
@@ -975,7 +1040,7 @@ impl Transaction {
             let root = OpenedDirectory::open(self.store.ownership.root())?;
             same_directory(&root, &self.store.root)?;
             let directory = root
-                .open_child(OsStr::new("arbiter-v3"))?
+                .open_child(OsStr::new(self.store.generation.directory()))?
                 .open_child(OsStr::new("assets"))?
                 .open_child(OsStr::new(&self.profile.manifest.to_string()))?;
             same_directory(&directory, &self.directory)?;
@@ -1154,7 +1219,7 @@ impl AssetWriter {
         partial.sha256 = sha256;
         hash(&mut actual, &partial)?;
         let record = PartialRecord {
-            schema: "airk.arbiter.partial/3".into(),
+            schema: partial_schema(&self.operation)?.into(),
             operation: self.operation.clone(),
             asset: self.asset.clone(),
             written_bytes: self.bytes,

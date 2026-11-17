@@ -188,6 +188,9 @@ pub enum ControlMethod {
     ArbiterImport {
         request: Box<crate::native_offline_import::NativeOfflineImportRequest>,
     },
+    ArbiterImportDevice {
+        request: Box<crate::native_offline_import::NativeOfflineImportRequest>,
+    },
     PrepareUpgradeCheckpoint {
         operation_id: Incarnation,
         candidate_execution_sha256: Sha256Digest,
@@ -805,7 +808,7 @@ impl ControlMethod {
             Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
                 return Some("console_private_setup_forbidden");
             }
-            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } => {
+            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
                 return Some("console_private_setup_forbidden");
             }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
@@ -1281,7 +1284,8 @@ impl ControlMethod {
             Self::Arbiter { .. }
             | Self::ArbiterFocusApplication { .. }
             | Self::ArbiterFocusRank { .. }
-            | Self::ArbiterImport { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
+            | Self::ArbiterImport { .. }
+            | Self::ArbiterImportDevice { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::AdminNativeCall { .. } | Self::AdminNativeRead { .. } => {
                 crate::native_admin::CHUNK_FRAME_BYTES
             }
@@ -1304,7 +1308,8 @@ impl ControlMethod {
             | Self::ArbiterContextAction { .. }
             | Self::ArbiterFocusApplication { .. }
             | Self::ArbiterFocusRank { .. }
-            | Self::ArbiterImport { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            | Self::ArbiterImport { .. }
+            | Self::ArbiterImportDevice { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::AdminNativeCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             // JSON escaping can grow the 16 KiB input; M3's budget covers it.
             Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
@@ -1424,6 +1429,9 @@ pub enum ControlResponse {
     },
     ArbiterImport {
         observation: Box<crate::arbiter::Status>,
+    },
+    ArbiterDevice {
+        observation: Box<crate::arbiter::device::DeviceStatus>,
     },
     UpgradeCheckpoint {
         observation: Box<crate::service_checkpoint::UpgradeCheckpointObservation>,

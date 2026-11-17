@@ -73,6 +73,7 @@ pub struct Enrollment {
     pub tasks: BTreeSet<Task>,
 }
 
+pub mod device;
 mod stages;
 pub use stages::*;
 pub mod focus;
@@ -163,6 +164,8 @@ pub struct Profile {
     pub qualified_targets: Vec<QualifiedTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_fit: Option<CpuFit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_execution: Option<device::DeviceExecution>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub downloads: Vec<AssetDownload>,
     pub model: ModelChoice,
@@ -346,6 +349,35 @@ pub struct ProfileStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ManagementRequest {
+    StatusDevice,
+    InitializeDevice {
+        expected_legacy_configuration: Option<Sha256Digest>,
+    },
+    MigrateDevice {
+        expected_revision: u64,
+        expected_configuration: Sha256Digest,
+    },
+    ConfigureDevice {
+        expected_revision: u64,
+        stage: Stage,
+        configuration: device::DeviceStageConfiguration,
+    },
+    ProvisionDevice {
+        expected_revision: u64,
+        profile: Sha256Digest,
+    },
+    CancelDevice {
+        expected_revision: u64,
+        stage: Stage,
+    },
+    RemoveDevice {
+        expected_revision: u64,
+        profile: Sha256Digest,
+    },
+    RecoverDevice {
+        expected_revision: u64,
+        stage: Stage,
+    },
     Status,
     Initialize {
         expected_legacy_configuration: Option<Sha256Digest>,
@@ -412,13 +444,36 @@ impl Profile {
         }
         Ok(())
     }
+    /// Historical CPU receipt bytes stay CPU base; GPU receipts use the full
+    /// source/graph/math/provider/device-execution digest identity.
+    pub fn advice_runtime(&self) -> Result<String> {
+        self.validate()?;
+        match &self.device_execution {
+            None => Ok(RUNTIME.into()),
+            Some(execution) => execution.execution_identity(),
+        }
+    }
+    pub fn device_execution_identity(&self) -> Result<String> {
+        match &self.device_execution {
+            Some(execution) => execution.execution_identity(),
+            None => self.cpu_fit.clone().unwrap_or_default().runtime_identity(),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.runtime == RUNTIME && !self.profile_id.is_empty() && self.profile_id.len() <= 128,
+            !self.profile_id.is_empty() && self.profile_id.len() <= 128,
             "unsupported Arbiter profile runtime or identity"
         );
-        if let Some(fit) = &self.cpu_fit {
-            fit.validate()?;
+        if let Some(execution) = &self.device_execution {
+            execution.validate(self)?;
+        } else {
+            ensure!(
+                self.runtime == RUNTIME,
+                "unsupported legacy CPU profile runtime"
+            );
+            if let Some(fit) = &self.cpu_fit {
+                fit.validate()?;
+            }
         }
         if let Some(stage) = self.model.stage() {
             self.validate_stage(stage)?;
@@ -446,12 +501,12 @@ impl Profile {
                 ) && targets.insert(&target.target),
                 "unknown or duplicate qualification target"
             );
-            let fit = self
-                .cpu_fit
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("qualified target lacks explicit execution fit"))?;
             ensure!(
-                target.execution_identity == fit.runtime_identity()?,
+                self.device_execution.is_some() || self.cpu_fit.is_some(),
+                "qualified target lacks explicit execution fit"
+            );
+            ensure!(
+                target.execution_identity == self.device_execution_identity()?,
                 "qualified target execution identity mismatch"
             );
         }
@@ -738,7 +793,7 @@ impl Advice {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == ADVICE_SCHEMA
-                && self.runtime == RUNTIME
+                && device::valid_advice_runtime(&self.runtime)
                 && self.scope.configuration_revision > 0,
             "invalid Arbiter advice binding"
         );

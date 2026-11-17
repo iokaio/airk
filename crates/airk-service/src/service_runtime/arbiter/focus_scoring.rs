@@ -58,8 +58,8 @@ impl StageOwner {
             application.scope == request.scope,
             "Focus source publication changed"
         );
-        let configuration = self.configuration()?;
-        if configuration.revision != request.scope.configuration_revision
+        let configuration = self.read_configuration()?;
+        if configuration.revision() != request.scope.configuration_revision
             || !configuration.eligible_for(Stage::Focus, request.scope.index_id, Task::FocusRank)
             || application.availability != Availability::Ready
             || request.score_count == 0
@@ -77,19 +77,21 @@ impl StageOwner {
                 KnownScoreFailure, ScoreRequest,
             };
             use airk_retrieval::arbiter::compiler::Candidate;
-            let execution = self.execution_profile(
+            let execution = self.profile_description(
                 configuration
-                    .focus
-                    .selected_profile
+                    .selected_profile(Stage::Focus)
                     .context("Focus selected profile absent")?,
             )?;
-            let profile = execution.description().clone();
+            let profile = execution;
             profile.validate_stage(Stage::Focus)?;
-            let task_policy = airk_retrieval::arbiter::compiler::focus::policy_digest()?;
-            ensure!(
-                profile.task_policies.get(&Task::FocusRank) == Some(&task_policy),
-                "Focus task policy changed"
-            );
+            // CPU admission may carry the exact native closed source-transition
+            // witness. GPU has no such bridge and remains current-policy-only.
+            let native_execution = if profile.device_execution.is_none() {
+                Some(self.execution_profile(profile.manifest)?)
+            } else {
+                None
+            };
+            let task_policy = validated_focus_task_policy(&profile, native_execution.as_ref())?;
             ensure!(
                 request.score_count <= profile.max_candidates,
                 "Focus prefix exceeds qualified profile"
@@ -137,7 +139,7 @@ impl StageOwner {
                 scope: request.scope.clone(),
                 identity: Some(FocusIdentity {
                     profile: profile.manifest,
-                    runtime: profile.runtime.clone(),
+                    runtime: profile.advice_runtime()?,
                     compiler: profile.compiler,
                     calibration: profile.calibration,
                     task_policy,
@@ -169,17 +171,17 @@ impl StageOwner {
                 _ => return focus_response(receipt, &request),
             };
             let gate = self.gate.clone();
-            let store = self.configuration.clone();
+            let store = self.policy_reader()?;
             let worker = request.worker;
             let authority = request.authority;
             let manifest = profile.manifest;
             let live: airk_inference::inference_engine::pool::arbiter::Authority =
                 Arc::new(move |scope| {
-                    store.load().is_ok_and(|current| {
-                        current.revision == scope.configuration_revision
-                            && current.installation == scope.installation
-                            && current.catalog == scope.catalog
-                            && current.focus.selected_profile == Some(manifest)
+                    store().is_ok_and(|current| {
+                        current.revision() == scope.configuration_revision
+                            && current.installation() == scope.installation
+                            && current.catalog() == scope.catalog
+                            && current.selected_profile(Stage::Focus) == Some(manifest)
                             && current.eligible_for(Stage::Focus, scope.index_id, Task::FocusRank)
                     }) && gate.catalog_clock().is_some_and(|clock| {
                         clock.namespace == scope.catalog
@@ -202,7 +204,7 @@ impl StageOwner {
                 }
                 let pending = async {
                     let resident = handle.resident(profile.manifest)?;
-                    let admission = supervisor.reuse_optional(resident.reservation()).await?;
+                    let admission = self.reuse_resident(supervisor, &resident).await?;
                     self.score_request(
                         &handle,
                         ScoreRequest {
@@ -421,3 +423,29 @@ fn validate_partition_selection(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "local-inference")]
+fn validated_focus_task_policy(
+    profile: &Profile,
+    execution: Option<&airk_retrieval::arbiter::runtime::ExecutionProfile>,
+) -> Result<airk_core::identity::Sha256Digest> {
+    profile.validate_stage(Stage::Focus)?;
+    if profile.device_execution.is_none() {
+        let execution = execution.context("Focus CPU requires actual native profile admission")?;
+        ensure!(
+            serde_json::to_vec(execution.description())? == serde_json::to_vec(profile)?,
+            "Focus native admitted description changed"
+        );
+        return execution.validated_task_policy(Task::FocusRank);
+    }
+    ensure!(
+        execution.is_none(),
+        "GPU task policy cannot use CPU source-transition admission"
+    );
+    let current = airk_retrieval::arbiter::compiler::focus::policy_digest()?;
+    ensure!(
+        profile.task_policies.get(&Task::FocusRank) == Some(&current),
+        "GPU Focus task policy changed"
+    );
+    Ok(current)
+}

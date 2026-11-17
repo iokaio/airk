@@ -81,8 +81,8 @@ impl StageOwner {
             application.scope == request.scope,
             "joint assessment source identity changed"
         );
-        let configuration = self.configuration()?;
-        if configuration.revision != request.scope.configuration_revision
+        let configuration = self.read_configuration()?;
+        if configuration.revision() != request.scope.configuration_revision
             || !configuration.eligible(request.scope.index_id, Task::ContextAction)
             || application.availability != Availability::Ready
         {
@@ -100,13 +100,12 @@ impl StageOwner {
                 CompiledReceipt, KnownScoreFailure, ScoreRequest,
             };
             use airk_retrieval::arbiter::context_action;
-            let execution = self.execution_profile(
+            let execution = self.profile_description(
                 configuration
-                    .stage(stage)
-                    .selected_profile
+                    .selected_profile(stage)
                     .context("joint selected profile missing")?,
             )?;
-            let profile = execution.description().clone();
+            let profile = execution;
             let task_policy = context_action::policy_digest()?;
             if !profile.tasks.contains(&Task::ContextAction)
                 || profile.task_policies.get(&Task::ContextAction) != Some(&task_policy)
@@ -134,10 +133,10 @@ impl StageOwner {
                 self.gate
                     .check_scope_issue(issue, request.worker, request.authority)?;
                 self.validate_scope(request.worker, request.authority)?;
-                let current = self.configuration()?;
+                let current = self.read_configuration()?;
                 ensure!(
-                    current.revision == request.scope.configuration_revision
-                        && current.stage(stage).selected_profile == Some(profile.manifest)
+                    current.revision() == request.scope.configuration_revision
+                        && current.selected_profile(stage) == Some(profile.manifest)
                         && current.eligible(request.scope.index_id, Task::ContextAction)
                         && Instant::now() < deadline,
                     "Context capture admission changed before known non-dispatch reply"
@@ -162,7 +161,7 @@ impl StageOwner {
                 &[&serde_json::to_vec(&prompt)?],
             );
             let mut advice=ContextActionAdvice { schema:ADVICE_SCHEMA_V2.into(),task:Task::ContextAction,
-                profile:profile.manifest,runtime:profile.runtime.clone(),compiler:profile.compiler,
+                profile:profile.manifest,runtime:profile.advice_runtime()?,compiler:profile.compiler,
                 calibration:profile.calibration,policy:profile.policy,task_policy,scope:request.scope.clone(),
                 input_digest:planned_digest,evidence:request.roster.basis.source_units_presented.iter().map(|unit|unit.record).collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
                 work:Work::default(),reserved_input_tokens:request.remaining_input_tokens,observed_input_tokens:None,
@@ -200,16 +199,16 @@ impl StageOwner {
             // Work is a known lower bound; observed_input_tokens=None records
             // unknown compile work separately from the held reservation.
             let gate = self.gate.clone();
-            let store = self.configuration.clone();
+            let store = self.policy_reader()?;
             let worker = request.worker;
             let authority = request.authority;
             let manifest = profile.manifest;
             let live = Arc::new(move |scope: &ScopeBinding| {
-                store.load().is_ok_and(|current| {
-                    current.revision == scope.configuration_revision
-                        && current.installation == scope.installation
-                        && current.catalog == scope.catalog
-                        && current.stage(stage).selected_profile == Some(manifest)
+                store().is_ok_and(|current| {
+                    current.revision() == scope.configuration_revision
+                        && current.installation() == scope.installation
+                        && current.catalog() == scope.catalog
+                        && current.selected_profile(stage) == Some(manifest)
                         && current.eligible(scope.index_id, Task::ContextAction)
                 }) && gate.catalog_clock().is_some_and(|clock| {
                     clock.namespace == scope.catalog
@@ -222,7 +221,7 @@ impl StageOwner {
             });
             let pending = async {
                 let resident = handle.resident(profile.manifest)?;
-                let admission = supervisor.reuse_optional(resident.reservation()).await?;
+                let admission = self.reuse_resident(supervisor, &resident).await?;
                 self.score_request(
                     &handle,
                     ScoreRequest {
@@ -344,9 +343,9 @@ impl StageOwner {
                 advice.validate()?;
                 return Ok(Some(advice));
             }
-            if !self.configuration().is_ok_and(|current| {
-                current.revision == request.scope.configuration_revision
-                    && current.stage(stage).selected_profile == Some(profile.manifest)
+            if !self.read_configuration().is_ok_and(|current| {
+                current.revision() == request.scope.configuration_revision
+                    && current.selected_profile(stage) == Some(profile.manifest)
                     && current.eligible(request.scope.index_id, Task::ContextAction)
             }) {
                 advice.outcome=Outcome::Unavailable {reason:"Joint configuration changed; native work remains charged and the decision was discarded.".into()};
@@ -371,7 +370,7 @@ fn captured_without_dispatch(
     );
     let value = ContextActionAdvice {
         schema: ADVICE_SCHEMA_V2.into(), task: Task::ContextAction,
-        profile: profile.manifest, runtime: profile.runtime.clone(), compiler: profile.compiler,
+        profile: profile.manifest, runtime: profile.advice_runtime()?, compiler: profile.compiler,
         calibration: profile.calibration, policy: profile.policy, task_policy,
         scope: request.scope.clone(), input_digest,
         evidence: request.roster.basis.source_units_presented.iter().map(|unit|unit.record)

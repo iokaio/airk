@@ -19,6 +19,7 @@ fn attempt(identity: &Identity, kind: Kind, ordinal: usize) -> Attempt<'_> {
         ordinal,
         input: (kind != Kind::Load).then_some(Sha256Digest::from_bytes([4; 32])),
         deadline_ms: 10,
+        absolute_expires_ns: None,
     }
 }
 #[test]
@@ -362,4 +363,28 @@ fn native_operation_retains_original_native_error_when_any_after_call_observer_f
             "observer failure admitted another native call"
         );
     }
+}
+
+#[test]
+fn absolute_component_deadline_is_not_renewed_by_later_operation_start() -> Result<()> {
+    let identity = identity();
+    let mut sequence = 0;
+    let mut times = [9_000_000, 9_000_001, 10_000_001, 10_000_002].into_iter();
+    let mut events = Vec::new();
+    let mut request = attempt(&identity, Kind::Numeric, 1);
+    request.absolute_expires_ns = Some(10_000_000);
+    let result = observe(
+        request,
+        &mut sequence,
+        &mut || Ok(times.next().unwrap()),
+        &mut |event| {
+            events.push(event.clone());
+            Ok(())
+        },
+        || Ok(1),
+    )?;
+    assert!(!result.within_deadline);
+    assert_eq!(result.value?, 1);
+    assert!(events.iter().all(|v| v.expires_monotonic_ns == 10_000_000));
+    Ok(())
 }

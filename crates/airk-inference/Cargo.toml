@@ -10,6 +10,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
+gpu-cuda = ["local-inference", "airk-retrieval/gpu-cuda", "airk-host/gpu-cuda"]
 default = []
 local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model", "airk-host/local-inference", "airk-endpoint/local-inference"]
 bundled-model = []

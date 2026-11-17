@@ -105,11 +105,22 @@ impl JointCalibration {
                 && profile.tasks.contains(&Task::ContextAction)
                 && profile.task_policies.get(&Task::ContextAction) == Some(&task_policy)
                 && self.score_abi == profile.abi
-                && !self.rules.is_empty()
                 && self.rules.len() <= 32,
             "joint calibration profile/task/ABI binding mismatch"
         );
         self.validate_class_support()?;
+        // An empty /2 policy describes a probe with no admitted action. Complete
+        // Unsupported dispositions remain authenticated, not acceptance rules.
+        ensure!(
+            !self.rules.is_empty()
+                || self.schema == CALIBRATION_SCHEMA_V2
+                    && self.class_support.as_ref().is_some_and(|classes| {
+                        classes
+                            .iter()
+                            .all(|class| matches!(class.support, ClassSupport::Unsupported { .. }))
+                    }),
+            "empty joint policy requires complete unsupported /2 dispositions"
+        );
         let mut expected = BTreeMap::new();
         for asset in &profile.assets {
             if matches!(
@@ -416,6 +427,157 @@ mod tests {
         assert!(!calibration.accepts(&card, 0.49));
         card.assessments[0].relevance = RelevanceHypothesis::Redundant;
         assert!(!calibration.accepts(&card, 100.0));
+        Ok(())
+    }
+
+    fn unavailable_fixture() -> Result<(Profile, JointCalibration)> {
+        let (profile, mut value) = fixture()?;
+        value.schema = CALIBRATION_SCHEMA_V2.into();
+        value.rules.clear();
+        // Literal complete class list, independent of implementation enumeration.
+        value.class_support = Some(vec![
+            ClassDisposition {
+                action: ContextActionClass::Read,
+                support: ClassSupport::Unsupported {
+                    reason: "Read evidence unavailable".into(),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::Sufficient,
+                support: ClassSupport::Unsupported {
+                    reason: "Sufficient evidence unavailable".into(),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::Clarify,
+                support: ClassSupport::Unsupported {
+                    reason: "Clarify evidence unavailable".into(),
+                },
+            },
+            ClassDisposition {
+                action: ContextActionClass::NoJustifiedRead,
+                support: ClassSupport::Unsupported {
+                    reason: "NoJustifiedRead evidence unavailable".into(),
+                },
+            },
+        ]);
+        Ok((profile, value))
+    }
+    #[test]
+    fn unavailable_v2_round_trips_without_admitting_any_action() -> Result<()> {
+        let (profile, value) = unavailable_fixture()?;
+        let raw = serde_json::to_vec(&value)?;
+        let parsed = JointCalibration::parse_and_validate(&raw, &profile, value.task_policy)?;
+        assert_eq!(serde_json::to_vec(&parsed)?, raw);
+        assert!(parsed.rules.is_empty());
+        let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../../fixtures/split/arbiter/context_action_cases.json"
+        ))?;
+        let response: ContextResponseV2 =
+            serde_json::from_value(cases["cases"][0]["input"].clone())?;
+        let AssessmentResult::Selected { mut card, .. } =
+            response.assessment_history[0].result.clone()
+        else {
+            anyhow::bail!("fixture changed")
+        };
+        for action in [
+            ContextAction::Read {
+                choice: Sha256Digest::from_bytes([1; 32]),
+            },
+            ContextAction::Sufficient,
+            ContextAction::Clarify,
+            ContextAction::NoJustifiedRead,
+        ] {
+            card.action = action;
+            for margin in [0.0, 1.0, f32::MAX, f32::INFINITY, f32::NAN] {
+                assert!(!parsed.accepts(&card, margin));
+            }
+        }
+        Ok(())
+    }
+    #[test]
+    fn unavailable_v2_requires_complete_unique_reasoned_dispositions() -> Result<()> {
+        let (profile, value) = unavailable_fixture()?;
+        for classes in [
+            None,
+            Some(vec![]),
+            Some(value.class_support.as_ref().unwrap()[..3].to_vec()),
+        ] {
+            let mut changed = value.clone();
+            changed.class_support = classes;
+            assert!(changed.validate(&profile, value.task_policy).is_err());
+        }
+        let mut duplicate = value.clone();
+        duplicate.class_support.as_mut().unwrap()[3].action = ContextActionClass::Read;
+        assert!(duplicate.validate(&profile, value.task_policy).is_err());
+        for reason in ["".into(), " \n\t".into(), "x".repeat(1025)] {
+            let mut changed = value.clone();
+            changed.class_support.as_mut().unwrap()[0].support =
+                ClassSupport::Unsupported { reason };
+            assert!(changed.validate(&profile, value.task_policy).is_err());
+        }
+        Ok(())
+    }
+    #[test]
+    fn unavailable_v2_refuses_supported_without_rule_and_unsupported_with_rule() -> Result<()> {
+        let (profile, value) = unavailable_fixture()?;
+        for index in 0..4 {
+            let mut changed = value.clone();
+            changed.class_support.as_mut().unwrap()[index].support = ClassSupport::Supported {
+                qualification: if index == 0 {
+                    None
+                } else {
+                    Some(Sha256Digest::from_bytes([9; 32]))
+                },
+            };
+            assert!(changed.validate(&profile, value.task_policy).is_err());
+        }
+        let (_, historical) = fixture()?;
+        let mut changed = value.clone();
+        changed.rules = historical.rules;
+        assert!(changed.validate(&profile, value.task_policy).is_err());
+        Ok(())
+    }
+    #[test]
+    fn unavailable_v2_keeps_complete_asset_profile_and_abi_bindings() -> Result<()> {
+        let (profile, value) = unavailable_fixture()?;
+        for name in ["model.bin", "weights.data", "tokenizer.bin"] {
+            let mut changed = value.clone();
+            changed.assets.remove(name);
+            assert!(changed.validate(&profile, value.task_policy).is_err());
+        }
+        let mut changed = value.clone();
+        changed.compiler = Sha256Digest::from_bytes([88; 32]);
+        assert!(changed.validate(&profile, value.task_policy).is_err());
+        changed = value.clone();
+        changed.score_abi.readout = Readout::PointerHead;
+        assert!(changed.validate(&profile, value.task_policy).is_err());
+        assert!(
+            value
+                .validate(&profile, Sha256Digest::from_bytes([99; 32]))
+                .is_err()
+        );
+        Ok(())
+    }
+    #[test]
+    fn historical_v1_still_requires_nonempty_rules_and_no_v2_dispositions() -> Result<()> {
+        let (profile, mut value) = fixture()?;
+        value.validate(&profile, value.task_policy)?;
+        value.rules.clear();
+        assert!(value.validate(&profile, value.task_policy).is_err());
+        let (_, mut unavailable) = unavailable_fixture()?;
+        unavailable.schema = CALIBRATION_SCHEMA.into();
+        assert!(
+            unavailable
+                .validate(&profile, unavailable.task_policy)
+                .is_err()
+        );
+        unavailable.class_support = None;
+        assert!(
+            unavailable
+                .validate(&profile, unavailable.task_policy)
+                .is_err()
+        );
         Ok(())
     }
 }
