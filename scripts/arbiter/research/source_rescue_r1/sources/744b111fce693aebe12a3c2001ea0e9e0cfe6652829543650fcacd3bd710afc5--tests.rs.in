@@ -1,0 +1,385 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn candidate(id: u8, gpu: bool, rejection: Option<SelectionReason>) -> ObservedCandidate {
+    ObservedCandidate {
+        manifest: Sha256Digest::from_bytes([id; 32]),
+        model: SelectedModel::ContextCompact,
+        execution_identity: if gpu {
+            "literal-cuda-execution"
+        } else {
+            "literal-cpu-execution"
+        }
+        .into(),
+        backend: gpu.then_some(GpuBackend::Cuda),
+        adapter_key: if gpu {
+            format!("adapter-{id}")
+        } else {
+            "cpu".into()
+        },
+        capability_epoch: 7,
+        rejection,
+    }
+}
+#[test]
+fn auto_prefers_gpu_and_forced_cpu_is_explicit() -> Result<()> {
+    let rows = [candidate(2, false, None), candidate(1, true, None)];
+    let auto = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        7,
+        120_000_000,
+        &rows,
+    )?;
+    assert_eq!(
+        auto.selected.unwrap().manifest,
+        Sha256Digest::from_bytes([1; 32])
+    );
+    let cpu = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Cpu,
+        7,
+        120_000_000,
+        &rows,
+    )?;
+    assert_eq!(
+        cpu.selected.unwrap().manifest,
+        Sha256Digest::from_bytes([2; 32])
+    );
+    assert_eq!(cpu.reasons[0].reason, SelectionReason::ForcedCpu);
+    Ok(())
+}
+#[test]
+fn all_gpu_pre_dispatch_failures_use_same_model_cpu_with_exact_reason() -> Result<()> {
+    for reason in [
+        SelectionReason::Unqualified,
+        SelectionReason::TargetUnsupported,
+        SelectionReason::RuntimeUnavailable,
+        SelectionReason::DriverUnsupported,
+        SelectionReason::DeviceUnsupported,
+        SelectionReason::GraphUnsupported,
+        SelectionReason::ProviderInitializationFailed,
+        SelectionReason::AllocationFailed,
+        SelectionReason::DeviceMemoryUnknown,
+        SelectionReason::DeviceMemoryInsufficient,
+        SelectionReason::HostMemoryUnknown,
+        SelectionReason::HostMemoryInsufficient,
+        SelectionReason::CircuitOpen,
+    ] {
+        let rows = [candidate(1, true, Some(reason)), candidate(2, false, None)];
+        let result = select(
+            SelectedModel::ContextCompact,
+            DevicePolicy::Auto,
+            7,
+            100,
+            &rows,
+        )?;
+        assert_eq!(
+            result.selected.unwrap().manifest,
+            Sha256Digest::from_bytes([2; 32])
+        );
+        assert_eq!(result.reasons[0].reason, reason);
+    }
+    Ok(())
+}
+#[test]
+fn cpu_fit_failure_and_absent_cpu_never_substitute_another_model() -> Result<()> {
+    let rows = [
+        candidate(1, true, Some(SelectionReason::GraphUnsupported)),
+        candidate(2, false, Some(SelectionReason::CpuFitInsufficient)),
+    ];
+    let result = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        7,
+        100,
+        &rows,
+    )?;
+    assert!(result.selected.is_none());
+    assert_eq!(
+        result.reasons[1].reason,
+        SelectionReason::CpuFitInsufficient
+    );
+    let result = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        7,
+        100,
+        &rows[..1],
+    )?;
+    assert!(result.selected.is_none());
+    assert_eq!(
+        result.reasons.last().unwrap().reason,
+        SelectionReason::NoQualifiedCpu
+    );
+    let mut foreign = candidate(3, false, None);
+    foreign.model = SelectedModel::ContextLarge;
+    assert!(
+        select(
+            SelectedModel::ContextCompact,
+            DevicePolicy::Auto,
+            7,
+            100,
+            &[foreign]
+        )
+        .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
+    let rows = [
+        candidate(2, true, None),
+        candidate(1, true, None),
+        candidate(3, false, None),
+    ];
+    assert_eq!(
+        select(
+            SelectedModel::ContextCompact,
+            DevicePolicy::Auto,
+            7,
+            100,
+            &rows
+        )?
+        .selected
+        .unwrap()
+        .manifest,
+        Sha256Digest::from_bytes([1; 32])
+    );
+    let result = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        8,
+        100,
+        &rows,
+    )?;
+    assert!(result.selected.is_none());
+    assert!(
+        result
+            .reasons
+            .iter()
+            .all(|row| row.reason == SelectionReason::ObservationStale)
+    );
+    assert!(
+        select(
+            SelectedModel::ContextCompact,
+            DevicePolicy::Auto,
+            7,
+            100,
+            &[candidate(1, true, None), candidate(1, true, None)]
+        )
+        .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn original_deadline_and_uncertain_settlement_forbid_replay() -> Result<()> {
+    let result = select(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        7,
+        0,
+        &[candidate(1, true, None)],
+    )?;
+    assert!(result.selected.is_none());
+    assert_eq!(result.reasons[0].reason, SelectionReason::DeadlineExpired);
+    assert_eq!(
+        fallback_permitted(true, false, true, 100),
+        Err(SelectionReason::SettlementUnknown)
+    );
+    assert_eq!(
+        fallback_permitted(true, true, true, 0),
+        Err(SelectionReason::DeadlineExpired)
+    );
+    assert_eq!(
+        fallback_permitted(false, false, false, 100),
+        Err(SelectionReason::AuthorityChanged)
+    );
+    assert_eq!(fallback_permitted(true, true, true, 100), Ok(()));
+    Ok(())
+}
+#[test]
+fn device_memory_is_checked_joint_capacity_not_arena_limit() -> Result<()> {
+    assert_eq!(
+        DeviceMemory::Dedicated {
+            measured_peak_bytes: 10,
+            headroom_bytes: 2
+        }
+        .required_bytes()?,
+        12
+    );
+    assert_eq!(
+        DeviceMemory::Unified {
+            measured_joint_peak_bytes: 20,
+            headroom_bytes: 3
+        }
+        .required_bytes()?,
+        23
+    );
+    assert!(
+        DeviceMemory::Dedicated {
+            measured_peak_bytes: u64::MAX,
+            headroom_bytes: 1
+        }
+        .required_bytes()
+        .is_err()
+    );
+    assert!(
+        DeviceMemory::Unified {
+            measured_joint_peak_bytes: 0,
+            headroom_bytes: 1
+        }
+        .required_bytes()
+        .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn default_auto_and_unknown_wire_fields_refuse() -> Result<()> {
+    assert_eq!(DevicePolicy::default(), DevicePolicy::Auto);
+    assert!(serde_json::from_str::<DevicePolicy>(r#""gpu_only""#).is_err());
+    assert!(
+        serde_json::from_str::<PlacementPolicy>(r#"{"mode":"strict_gpu","allow_cpu":true}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<DeviceMemory>(
+            r#"{"kind":"dedicated","measured_peak_bytes":1,"headroom_bytes":1,"gpu_mem_limit":2}"#
+        )
+        .is_err()
+    );
+    assert!(serde_json::from_str::<DeviceCatalog>(r#"{"schema":"airk.arbiter.device-catalog/1","focus":[],"context_compact":[],"context_large":[],"fourth":[]}"#).is_err());
+    Ok(())
+}
+
+#[test]
+fn capacity_unknown_race_and_unified_accounting_are_explicit() -> Result<()> {
+    let requirement = DeviceMemory::Dedicated {
+        measured_peak_bytes: 10,
+        headroom_bytes: 2,
+    };
+    assert_eq!(
+        device_capacity_refusal(&requirement, None, 0)?,
+        Some(SelectionReason::DeviceMemoryUnknown)
+    );
+    assert_eq!(device_capacity_refusal(&requirement, Some(12), 0)?, None);
+    assert_eq!(
+        device_capacity_refusal(&requirement, Some(12), 1)?,
+        Some(SelectionReason::DeviceMemoryInsufficient)
+    );
+    assert_eq!(
+        device_capacity_refusal(&requirement, Some(1), u64::MAX)?,
+        Some(SelectionReason::DeviceMemoryInsufficient)
+    );
+    let unified = DeviceMemory::Unified {
+        measured_joint_peak_bytes: 10,
+        headroom_bytes: 2,
+    };
+    assert_eq!(device_capacity_refusal(&unified, Some(12), 0)?, None);
+    Ok(())
+}
+#[test]
+fn cpu_profile_omission_roundtrip_and_explicit_disabled_migration() -> Result<()> {
+    let profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    profile.validate()?;
+    assert!(profile.device_execution.is_none());
+    let serialized = serde_json::to_value(&profile)?;
+    assert!(serialized.get("device_execution").is_none());
+    assert_eq!(
+        profile.device_execution_identity()?,
+        profile
+            .cpu_fit
+            .clone()
+            .unwrap_or_default()
+            .runtime_identity()?
+    );
+    let legacy: Configuration = serde_json::from_str(
+        r#"{"schema":"airk.arbiter.configuration/3","installation":"0101010101010101010101010101010101010101010101010101010101010101","catalog":"02020202020202020202020202020202","revision":1,"focus":{"enabled":false,"selected_profile":null,"indexes":[]},"context":{"enabled":false,"selected_profile":null,"indexes":[]}}"#,
+    )?;
+    let before = legacy.canonical_bytes()?;
+    let migrated = DeviceConfiguration::migrate_legacy(&legacy, |_| None)?;
+    assert_eq!(migrated.focus.device_policy, DevicePolicy::Cpu);
+    assert_eq!(migrated.context.device_policy, DevicePolicy::Cpu);
+    assert!(!migrated.focus.enabled && !migrated.context.enabled);
+    assert_eq!(migrated.revision, legacy.revision + 1);
+    assert_eq!(legacy.canonical_bytes()?, before);
+    assert_eq!(
+        DeviceStageConfiguration::disabled().device_policy,
+        DevicePolicy::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn gpu_execution_identity_binds_every_policy_and_cpu_runtime_cannot_impersonate_it() -> Result<()> {
+    let mut profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    let pin = Sha256Digest::from_bytes([7; 32]);
+    let execution = DeviceExecution {
+        schema: DEVICE_EXECUTION_SCHEMA.into(),
+        backend: GpuBackend::Cuda,
+        runtime_build: pin,
+        compatibility_policy: pin,
+        provider_options: pin,
+        math_policy: pin,
+        precision: DevicePrecision::Mixed,
+        placement: PlacementPolicy::StrictGpu,
+        graph: profile
+            .assets
+            .iter()
+            .find(|asset| asset.role == AssetRole::Model)
+            .unwrap()
+            .sha256,
+        host_fit: CpuFit::default(),
+        memory: DeviceMemory::Dedicated {
+            measured_peak_bytes: 10,
+            headroom_bytes: 2,
+        },
+    };
+    let identity = execution.execution_identity()?;
+    assert!(identity.starts_with("onnxruntime-cuda/1.30.0/device-execution/"));
+    let mut changed = execution.clone();
+    changed.math_policy = Sha256Digest::from_bytes([8; 32]);
+    assert_ne!(identity, changed.execution_identity()?);
+    changed = execution.clone();
+    changed.precision = DevicePrecision::Float16;
+    assert_ne!(identity, changed.execution_identity()?);
+    changed = execution.clone();
+    changed.placement = PlacementPolicy::BoundedHybrid { policy: pin };
+    assert_ne!(identity, changed.execution_identity()?);
+    profile.device_execution = Some(execution);
+    assert!(profile.validate().is_err()); // legacy CPU identity is never reinterpreted
+    profile.device_execution = None;
+    profile.runtime = "onnxruntime-cuda/1.30.0".into();
+    assert!(profile.validate().is_err());
+    Ok(())
+}
+#[test]
+fn three_slot_catalog_requires_every_slot_and_canonical_resolution() -> Result<()> {
+    let empty = DeviceCatalog {
+        schema: DEVICE_CATALOG_SCHEMA.into(),
+        focus: vec![],
+        context_compact: vec![],
+        context_large: vec![],
+    };
+    assert!(empty.validate(|_| None).is_err());
+    let mut profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    profile.cpu_fit = Some(CpuFit::default());
+    let row = VariantReference {
+        manifest: profile.manifest,
+        execution_identity: profile.device_execution_identity()?,
+    };
+    let bad = DeviceCatalog {
+        schema: DEVICE_CATALOG_SCHEMA.into(),
+        focus: vec![row.clone()],
+        context_compact: vec![row.clone()],
+        context_large: vec![row],
+    };
+    assert!(bad.validate(|_| Some(&profile)).is_err()); // historical/foreign model cannot acquire Focus
+    assert!(bad.validate(|_| None).is_err());
+    Ok(())
+}

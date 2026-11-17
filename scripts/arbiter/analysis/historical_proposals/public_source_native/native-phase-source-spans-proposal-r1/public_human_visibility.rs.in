@@ -1,0 +1,657 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Source-backed public human TRAIN visibility; no scoring, training or admission.
+use super::*;
+use airk_core::{
+    arbiter::{
+        AssetRole,
+        resource_policy::{ResourceFilePin, ResourceRunInput},
+    },
+    extraction::LocalSpan,
+};
+use airk_retrieval::arbiter::compiler::{Candidate, Compiler};
+use std::io::Write;
+
+const ROWS: usize = 1955;
+const ROWS_SHA: &str = "7896c7d7435e146653c6ffd93a0b180ed49b92981c346808d19573dac2d15ea7";
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VisibilityInput {
+    schema: String,
+    source_root: PathBuf,
+    source_files: Vec<SourceRow>,
+    rows: ResourceFilePin,
+    spans: ResourceFilePin,
+    source_rights: Vec<ResourceFilePin>,
+    encoder: EncoderInput,
+    focus_input: ResourceFilePin,
+    data: PathBuf,
+    output: PathBuf,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FunctionSpan {
+    code_idx: u64,
+    file: String,
+    start: usize,
+    end: usize,
+    sha256: Sha256Digest,
+}
+fn progress_value(
+    stage: &str,
+    ordinal: usize,
+    total: usize,
+    observed: usize,
+    elapsed_ns: u128,
+) -> Result<Value> {
+    ensure!(
+        matches!(
+            stage,
+            "source_hash"
+                | "unit_file_before"
+                | "unit_file_after"
+                | "unit_file_unmapped"
+                | "row_mapping"
+        ),
+        "unknown progress stage"
+    );
+    ensure!(
+        ordinal <= total && total <= 100_000 && observed <= 100_000,
+        "bounded progress counters required"
+    );
+    Ok(
+        json!({"stage":stage,"ordinal":ordinal,"total":total,"observed":observed,"elapsed_ns":elapsed_ns}),
+    )
+}
+fn visibility_progress(
+    stage: &str,
+    ordinal: usize,
+    total: usize,
+    observed: usize,
+    started: Instant,
+) -> Result<()> {
+    let value = progress_value(
+        stage,
+        ordinal,
+        total,
+        observed,
+        started.elapsed().as_nanos(),
+    )?;
+    eprintln!("PUBLIC_HUMAN_PROGRESS {value}");
+    std::io::stderr().flush()?;
+    Ok(())
+}
+fn validate_encoder_manifest(
+    input: &EncoderInput,
+    manifest: &airk_retrieval::model::OnnxManifest,
+) -> Result<()> {
+    ensure!(
+        manifest.max_tokens == 256
+            && manifest.tokenizer_sha256
+                == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+        "original256 tokenizer/ABI required"
+    );
+    match input.family.as_str() {
+        "original-mixed-u8-ort130-evaluation" => Ok(()),
+        "original-shipped-u8-ort130-evaluation" => {
+            ensure!(
+                serde_json::to_value(manifest)?
+                    == serde_json::to_value(
+                        airk_retrieval::model_catalog::selected_profile()?.manifest
+                    )?,
+                "shipping descriptor must exactly match native CPU-selected catalog manifest"
+            );
+            Ok(())
+        }
+        _ => anyhow::bail!("unreviewed encoder family; no descriptor relabeling"),
+    }
+}
+fn pin_bytes(pin: &ResourceFilePin, maximum: usize) -> Result<Vec<u8>> {
+    pin.validate()?;
+    let path = std::path::Path::new(&pin.path);
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() <= maximum as u64,
+        "bounded original visibility input required"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "visibility input reparse refused"
+        );
+    }
+    sealed(path, pin.sha256)
+}
+fn row_ids(rows: &[Value]) -> Result<()> {
+    ensure!(rows.len() == ROWS, "original1955 denominator required");
+    let mut ids = BTreeSet::new();
+    for row in rows {
+        let id = row["id"].as_str().context("original row id absent")?;
+        ensure!(
+            !id.is_empty() && ids.insert(id),
+            "duplicate/missing original row id"
+        );
+        ensure!(
+            matches!(row["published_human_relevance_label"].as_u64(), Some(0 | 1)),
+            "original binary relevance label absent"
+        );
+    }
+    Ok(())
+}
+fn original_span<'a>(bytes: &'a [u8], span: &FunctionSpan, document: &str) -> Result<&'a [u8]> {
+    verify_original_parent_span(bytes, span.start, span.end, &span.sha256.to_string())?;
+    let original = &bytes[span.start..span.end];
+    ensure!(
+        !original.is_empty() && original == document.as_bytes(),
+        "complete original human function differs from source span"
+    );
+    Ok(original)
+}
+fn bound_source_file(row: &Value, span: &FunctionSpan) -> Result<()> {
+    let repository = row["repository"]
+        .as_str()
+        .context("original repository absent")?;
+    let commit = row["commit"].as_str().context("original commit absent")?;
+    let url = row["source_url"]
+        .as_str()
+        .context("original source URL absent")?;
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .context("original GitHub source URL required")?;
+    let (url_repository, blob) = rest
+        .split_once("/blob/")
+        .context("pinned blob URL required")?;
+    let (url_commit, path) = blob.split_once('/').context("source commit/path absent")?;
+    let path = path.split('#').next().context("source path absent")?;
+    ensure!(
+        commit.len() == 40
+            && commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && url_commit.eq_ignore_ascii_case(commit)
+            && url_repository.eq_ignore_ascii_case(repository),
+        "original source repository/commit differs"
+    );
+    ensure!(
+        span.file == format!("{repository}/{path}"),
+        "source file mapping does not preserve original repository/path"
+    );
+    ensure!(
+        row["document_sha256"].as_str() == Some(span.sha256.to_string().as_str()),
+        "labeled original function digest differs"
+    );
+    Ok(())
+}
+fn complete_unit(
+    parent: &LocalSpan,
+    spans: &[LocalSpan],
+    input: &str,
+    document: &str,
+) -> &'static str {
+    if !covered(parent, spans) {
+        return "unknown_fragment_or_missing";
+    }
+    if spans
+        .iter()
+        .any(|span| span.start < parent.start || span.end > parent.end)
+        || input != document
+    {
+        return "unknown_expanded_or_prefixed_input";
+    }
+    "accepted_unchanged_complete_input"
+}
+fn positive_span_visible(label: u64, parent: &LocalSpan, spans: &[LocalSpan]) -> bool {
+    label == 1 && covered(parent, spans)
+}
+fn planned_unit_records(
+    model: &EmbeddingModel,
+    source: &std::path::Path,
+    extracted: &[airk_core::RetrievalArtifact],
+) -> Result<Vec<Value>> {
+    let mut units = Vec::new();
+    for (ordinal, retained) in extracted.iter().enumerate() {
+        let file_started = Instant::now();
+        visibility_progress(
+            "unit_file_before",
+            ordinal,
+            extracted.len(),
+            units.len(),
+            file_started,
+        )?;
+        if retained.payload.text.as_bytes() != std::fs::read(source.join(&retained.artifact.path))?
+            || retained
+                .payload
+                .chunks
+                .iter()
+                .any(|chunk| chunk.region.is_some())
+        {
+            continue;
+        }
+        visit_vector_units(&retained.payload, model, |unit| {
+            ensure!(
+                units.len() < 100_000,
+                "visibility unit census bound exceeded"
+            );
+            let tokens = model.planning_tokens(&unit.input)?.len();
+            ensure!(tokens <= 256, "canonical planner overflow");
+            let body = unit
+                .members
+                .iter()
+                .map(|member| {
+                    retained
+                        .payload
+                        .text
+                        .get(member.span.start..member.span.end)
+                        .context("actual member span invalid")
+                })
+                .collect::<Result<Vec<_>>>()?
+                .concat();
+            let prefix = unit
+                .input
+                .strip_suffix(&body)
+                .context("native body is not an unchanged input suffix")?;
+            units.push(json!({"id":units.len(),"file":retained.artifact.path,"input":unit.input,"members":unit.members,"context_prefix":prefix,"context_prefix_bytes":prefix.len(),"native_tokens":tokens,"native_input_tensors":unit_tensors(model,&unit.input)?,"source_sha256":retained.artifact.content_hash,"payload_sha256":retained.payload_digest,"extraction_profile_sha256":retained.profile.identity()?,"published":false}));
+            Ok(())
+        })?;
+        visibility_progress(
+            "unit_file_after",
+            ordinal + 1,
+            extracted.len(),
+            units.len(),
+            file_started,
+        )?;
+    }
+
+    Ok(units)
+}
+fn focus_compile(compiler: &Compiler, id: &str, question: &str, document: &str) -> Value {
+    match compiler.compile(
+        "",
+        question,
+        &[Candidate {
+            id: id.into(),
+            text: document.into(),
+        }],
+    ) {
+        Ok(input) => {
+            json!({"visibility":"accepted","compiled":input,"gold_admission":false,"scope":"Complete original pair compiler admission only; not semantic or Context-card gold"})
+        }
+        Err(error) => {
+            json!({"visibility":"refused","reason":error.to_string(),"compiled":null,"gold_admission":false})
+        }
+    }
+}
+
+#[test]
+#[ignore = "reviewed public human TRAIN rights/source/intake and original native model assets; zero forwards"]
+fn emit_public_human_native_visible_admission() -> Result<()> {
+    let input_pin = ResourceFilePin {
+        path: std::env::var("AIRK_PUBLIC_HUMAN_VISIBILITY_INPUT")?,
+        sha256: std::env::var("AIRK_PUBLIC_HUMAN_VISIBILITY_INPUT_SHA256")?.parse()?,
+    };
+    let input: VisibilityInput = phase("public_preflight_input", || {
+        Ok(serde_json::from_slice(&pin_bytes(&input_pin, 4 << 20)?)?)
+    })?;
+    ensure!(
+        input.schema == "airk.private.public-human-native-visibility/1"
+            && input.rows.sha256.to_string() == ROWS_SHA,
+        "reviewed original source-backed intake required"
+    );
+    ensure!(
+        !input.source_rights.is_empty() && input.source_rights.len() <= 1024,
+        "complete source/right pins required"
+    );
+    phase("public_source_rights_pins", || {
+        for pin in &input.source_rights {
+            pin_bytes(pin, 64 << 20)?;
+        }
+        Ok(())
+    })?;
+    let intake: Value = phase("public_original_rows", || {
+        Ok(serde_json::from_slice(&pin_bytes(&input.rows, 16 << 20)?)?)
+    })?;
+    let rows = intake["rows"]
+        .as_array()
+        .context("original row array absent")?;
+    row_ids(rows)?;
+    let spans: Vec<FunctionSpan> = phase("public_original_span_map", || {
+        Ok(serde_json::from_slice(&pin_bytes(&input.spans, 4 << 20)?)?)
+    })?;
+    let mut span_map = BTreeMap::new();
+    for span in &spans {
+        ensure!(
+            span_map.insert(span.code_idx, span).is_none(),
+            "ambiguous original function source mapping"
+        );
+    }
+    ensure!(
+        spans.len() == 465,
+        "complete465 original functions required"
+    );
+    ensure!(
+        input.source_root.is_absolute()
+            && input.source_files.len() <= 1000
+            && !input.source_files.is_empty(),
+        "bounded original source tree required"
+    );
+    let source = input.source_root.canonicalize()?;
+    let mut expected = BTreeSet::new();
+    let source_started = Instant::now();
+    for (ordinal, file) in input.source_files.iter().enumerate() {
+        airk_core::index_catalog::relative_path(&file.file, false)?;
+        ensure!(expected.insert(file.file.clone()), "duplicate source file");
+        let path = source.join(&file.file);
+        ensure!(
+            path.canonicalize()? == path && std::fs::metadata(&path)?.len() == file.bytes,
+            "original source path/length differs"
+        );
+        sealed(&path, file.sha256)?;
+        visibility_progress(
+            "source_hash",
+            ordinal + 1,
+            input.source_files.len(),
+            ordinal + 1,
+            source_started,
+        )?;
+    }
+    let mut census = BTreeSet::new();
+    phase("public_closed_source_census", || {
+        source_census(&source, &source, &mut census)
+    })?;
+    ensure!(
+        census == expected,
+        "unexpected/missing original source file"
+    );
+    ensure!(
+        input.data.is_absolute()
+            && !input.data.try_exists()?
+            && input.output.is_absolute()
+            && !input.output.try_exists()?,
+        "fresh absolute visibility outputs required"
+    );
+    for output in [&input.data, &input.output] {
+        ensure!(
+            !output
+                .parent()
+                .context("output parent absent")?
+                .canonicalize()?
+                .starts_with(&source),
+            "metadata inside readonly source refused"
+        );
+    }
+    let compiler = phase("public_focus_profile_compiler", || -> Result<Compiler> {
+        let focus_request: ResourceRunInput =
+            serde_json::from_slice(&pin_bytes(&input.focus_input, 1 << 20)?)?;
+        focus_request.validate()?;
+        let profile: airk_core::arbiter::Profile =
+            serde_json::from_slice(&pin_bytes(&focus_request.profile, 1 << 20)?)?;
+        profile.validate()?;
+        ensure!(
+            profile.model == airk_core::arbiter::ModelChoice::FocusQwenReranker06B
+                && profile.max_tokens == 512,
+            "selected Focus512 required"
+        );
+        let asset = |role| -> Result<Vec<u8>> {
+            let item = profile
+                .assets
+                .iter()
+                .find(|asset| asset.role == role)
+                .context("Focus asset absent")?;
+            pin_bytes(
+                &ResourceFilePin {
+                    path: focus_request
+                        .files
+                        .get(&item.name)
+                        .context("Focus file absent")?
+                        .clone(),
+                    sha256: item.sha256,
+                },
+                16 << 20,
+            )
+        };
+        Compiler::from_verified(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)
+    })?;
+    let model_bytes = sealed(
+        &input.encoder.directory.join("model.json"),
+        input.encoder.model_json_sha256,
+    )?;
+    let manifest: airk_retrieval::model::OnnxManifest = serde_json::from_slice(&model_bytes)?;
+    phase("public_encoder_manifest", || {
+        validate_encoder_manifest(&input.encoder, &manifest)
+    })?;
+    let control = tempfile::tempdir()?;
+    let lease = phase("public_service_lease", || {
+        Ok(Arc::new(airk_store::service::ServiceLease::acquire(
+            control.path(),
+        )?))
+    })?;
+    let owner = phase("public_inference_owner_admit", || {
+        NativeInferenceOwner::admit(lease)
+    })?;
+    let kernel = phase("public_kernel_open", || {
+        crate::Kernel::open(&source, Some(input.data.clone()))
+    })?;
+    let (extracted, extraction_report) = phase("public_native_extraction", || {
+        unpublished_extractions(&kernel)
+    })?;
+    ensure!(
+        extraction_report.embedding_actual_forwards == 0
+            && extraction_report.embedding_inferences == 0,
+        "extraction performed embedding inference"
+    );
+    let extracted_files: BTreeSet<_> = extracted
+        .iter()
+        .map(|entry| entry.artifact.path.clone())
+        .collect();
+    ensure!(
+        extracted_files.is_subset(&expected),
+        "canonical extraction invented a source path"
+    );
+    let (units, descriptor, records) = phase("public_encoder_evaluation_owner", || {
+        owner.run_encoder_evaluation(input.encoder.model_json_sha256, || -> Result<_> {
+        let model = phase("public_encoder_open", || EmbeddingModel::open(&input.encoder.directory))?;let descriptor = model.cache_descriptor()?;let units = planned_unit_records(&model, &source, &extracted)?;
+        let records = phase("public_row_mapping", || -> Result<Vec<Value>> {
+        let mapping_started = Instant::now();
+        let mut records = Vec::new();
+        for (ordinal, row) in rows.iter().enumerate() {
+            let id=row["id"].as_str().context("row id absent")?;let question=row["question"].as_str().context("original question absent")?;let document=row["document"].as_str().context("original function absent")?;
+            let span=span_map.get(&row["code_idx"].as_u64().context("code index absent")?).context("original function mapping absent")?;
+            ensure!(expected.contains(&span.file), "function outside original source roster");
+            bound_source_file(row,span)?;
+            let original=std::fs::read(source.join(&span.file))?;original_span(&original,span,document)?;
+            ensure!(row["source_file_sha256"].as_str()==Some(format!("{:x}",Sha256::digest(&original)).as_str()),"original source file hash differs");
+            ensure!(row["question_sha256"].as_str()==Some(format!("{:x}",Sha256::digest(question.as_bytes())).as_str()),"original question hash differs");
+            let parent=LocalSpan{start:span.start,end:span.end};let query=model.planning_tokens(question);
+            let query_fits=!question.trim().is_empty() && query.as_ref().is_ok_and(|tokens|tokens.len()<=256);
+            let mut alternatives=Vec::new();let mut all=Vec::new();let mut accepted=Vec::new();
+            for unit in &units {
+                if unit["file"]!=span.file {continue;}
+                let members:Vec<airk_core::vector_evidence::VectorMemberSpan>=serde_json::from_value(unit["members"].clone())?;
+                let member_spans:Vec<_>=members.into_iter().map(|member|member.span).collect();
+                if !member_spans.iter().any(|part|part.start<parent.end && part.end>parent.start){continue;}
+                let status=complete_unit(&parent,&member_spans,unit["input"].as_str().context("unit input absent")?,document);
+                if query_fits && status=="accepted_unchanged_complete_input" {accepted.push(unit["id"].clone());}
+                let outside_parent_bytes:usize=member_spans.iter().map(|part|(part.end-part.start)-(part.end.min(parent.end).saturating_sub(part.start.max(parent.start)))).sum();
+                let single_complete_function=covered(&parent,&member_spans);
+                let complete_positive=positive_span_visible(row["published_human_relevance_label"].as_u64().context("original label absent")?,&parent,&member_spans);
+                all.extend(member_spans);
+                alternatives.push(json!({"unit_id":unit["id"],"visibility":status,"single_complete_function":single_complete_function,"complete_human_span_visible":single_complete_function,"complete_human_positive_span_visible":complete_positive,"whole_unit_label_transfer":false,"outside_parent_body_bytes":outside_parent_bytes,"context_prefix_bytes":unit["context_prefix_bytes"]}));
+            }
+            let mini=if !query_fits {"refused_query_input"} else if !accepted.is_empty(){"accepted"}else{"unknown"};
+            records.push(json!({"original":row,"native_extraction_source_present":extracted_files.contains(&span.file),"focus_compiler_success_is_necessary_not_sufficient":true,"function_span":{"file":span.file,"start":span.start,"end":span.end,"sha256":span.sha256},"minilm":{"visibility":mini,"query_tokens":query.as_ref().ok().map(|tokens|tokens.len()),"query_refusal":query.as_ref().err().map(ToString::to_string),"query_input_tensors":if query_fits{unit_tensors(&model,question)?}else{None},"all_alternative_units":alternatives,"union_complete_function":covered(&parent,&all),"unchanged_complete_unit_ids":accepted,"fragment_positive_labels":false,"gold_admission":false},"focus":focus_compile(&compiler,id,question,document)}));
+            if (ordinal+1)%32==0 || ordinal+1==rows.len() { visibility_progress("row_mapping", ordinal+1, rows.len(), records.len(), mapping_started)?; }
+        }
+        Ok(records)
+        })?;
+        Ok((units,descriptor,records))
+    })
+    })??;
+    ensure!(records.len() == ROWS, "original denominator lost");
+    for file in &input.source_files {
+        sealed(&source.join(&file.file), file.sha256)?;
+    }
+    let mut after = BTreeSet::new();
+    source_census(&source, &source, &mut after)?;
+    ensure!(after == expected, "source census changed");
+    pin_bytes(&input.rows, 16 << 20)?;
+    pin_bytes(&input.spans, 4 << 20)?;
+    for pin in &input.source_rights {
+        pin_bytes(pin, 64 << 20)?;
+    }
+    let report = json!({"schema":"airk.private.public-human-native-visibility-result/1","complete":true,"original_denominator":ROWS,"input":input_pin,"source_rights":input.source_rights,"rows":records,"actual_units":units,"planning_descriptor":descriptor,"unit_specification":airk_retrieval::vector_units::VECTOR_UNIT_SPECIFICATION,"extraction_report":extraction_report,"native_binary_sha256":asset_digest()?,"embedding_forwards":null,"focus_forwards":null,"forward_count_observation":"unobserved: this diagnostic has no model-forward observer; extraction_report retains its actual measured extraction counters","nonblank_embedding_request_dispatched":false,"focus_scorer_request_dispatched":false,"dispatch_scope":"Reviewed diagnostic calls native planning/input compilation only; no nonblank embedding or scorer request is dispatched. These dispatch facts are not measured model-forward counts.","training_gradients":false,"gold_admission":false,"rights_admission":false,"published":false,"scope":"Canonical unpublished indexed-unit recipe and full original-pair visibility only. Token-fit is necessary and insufficient; code arm does not fulfill documents/general/cross-language admission."});
+    let bytes = phase("public_serialization", || {
+        Ok(serde_json::to_vec_pretty(&report)?)
+    })?;
+    ensure!(bytes.len() <= 512 << 20, "visibility output bound exceeded");
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&input.output)?;
+    output.write_all(&bytes)?;
+    output.sync_all()?;
+    Ok(())
+}
+
+#[test]
+fn unicode_original_function_requires_exact_byte_span_and_hash() -> Result<()> {
+    let bytes = "α\ndef f():\n    return '東京'\n".as_bytes();
+    let document = "def f():\n    return '東京'\n";
+    let mut span = FunctionSpan {
+        code_idx: 0,
+        file: "x.py".into(),
+        start: 3,
+        end: bytes.len(),
+        sha256: Sha256Digest::from_bytes(Sha256::digest(document.as_bytes()).into()),
+    };
+    assert_eq!(original_span(bytes, &span, document)?, document.as_bytes());
+    span.start = 2;
+    assert!(original_span(bytes, &span, document).is_err());
+    Ok(())
+}
+#[test]
+fn union_fragments_and_expanded_input_never_create_single_gold() {
+    let parent = LocalSpan { start: 0, end: 4 };
+    let left = LocalSpan { start: 0, end: 2 };
+    let right = LocalSpan { start: 2, end: 4 };
+    assert!(covered(&parent, &[left.clone(), right.clone()]));
+    let expanded = LocalSpan { start: 0, end: 5 };
+    assert!(positive_span_visible(
+        1,
+        &parent,
+        std::slice::from_ref(&expanded)
+    ));
+    assert!(!positive_span_visible(
+        0,
+        &parent,
+        std::slice::from_ref(&expanded)
+    ));
+    assert!(!positive_span_visible(
+        1,
+        &parent,
+        std::slice::from_ref(&left)
+    ));
+    assert_eq!(
+        complete_unit(&parent, &[left], "ab", "abcd"),
+        "unknown_fragment_or_missing"
+    );
+    assert_eq!(
+        complete_unit(
+            &parent,
+            std::slice::from_ref(&parent),
+            "title\nabcd",
+            "abcd"
+        ),
+        "unknown_expanded_or_prefixed_input"
+    );
+    assert_eq!(
+        complete_unit(&parent, &[LocalSpan { start: 0, end: 5 }], "abcd!", "abcd"),
+        "unknown_expanded_or_prefixed_input"
+    );
+    assert_eq!(
+        complete_unit(&parent, std::slice::from_ref(&parent), "abcd", "abcd"),
+        "accepted_unchanged_complete_input"
+    );
+}
+#[test]
+fn missing_and_duplicate_original_rows_refuse_the_denominator() {
+    assert!(row_ids(&[]).is_err());
+    let rows = vec![json!({"id":"same","published_human_relevance_label":1}); ROWS];
+    assert!(row_ids(&rows).is_err());
+}
+#[test]
+fn original_repository_path_and_commit_cannot_be_substituted() -> Result<()> {
+    let span = FunctionSpan {
+        code_idx: 1,
+        file: "owner/repo/src/a.py".into(),
+        start: 0,
+        end: 1,
+        sha256: Sha256Digest::from_bytes([3; 32]),
+    };
+    let mut row = json!({"repository":"owner/repo","commit":"0123456789012345678901234567890123456789","source_url":"https://github.com/owner/repo/blob/0123456789012345678901234567890123456789/src/a.py#L1-L2","document_sha256":"03".repeat(32)});
+    bound_source_file(&row, &span)?;
+    row["repository"] = json!("other/repo");
+    assert!(bound_source_file(&row, &span).is_err());
+    Ok(())
+}
+#[test]
+fn native_focus_overflow_is_retained_as_refusal_without_cropping() -> Result<()> {
+    let bytes = serde_json::to_vec(
+        &json!({"version":"1.0","truncation":null,"padding":null,"added_tokens":[
+        {"id":151644,"content":"<|im_start|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+        {"id":151645,"content":"<|im_end|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+        {"id":151643,"content":"<|endoftext|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}],
+        "normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,
+        "model":{"type":"WordLevel","vocab":{"[UNK]":0,"word":1,"no":2152,"yes":9693,"<|endoftext|>":151643,"<|im_start|>":151644,"<|im_end|>":151645},"unk_token":"[UNK]"}}),
+    )?;
+    let profile = airk_retrieval::arbiter::compiler::focus::compiler_profile(&bytes)?;
+    let compiler = Compiler::from_verified(&profile, &bytes)?;
+    let result = focus_compile(&compiler, "original", "question", &"word ".repeat(600));
+    assert_eq!(result["visibility"], "refused");
+    assert_eq!(result["compiled"], Value::Null);
+    assert_eq!(result["gold_admission"], false);
+    assert!(
+        result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("truncation is forbidden"))
+    );
+    Ok(())
+}
+
+#[test]
+fn public_progress_is_bounded_numeric_metadata_only() -> Result<()> {
+    assert_eq!(
+        progress_value("unit_file_after", 2, 3, 7, 11)?,
+        json!({"stage":"unit_file_after","ordinal":2,"total":3,"observed":7,"elapsed_ns":11})
+    );
+    assert!(progress_value("source contents", 0, 0, 0, 0).is_err());
+    assert!(progress_value("row_mapping", 3, 2, 1, 0).is_err());
+    assert!(progress_value("row_mapping", 1, 2, 100_001, 0).is_err());
+    Ok(())
+}
+
+#[test]
+fn shipping_family_requires_exact_native_catalog_and_same_token_abi() -> Result<()> {
+    let mut manifest = airk_retrieval::model_catalog::selected_profile()?.manifest;
+    let mut input = EncoderInput {
+        family: "original-shipped-u8-ort130-evaluation".into(),
+        directory: PathBuf::from("unused"),
+        model_json_sha256: Sha256Digest::from_bytes([0; 32]),
+        oracle: PathBuf::from("unused"),
+        oracle_sha256: Sha256Digest::from_bytes([0; 32]),
+        oracle_result: "unused".into(),
+    };
+    validate_encoder_manifest(&input, &manifest)?;
+    let original = manifest.clone();
+    manifest.model_sha256 = "11".repeat(32);
+    assert!(validate_encoder_manifest(&input, &manifest).is_err());
+    manifest = original.clone();
+    manifest.max_tokens = 512;
+    assert!(validate_encoder_manifest(&input, &manifest).is_err());
+    manifest = original.clone();
+    manifest.tokenizer_sha256 = "22".repeat(32);
+    assert!(validate_encoder_manifest(&input, &manifest).is_err());
+    input.family = "trained-v2-u8".into();
+    assert!(validate_encoder_manifest(&input, &original).is_err());
+    Ok(())
+}

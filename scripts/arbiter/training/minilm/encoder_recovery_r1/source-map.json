@@ -1,0 +1,329 @@
+{
+  "schema": "airk.research-source-migration/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/check_equivalence.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/check_equivalence.py",
+      "original_sha256": "bd24c03e63107d9093e399f1510072db696aafe5d1e215ddcb12abf3a2e99c27",
+      "maintained_sha256": "fd99df8efeba43b042bb4d4147c2bf62007c3ec506230a2e0cd1fd0d81bb6cdc",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "7daccfd76bcbb59bfa357e8859ca254553ce0ed073f4060bf509f1a52b9996ee",
+      "original_bytes": 5979,
+      "maintained_bytes": 7213
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/diagnose_native_padding_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/diagnose_native_padding_r3.py",
+      "original_sha256": "2bcc15393464ab69cae5f1467967ba076e54e55cf1c375cd0bc57bccdfa666e2",
+      "maintained_sha256": "2034f5236608867636f1a513f9666dbb020a290cb2534b88c5cbd0bb618fb8f5",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "0da65e9fcfcc27ec279785545a632980a466bbaa23950099c8fe04d37ad2d85d",
+      "original_bytes": 4009,
+      "maintained_bytes": 4759
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/native_token_admission_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/native_token_admission_r3.py",
+      "original_sha256": "0b59662e5328cab7207db26f439c025f9e0cf1c3f700d35c76aa594927d685ed",
+      "maintained_sha256": "c007b1ade836c5dcf3c7a710adc707ec001f8958d838975dd6ca0e831159fae8",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "c007b1ade836c5dcf3c7a710adc707ec001f8958d838975dd6ca0e831159fae8",
+      "original_bytes": 1735,
+      "maintained_bytes": 1773
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/old-test_training_execution.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/old-test_training_execution.py",
+      "original_sha256": "1f9320f642b0e2f46a1684dc4dc83da9e50680bd3b6d4166e14b2b373774a649",
+      "maintained_sha256": "dcbaca20b44d60e6a831de0edee51e708e10bc169386a49cdcab058aa1e2e1d6",
+      "transformations": [
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit maintained reference dependency/private output/test paths; normalize line endings to LF"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "1f9320f642b0e2f46a1684dc4dc83da9e50680bd3b6d4166e14b2b373774a649",
+      "original_bytes": 8583,
+      "maintained_bytes": 8828
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_resource_r2.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_resource_r2.py",
+      "original_sha256": "f38fbd4bd8a3ef58f74be4900ddea1c4d102fa8345f62afb91aa02a5bf74d1d9",
+      "maintained_sha256": "1d2804357cdf93349f9a3776caba0fcfdbeb408eba600d73b9b08bdd7c680639",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "afe02f0b68a0791e2439173c80891e52092602aef48c59fc4c7216d4eeec1b19",
+      "original_bytes": 6389,
+      "maintained_bytes": 7856
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_runtime_amendment.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_runtime_amendment.py",
+      "original_sha256": "d3dc6efaacc2e93eea96ba9c66e97350be1eabcec71ca23629ab72867f7f017c",
+      "maintained_sha256": "3f69f1989c99cd80a10b2dfd881f388f0c8d9ab417c52dfccf564777c8d5fcaa",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "9d14372bc2ac0d47f9b110884e88bd997c2a8694f19552ae0edd3ab0de50bf71",
+      "original_bytes": 4197,
+      "maintained_bytes": 5173
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_stage_seal.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_stage_seal.py",
+      "original_sha256": "89904e340b7680ddb61a779cc612b8dc280e8cd4bcec1871c90cd2d9c9697f34",
+      "maintained_sha256": "b595a94f3d924594eaecbad8e71ed3278a2dd207cdf40fab48be19ec771a1796",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "3372ab05229f606b765c64477266b694b0aee52f78be096773052d8fb6b41602",
+      "original_bytes": 5386,
+      "maintained_bytes": 6713
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_token_witness_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_token_witness_r3.py",
+      "original_sha256": "166c6a29b346fffffaa57259d0d75b8949a7cb84fc09f4fdba5b7138b2ea2519",
+      "maintained_sha256": "dbfefafd5dc8e797aaee6d57eaa48e21f2939c1e4b516faeddc63e1a16ca6764",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "446b0da3baeb1ac379823720428a5423434525d326826b2c753a15e9c9d5562c",
+      "original_bytes": 3315,
+      "maintained_bytes": 4340
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_train_r2.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_train_r2.py",
+      "original_sha256": "21fc33ba79dd7958a175c17eb70594b2353ddcd02a3d134efebda5795ccdba35",
+      "maintained_sha256": "d68ba985e3b420f3e8a303d9e5b14a2d573360dee7d49e2f5a4a5899b538975a",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "3f15e244501a0d6b0cb8414418569491b3b53a012f878d15a9ab910bdbc77bcf",
+      "original_bytes": 6969,
+      "maintained_bytes": 8089
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/prepare_train_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/prepare_train_r3.py",
+      "original_sha256": "1db7f1fcef78db340bf44608a2ee967c98705ba954f0952d16876ff90d8f1f9c",
+      "maintained_sha256": "7b724edfdfc7d4f9f624149c9087038390fe8a16b32ac773fd28f5fdecf6d87f",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "787e80f19eef0081bcaca98ba3f6aadd24336be8aa7327eef0e8a3660c3fc7c3",
+      "original_bytes": 7926,
+      "maintained_bytes": 9221
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/resource_pilot.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/resource_pilot.py",
+      "original_sha256": "16edc28f24d5b214f50a1cd7c279774a94d6c760d59f44210dc4cab2d8607d75",
+      "maintained_sha256": "218751301b9108704d94e86c14f4aecb1a1c5f7630d35341f351312ba1d3dd73",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "80dbdcb327f96f93848b2988f52c1966fde403bb6028ec97b9b733a312b1cb61",
+      "original_bytes": 5987,
+      "maintained_bytes": 7226
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_finite_trainer.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_finite_trainer.py",
+      "original_sha256": "be837376bb14f30d627afa87cc17078ef17fd64b405fbcbad924ca0e01366520",
+      "maintained_sha256": "ddf13358d2ad13a539133dfc1361019ba135bedfb3e413b0d51f4536b61b2706",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "ddf13358d2ad13a539133dfc1361019ba135bedfb3e413b0d51f4536b61b2706",
+      "original_bytes": 1433,
+      "maintained_bytes": 1471
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_finite_trainer_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_finite_trainer_r3.py",
+      "original_sha256": "d0be2f996a1064abf97e9f795b2d30591232e5ee174cf070ec7b150b2b28a550",
+      "maintained_sha256": "3a7616d2891b48e46cc3809467cdfb97475f331b49bad28cd9baabf08bc1a61e",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "3a7616d2891b48e46cc3809467cdfb97475f331b49bad28cd9baabf08bc1a61e",
+      "original_bytes": 1447,
+      "maintained_bytes": 1485
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_native_token_admission_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_native_token_admission_r3.py",
+      "original_sha256": "aff414ff6d583df3842eed44611118345cf337e75c44f9a5a2877d68300dd88f",
+      "maintained_sha256": "0d8366d5c0536ccc3ccd2a9da9533712556a29bb26d1ce2ad7c1b03a8f797525",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "explicit maintained reference dependency/private output/test paths; normalize line endings to LF"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "ce272b4fa140dd46eb291898c34c6084d29eed05934d5089d206c64701815747",
+      "original_bytes": 2358,
+      "maintained_bytes": 2580
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_resource_r2.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_resource_r2.py",
+      "original_sha256": "88c8bdc7a5fdf5f1963c754d9fa6795cc95ac054987ed9a8979ddff0d680326d",
+      "maintained_sha256": "687088353070ebd9666fbdf44d642b6cdb29ddeb9e1d68f74cc6edef8b3aad22",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "687088353070ebd9666fbdf44d642b6cdb29ddeb9e1d68f74cc6edef8b3aad22",
+      "original_bytes": 2624,
+      "maintained_bytes": 2662
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_runtime_amendment.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_runtime_amendment.py",
+      "original_sha256": "3b752f194f337ba327793ba516e47482ac9ddb2e1bd13a8addeb33569e8d8738",
+      "maintained_sha256": "a30604b6b781b1816a2e582d262046bf68dfa8c0d7601b8ccb3e9ef96a33e83a",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "a30604b6b781b1816a2e582d262046bf68dfa8c0d7601b8ccb3e9ef96a33e83a",
+      "original_bytes": 2268,
+      "maintained_bytes": 2306
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_stage_seal.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_stage_seal.py",
+      "original_sha256": "d021c75da1927c0861cc06d052e984eaf6d4e6994d90ab8319870a634eb9c4e0",
+      "maintained_sha256": "50475349bb6f1f3c79cd6179db26790b001172eb353f2722072f377af6e1d822",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "50475349bb6f1f3c79cd6179db26790b001172eb353f2722072f377af6e1d822",
+      "original_bytes": 1617,
+      "maintained_bytes": 1655
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_train_output_paths.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_train_output_paths.py",
+      "original_sha256": "13070a919e15c816865b5763ec3297534bf3438439868100365334ae1ee461c5",
+      "maintained_sha256": "fe31eeaa492eef6c5d8f72b14390125b4d80f11143ecc213c5ac65c76b5ec4d1",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "fe31eeaa492eef6c5d8f72b14390125b4d80f11143ecc213c5ac65c76b5ec4d1",
+      "original_bytes": 2708,
+      "maintained_bytes": 2746
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_train_r2.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_train_r2.py",
+      "original_sha256": "bab230bb9b9ed2dd286b64bdd1668e966af19170c6383a77e45497450d54472a",
+      "maintained_sha256": "7b94db5b69dcad21c481dafa93cc390d4f6280f44953aafb8c4017a554919205",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "7b94db5b69dcad21c481dafa93cc390d4f6280f44953aafb8c4017a554919205",
+      "original_bytes": 2725,
+      "maintained_bytes": 2763
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/test_train_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/test_train_r3.py",
+      "original_sha256": "5854b8c0790f64f528b1ff77056f086ef9c8cdc2f4d557f11741f6ec0ad33760",
+      "maintained_sha256": "a260a3edb2cfad44b6ab5c7a41f50d95f18a5cb1bbe556b907fd8399cf53f384",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "a260a3edb2cfad44b6ab5c7a41f50d95f18a5cb1bbe556b907fd8399cf53f384",
+      "original_bytes": 2754,
+      "maintained_bytes": 2792
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/train_finite_r2.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/train_finite_r2.py",
+      "original_sha256": "25f0c29c8bdc47f23fe11181308bf4f10db30e125bde2207f163122535f874a5",
+      "maintained_sha256": "f2fb3c6de2dfd6d7124e563fb17d0f0c1f095860d12afb44020142a6b96bad1a",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "f0f97beae284c8843f4e4054b025284a982ed48442a4dab1356893458404ff73",
+      "original_bytes": 13127,
+      "maintained_bytes": 14136
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/train_finite_r3.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/train_finite_r3.py",
+      "original_sha256": "3f220874eb2698085d2b04fb30379f3431b6ceb800c1a2c002bd321a276bf0df",
+      "maintained_sha256": "17f5675e6430efd7c1c2c0eb21ac4fdb4b2b18f2ad73cab736eeb460badf5859",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "d789e7dcc4070f433a3aab74666b925e5290e90835ecb4954ce7523d36bd6600",
+      "original_bytes": 14380,
+      "maintained_bytes": 15407
+    },
+    {
+      "source": "artifacts/advanced-split/models/encoder-recovery-preparation-r1/train_output_paths.py",
+      "destination": "scripts/arbiter/training/minilm/encoder_recovery_r1/train_output_paths.py",
+      "original_sha256": "fac7165842d8e8a44b8395b696a00826f39e87517b45fc1f5b3149e0234899c0",
+      "maintained_sha256": "0b37ec411c0d7ae048c3025817fd049c3f3596e6be41b46f86172c113dabffed",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "0b37ec411c0d7ae048c3025817fd049c3f3596e6be41b46f86172c113dabffed",
+      "original_bytes": 4973,
+      "maintained_bytes": 5011
+    }
+  ],
+  "data_weights_receipts_included": false
+}

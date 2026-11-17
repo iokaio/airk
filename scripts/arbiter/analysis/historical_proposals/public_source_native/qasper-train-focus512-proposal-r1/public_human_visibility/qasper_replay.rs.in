@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Private original-TRAIN positive-pair compiler census; no scorer, gradients or index sources.
+use super::*;
+use airk_core::arbiter::{CompilerProfile, CompilerRecipe, Task};
+
+const PANEL: &str = "211cf54f31b34a7e2325d2c7b5e6c5df8a29300419abe48e4f8943a841688571";
+const TRAIN: &str = "9458bfe76074a8fa8d1685af02bcc73537aa6d338ad20591dfaff1946bc88bf4";
+const RIGHTS: &str = "4a2a0788296acc11e508674a47a66be3c58d1b61294e4872aa5383565b579a2b";
+const DATASET_README: &str = "da348d3f8277f8a93ca397941f6a525433e282858b1c0562aed3f667d8e55b05";
+
+// This private runtime input is emitted by Rust only. Dataset files are original human data,
+// not a Python reconstruction of Core resource, profile, compiler or tensor contracts.
+#[derive(serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QasperReplayInput {
+    schema: String,
+    panel: ResourceFilePin,
+    original_train: ResourceFilePin,
+    rights: ResourceFilePin,
+    dataset_readme: ResourceFilePin,
+    metadata_root: PathBuf,
+    focus_input: ResourceFilePin,
+    output: PathBuf,
+}
+#[derive(Default, serde::Serialize)]
+struct Counts {
+    papers: usize,
+    questions: usize,
+    alternatives: usize,
+    answerable: usize,
+    unanswerable: usize,
+    original_windows: usize,
+    allowed_window_occurrences: usize,
+    fully_mapped_alternatives: usize,
+    fully_mapped_questions: usize,
+    scheduled_window_occurrences: usize,
+    unique_scheduled_question_windows: usize,
+}
+fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    value[key].as_str().context(format!("original human {key} absent"))
+}
+fn hash(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+fn canonical_hash(value: &Value) -> Result<String> { Ok(hash(&serde_json::to_vec(value)?)) }
+fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
+    value[key].as_array().context(format!("original human {key} array absent"))
+}
+fn string_set(values: &[Value]) -> Result<BTreeSet<String>> {
+    let mut result = BTreeSet::new();
+    for value in values { ensure!(result.insert(value.as_str().context("original ID invalid")?.to_owned()), "duplicate original ID"); }
+    Ok(result)
+}
+fn fence(deadline: Instant) -> Result<()> {
+    ensure!(Instant::now() < deadline, "original whole QASPER compile deadline exceeded"); Ok(())
+}
+fn allowed_window(value: &str) -> bool { !value.chars().any(|c| matches!(c, '"'|'“'|'”'|'«'|'»'|'„')) }
+fn locations(paper: &Value, evidence: &str) -> Result<Vec<Value>> {
+    let mut found = Vec::new();
+    for (section, body) in array(paper,"full_text")?.iter().enumerate() {
+        for (paragraph, value) in array(body,"paragraphs")?.iter().enumerate() {
+            let original = value.as_str().context("original paper paragraph invalid")?;
+            if original == evidence && allowed_window(original) {
+                found.push(json!({"section_index":section,"paragraph_index":paragraph,"section_name":body["section_name"],"paragraph_sha256":hash(original.as_bytes())}));
+            }
+        }
+    }
+    Ok(found)
+}
+fn complete_alternative(unanswerable: bool, observed: &[bool]) -> bool {
+    !unanswerable && !observed.is_empty() && observed.iter().all(|present| *present)
+}
+fn load_panel(input: &QasperReplayInput, deadline: Instant) -> Result<(Vec<Value>, Vec<ResourceFilePin>, Counts)> {
+    fence(deadline)?;
+    ensure!(input.schema=="airk.private.qasper-focus512-replay-input/1", "unknown private replay input");
+    ensure!(input.panel.sha256.to_string()==PANEL && input.original_train.sha256.to_string()==TRAIN && input.rights.sha256.to_string()==RIGHTS && input.dataset_readme.sha256.to_string()==DATASET_README,"original TRAIN/source/rights pins required");
+    let panel: Value=serde_json::from_slice(&pin_bytes(&input.panel, 4<<20)?)?;
+    let original: Value=serde_json::from_slice(&pin_bytes(&input.original_train, 64<<20)?)?;
+    let rights: Value=serde_json::from_slice(&pin_bytes(&input.rights, 2<<20)?)?;
+    pin_bytes(&input.dataset_readme, 2<<20)?;
+    ensure!(text(&panel,"schema")?=="airk.private.qasper-train-original-panel/1" && text(&panel,"publisher_split")?=="train" && text(&panel,"archive_member")?=="qasper-train-v0.3.json" && text(&panel,"archive_member_sha256")?==TRAIN && text(&panel,"rights_authority_sha256")?==RIGHTS, "original TRAIN panel provenance differs");
+    ensure!(input.metadata_root.is_absolute(), "absolute retained rights metadata root required");
+    let selected: Vec<_>=array(&rights,"records")?.iter().filter(|row|row["eligible"]==true && row["publisher_split"]=="train").collect();
+    let papers=panel["papers"].as_object().context("original papers absent")?;
+    let panel_rights:Vec<_>=array(&panel,"rights_records")?.iter().collect();
+    ensure!(selected.len()==36 && papers.len()==36 && selected==panel_rights,"exact original36 rights/source closure required");
+    let ids:BTreeSet<_>=selected.iter().map(|r|text(r,"paper_id")).collect::<Result<_>>()?;
+    ensure!(ids.len()==36 && papers.keys().all(|id|ids.contains(id.as_str())),"duplicate/foreign original paper ID");
+    let mut pins=vec![input.panel.clone(),input.original_train.clone(),input.rights.clone(),input.dataset_readme.clone()];
+    let mut records=Vec::new();let mut counts=Counts::default();let mut qids=BTreeSet::new();let mut annotation_ids=BTreeSet::new();let mut full_questions=BTreeSet::new();let mut pairs=BTreeSet::new();
+    for row in selected {
+        fence(deadline)?; let id=text(row,"paper_id")?;
+        ensure!(!id.is_empty() && id.bytes().all(|b|b.is_ascii_digit() || b==b'.'),"original paper ID not safe");
+        let paper=&papers[id];
+        ensure!(paper==&original[id],"original TRAIN question/answer/full paper substituted");
+        ensure!(text(row,"source_id")?==format!("arxiv:{id}v1") && row["versions"]==json!(["1"]),"original single-version source differs");
+        let source_hash=canonical_hash(&paper["full_text"])?;
+        ensure!(source_hash==text(row,"source_text_sha256")? && text(paper,"title")?==text(row,"title")?,"whole QASPER/S2ORC source extraction differs");
+        let metadata=ResourceFilePin{path:input.metadata_root.join(format!("arxiv-{id}.html")).to_string_lossy().into(),sha256:text(row,"metadata_sha256")?.parse()?};
+        pin_bytes(&metadata,2<<20)?;pins.push(metadata);
+        let questions=array(paper,"qas")?;
+        let actual_qids=questions.iter().map(|q|text(q,"question_id").map(Value::from)).collect::<Result<Vec<_>>>()?;
+        ensure!(string_set(&actual_qids)?==string_set(array(row,"question_ids")?)?,"original question IDs differ");
+        let mut paper_annotations=Vec::new();
+        for question in questions {
+            fence(deadline)?;let qid=text(question,"question_id")?;let query=text(question,"question")?;
+            ensure!(qids.insert(qid.to_owned()),"duplicate original question");counts.questions+=1;
+            let mut alternatives=Vec::new();
+            for annotation in array(question,"answers")? {
+                let aid=text(annotation,"annotation_id")?;ensure!(annotation_ids.insert(aid.to_owned()),"duplicate original human annotation");paper_annotations.push(Value::from(aid));counts.alternatives+=1;
+                let answer=&annotation["answer"];let unanswerable=answer["unanswerable"].as_bool().context("original answerability absent")?;
+                if unanswerable {counts.unanswerable+=1;}else{counts.answerable+=1;}
+                let evidence=array(answer,"evidence")?;let mut windows=Vec::new();let mut observed=Vec::new();
+                for (ordinal,value) in evidence.iter().enumerate() {
+                    let evidence=value.as_str().context("original evidence window invalid")?;
+                    let found=locations(paper,evidence)?;let present=!found.is_empty();observed.push(present);
+                    if !unanswerable {counts.original_windows+=1;counts.allowed_window_occurrences+=usize::from(present);}
+                    windows.push(json!({"ordinal":ordinal,"original_evidence":evidence,"original_evidence_sha256":hash(evidence.as_bytes()),"allowed_original_paragraph_locations":found,"complete_original_window_observed":present,"whole_paper_or_extra_unit_label_transfer":false}));
+                }
+                let eligible=complete_alternative(unanswerable,&observed);
+                if eligible {
+                    counts.fully_mapped_alternatives+=1;full_questions.insert(qid.to_owned());counts.scheduled_window_occurrences+=windows.len();
+                    for w in &windows {pairs.insert((qid.to_owned(),text(w,"original_evidence_sha256")?.to_owned()));}
+                }
+                alternatives.push(json!({"human_annotation_id":aid,"original_annotation":annotation,"original_annotation_sha256":canonical_hash(annotation)?,"original_evidence_count":windows.len(),"unanswerable":unanswerable,"complete_positive_bag_source_observed":eligible,"windows":windows,"negative_label":null,"whole_bag_sufficient_or_terminal_label":null}));
+            }
+            records.push(json!({"paper_id":id,"source_id":row["source_id"],"full_original_source_text_sha256":source_hash,"original_paper_record_sha256":canonical_hash(paper)?,"rights_disposition":row,"question_id":qid,"original_question":query,"original_question_sha256":hash(query.as_bytes()),"original_question_record_sha256":canonical_hash(question)?,"all_human_alternatives":alternatives,"training_or_semantic_admission":false}));
+        }
+        ensure!(string_set(&paper_annotations)?==string_set(array(row,"human_annotation_ids")?)?,"original annotation IDs differ");counts.papers+=1;
+    }
+    counts.fully_mapped_questions=full_questions.len();counts.unique_scheduled_question_windows=pairs.len();
+    ensure!(counts.papers==36 && counts.questions==107 && counts.alternatives==114 && counts.answerable==100 && counts.unanswerable==14 && counts.original_windows==163 && counts.allowed_window_occurrences==133 && counts.fully_mapped_alternatives==72 && counts.fully_mapped_questions==69 && counts.scheduled_window_occurrences==98 && counts.unique_scheduled_question_windows==97,"original denominators/source projection changed; no partial roster admitted");
+    fence(deadline)?;Ok((records,pins,counts))
+}
+fn require_focus512(profile: &CompilerProfile) -> Result<()> {
+    profile.validate()?;
+    ensure!(profile.recipe==CompilerRecipe::QwenRerankYesNoV1 && profile.max_tokens==512,"exact native Focus512 compiler required");Ok(())
+}
+fn compiler(input: &QasperReplayInput) -> Result<(Compiler,Vec<ResourceFilePin>)> {
+    let request:ResourceRunInput=serde_json::from_slice(&pin_bytes(&input.focus_input,1<<20)?)?;request.validate()?;
+    let profile:airk_core::arbiter::Profile=serde_json::from_slice(&pin_bytes(&request.profile,1<<20)?)?;profile.validate()?;
+    ensure!(profile.model==airk_core::arbiter::ModelChoice::FocusQwenReranker06B && profile.max_tokens==512 && profile.task_policies.get(&Task::FocusRank)==Some(&airk_retrieval::arbiter::compiler::focus::policy_digest()?),"current source-bound Focus512 profile required");
+    let asset=|role|->Result<ResourceFilePin>{let a=profile.assets.iter().find(|a|a.role==role).context("native compiler asset absent")?;Ok(ResourceFilePin{path:request.files.get(&a.name).context("actual asset path absent")?.clone(),sha256:a.sha256})};
+    let cp=asset(AssetRole::Compiler)?;let tokenizer=asset(AssetRole::Tokenizer)?;
+    let bytes=pin_bytes(&cp,64<<10)?;let tokenizer_bytes=pin_bytes(&tokenizer,64<<20)?;
+    let descriptor:CompilerProfile=serde_json::from_slice(&bytes)?;require_focus512(&descriptor)?;
+    let compiler=Compiler::from_verified(&bytes,&tokenizer_bytes)?;
+    Ok((compiler,vec![input.focus_input.clone(),request.profile,cp,tokenizer]))
+}
+fn outside_inputs(output: &std::path::Path,pins:&[ResourceFilePin]) -> Result<()> {
+    ensure!(output.is_absolute() && !output.exists(),"fresh absolute metadata output required");
+    let parent=output.parent().context("output parent absent")?.canonicalize()?;
+    for pin in pins {let p=std::path::Path::new(&pin.path).parent().context("input parent absent")?.canonicalize()?;ensure!(!parent.starts_with(p),"metadata writes inside original source or asset roots refused");}Ok(())
+}
+fn fresh_write(output:&std::path::Path,value:&impl serde::Serialize,deadline:Instant)->Result<()> {
+    fence(deadline)?;let bytes=serde_json::to_vec(value)?;ensure!(bytes.len()<=512<<20,"unchanged native report bound exceeded");fence(deadline)?;
+    let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(output)?;f.write_all(&bytes)?;f.sync_all()?;fence(deadline)?;Ok(())
+}
+fn env_pin(name:&str)->Result<ResourceFilePin>{Ok(ResourceFilePin{path:std::env::var(name)?,sha256:std::env::var(format!("{name}_SHA256"))?.parse()?})}
+#[test]
+#[ignore="native-owned input emitter; reviewed QASPER TRAIN/rights data only, no compiler or scorer"]
+fn emit_qasper_train_focus512_replay_input()->Result<()> {
+    let started=Instant::now();let deadline=started+std::time::Duration::from_millis(airk_core::arbiter::Budget::default().deadline_ms);
+    let input=QasperReplayInput{schema:"airk.private.qasper-focus512-replay-input/1".into(),panel:env_pin("AIRK_QASPER_PANEL")?,original_train:env_pin("AIRK_QASPER_ORIGINAL_TRAIN")?,rights:env_pin("AIRK_QASPER_RIGHTS")?,dataset_readme:env_pin("AIRK_QASPER_DATASET_README")?,metadata_root:std::env::var("AIRK_QASPER_METADATA_ROOT")?.into(),focus_input:env_pin("AIRK_QASPER_FOCUS_INPUT")?,output:std::env::var("AIRK_QASPER_REPLAY_OUTPUT")?.into()};
+    let (_,pins,_)=load_panel(&input,deadline)?;let destination=PathBuf::from(std::env::var("AIRK_QASPER_INPUT_OUTPUT")?);outside_inputs(&destination,&pins)?;fresh_write(&destination,&input,deadline)
+}
+#[test]
+#[ignore="reviewed exact TRAIN/source/profile custody and original120s/4GiB external owner required; compiler only"]
+fn emit_qasper_train_focus512_replay_compile()->Result<()> {
+    let started=Instant::now();let budget=airk_core::arbiter::Budget::default();let deadline=started+std::time::Duration::from_millis(budget.deadline_ms);
+    let input_pin=env_pin("AIRK_QASPER_REPLAY_INPUT")?;let input:QasperReplayInput=serde_json::from_slice(&pin_bytes(&input_pin,1<<20)?)?;
+    let (mut records,mut pins,counts)=phase("qasper_original_train_rights",||load_panel(&input,deadline))?;pins.push(input_pin);
+    let (compiler,assets)=phase("qasper_focus512_compiler",||compiler(&input))?;pins.extend(assets);outside_inputs(&input.output,&pins)?;
+    let mut attempted=0;let mut accepted=0;let mut refused=0;
+    for record in &mut records {
+        fence(deadline)?;let qid=text(record,"question_id")?.to_owned();let query=text(record,"original_question")?.to_owned();
+        for alternative in record["all_human_alternatives"].as_array_mut().context("original alternatives absent")? {
+            let eligible=alternative["complete_positive_bag_source_observed"]==true;
+            let mut bag_states=Vec::new();
+            for window in alternative["windows"].as_array_mut().context("original windows absent")? {
+                fence(deadline)?;
+                let observation=if eligible {attempted+=1;let result=focus_compile(&compiler,&qid,&query,text(window,"original_evidence")?);if result["visibility"]=="accepted" {accepted+=1;bag_states.push(true);}else{refused+=1;bag_states.push(false);}result}
+                else{json!({"visibility":"not_scheduled","reason":"unanswerable or incomplete original human evidence bag; not a negative judgment","compiled":null,"gold_admission":false})};
+                window["native_focus_compile"]=observation;fence(deadline)?;
+            }
+            alternative["complete_bag_native_fit"]=if eligible {Value::Bool(!bag_states.is_empty() && bag_states.iter().all(|x|*x))}else{Value::Null};
+        }
+    }
+    ensure!(records.len()==107 && attempted==98 && accepted+refused==98,"scheduled compiler refusal/completion denominator changed");
+    fence(deadline)?;for pin in &pins {pin_bytes(pin,64<<20)?;fence(deadline)?;}
+    let report=json!({"schema":"airk.private.qasper-train-focus512-replay-compile-result/1","source_inputs":pins,"original_source_counts":counts,"all_original_questions_and_alternatives":records,"compiler_attempted_window_occurrences":attempted,"accepted":accepted,"refused":refused,"native_policy_digest":airk_retrieval::arbiter::compiler::focus::policy_digest()?,"native_binary_sha256":asset_digest()?,"elapsed_ns_before_serialization":started.elapsed().as_nanos(),"original_deadline_ms":budget.deadline_ms,"scheduled_population_processed":true,"native_unit_projection":null,"source_extraction_scope":"original QASPER/S2ORC whole-paper structured source; exact human paragraph windows only; no index/snippet sources or production native-unit admission","source_rights_approval":false,"semantic_or_training_admission":false,"whole_paper_or_extra_unit_label_transfer":false,"negative_labels_generated":0,"scorer_request_dispatched":false,"model_forwards":null,"model_forward_observation":"unobserved; compiler-only source dispatch, no model/scorer instantiated","gradients":false,"clean_latency_or_product_quality_claim":false,"settlement":"external owning launcher must observe original child exit/Job closure; this report grants no settlement proof"});
+    fresh_write(&input.output,&report,deadline)
+}
+#[cfg(test)]
+mod tests;

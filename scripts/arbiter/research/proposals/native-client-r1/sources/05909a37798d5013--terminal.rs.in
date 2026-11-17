@@ -1,0 +1,628 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Additive terminal evidence. Authenticated metadata never creates human gold.
+use super::*;
+use crate::identity::framed_digest;
+
+pub const QUALIFICATION_SCHEMA: &str = "airk.arbiter.context-terminal-qualification/1";
+pub const ANNOTATIONS_SCHEMA: &str = "airk.arbiter.context-terminal-human-annotations/1";
+pub const RAW_CAPTURE_SCHEMA: &str = "airk.arbiter.context-terminal-native-raw/1";
+pub const INDEPENDENCE_SCHEMA: &str = "airk.arbiter.context-terminal-independence/1";
+
+/// This is also the runtime selection primitive: rank the complete roster before
+/// checking whether the winning class is supported. Never filter first.
+pub fn raw_winner(scores: &[f32]) -> Result<Option<(usize, f32)>> {
+    ensure!(
+        !scores.is_empty() && scores.len() <= 8 && scores.iter().all(|score| score.is_finite()),
+        "invalid whole-roster raw scores"
+    );
+    if scores.len() < 2 {
+        return Ok(None);
+    }
+    let mut order: Vec<usize> = (0..scores.len()).collect();
+    order.sort_by(|left, right| scores[*right].total_cmp(&scores[*left]));
+    let (best, runner) = (order[0], order[1]);
+    if scores[best] == scores[runner] {
+        return Ok(None);
+    }
+    let margin = scores[best] - scores[runner];
+    Ok(margin.is_finite().then_some((best, margin)))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalCriteria {
+    /// Exact preregistered criteria source; independently approved at promotion.
+    pub freeze: Sha256Digest,
+    pub calibration_population: Sha256Digest,
+    pub confirmation_population: Sha256Digest,
+    pub minimum_cal_population: usize,
+    pub minimum_confirmation_population: usize,
+    pub minimum_cal_accepted: usize,
+    pub minimum_confirmation_accepted: usize,
+    pub minimum_coverage: f64,
+    pub maximum_false_acceptance_upper: f64,
+}
+impl TerminalCriteria {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            nonzero(self.freeze)
+                && nonzero(self.calibration_population)
+                && nonzero(self.confirmation_population)
+                && self.minimum_cal_population > 0
+                && self.minimum_confirmation_population > 0
+                && self.minimum_cal_accepted > 0
+                && self.minimum_confirmation_accepted > 0
+                && self.minimum_cal_accepted <= self.minimum_cal_population
+                && self.minimum_confirmation_accepted <= self.minimum_confirmation_population
+                && self.minimum_coverage.is_finite()
+                && self.minimum_coverage > 0.0
+                && self.minimum_coverage <= 1.0
+                && self.maximum_false_acceptance_upper.is_finite()
+                && self.maximum_false_acceptance_upper > 0.0
+                && self.maximum_false_acceptance_upper <= 0.01,
+            "invalid preregistered terminal criteria"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalObservation {
+    pub id: String,
+    pub repository_cluster: String,
+    pub question: String,
+    pub choices: Vec<ReadChoice>,
+    pub roster: ContextActionRoster,
+    pub records: Vec<EvidenceRecord>,
+    /// None retains an unscored refusal/failure in the complete population denominator.
+    pub scores: Option<Vec<f32>>,
+    pub accepted_whole_cards: Vec<Sha256Digest>,
+    pub human_annotations: Sha256Digest,
+    pub native_capture: Sha256Digest,
+}
+impl TerminalObservation {
+    pub fn visible_input(&self) -> Result<Sha256Digest> {
+        Ok(framed_digest(
+            b"airk.arbiter.context-terminal-visible-input/1",
+            &[&serde_json::to_vec(&(
+                &self.question,
+                &self.choices,
+                &self.roster,
+                &self.records,
+            ))?],
+        ))
+    }
+    fn validate(&self, class: ContextActionClass, policy: Sha256Digest) -> Result<()> {
+        ensure!(
+            !self.id.trim().is_empty()
+                && self.id.len() <= 256
+                && !self.repository_cluster.trim().is_empty()
+                && self.repository_cluster.len() <= 256
+                && nonzero(self.human_annotations)
+                && nonzero(self.native_capture)
+                && self.roster.policy == policy
+                && self.records.len() <= 64,
+            "terminal observation identity/authority/policy missing"
+        );
+        self.roster.validate(&self.records)?;
+        let choices: BTreeSet<_> = self.choices.iter().map(|choice| choice.id).collect();
+        ensure!(
+            !self.question.trim().is_empty()
+                && self.question.len() <= 16_384
+                && self.choices.len() <= 64
+                && choices.len() == self.choices.len()
+                && self.choices.len() == self.roster.basis.read_choices_available
+                && self
+                    .choices
+                    .iter()
+                    .all(|choice| !choice.target.is_empty() && choice.target.len() <= 16_384)
+                && self
+                    .roster
+                    .basis
+                    .read_choices_scored
+                    .iter()
+                    .all(|choice| choices.contains(choice)),
+            "terminal question or complete read-choice universe differs"
+        );
+        if let Some(scores) = &self.scores {
+            ensure!(
+                scores.len() == self.roster.cards.len(),
+                "terminal score/roster mismatch"
+            );
+            raw_winner(scores)?;
+        }
+        unique(&self.accepted_whole_cards)?;
+        for accepted in &self.accepted_whole_cards {
+            ensure!(
+                self.roster.cards.iter().any(
+                    |card| card.id == *accepted && ContextActionClass::of(card.action) == class
+                ),
+                "human label is not this exact whole terminal card"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalHumanLabel {
+    pub id: String,
+    pub action: ContextActionClass,
+    pub repository_cluster: String,
+    pub visible_input: Sha256Digest,
+    pub accepted_whole_cards: Vec<Sha256Digest>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalAnnotations {
+    pub schema: String,
+    /// Descriptive attribution only; exact original file needs separate approval.
+    pub human_review_reference: String,
+    pub rows: Vec<TerminalHumanLabel>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalRawRow {
+    pub id: String,
+    pub visible_input: Sha256Digest,
+    pub compiled_input: Option<Sha256Digest>,
+    pub input_tokens: Option<usize>,
+    pub scores: Option<Vec<f32>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalRawCapture {
+    pub schema: String,
+    pub model: ModelChoice,
+    pub compiler: Sha256Digest,
+    pub task_policy: Sha256Digest,
+    #[serde(deserialize_with = "unique_assets")]
+    pub assets: BTreeMap<String, JointAssetBinding>,
+    pub execution_identity: String,
+    /// Actual native custody/source receipt, independently reviewed with capture.
+    pub native_execution_receipt: Sha256Digest,
+    pub rows: Vec<TerminalRawRow>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IndependenceAnalysis {
+    pub schema: String,
+    pub action: ContextActionClass,
+    pub criteria_freeze: Sha256Digest,
+    pub accepted_sample: Sha256Digest,
+    pub accepted_cases: usize,
+    pub repository_clusters: usize,
+    /// Must be justified by the separately approved exact cluster analysis.
+    /// It is not inferred from the number of task rows or repositories.
+    pub effective_independent_cases: f64,
+    pub method: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalQualification {
+    pub schema: String,
+    pub model: ModelChoice,
+    pub compiler: Sha256Digest,
+    pub task_policy: Sha256Digest,
+    #[serde(deserialize_with = "unique_assets")]
+    pub assets: BTreeMap<String, JointAssetBinding>,
+    pub rule: JointRule,
+    pub criteria: TerminalCriteria,
+    pub calibration: Vec<TerminalObservation>,
+    pub confirmation: Vec<TerminalObservation>,
+    pub independence_analysis: Sha256Digest,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct TerminalPanelSummary {
+    pub population: usize,
+    pub accepted: usize,
+    pub accepted_repository_clusters: usize,
+    pub coverage: f64,
+    pub accepted_sample: Sha256Digest,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct TerminalQualificationSummary {
+    pub action: ContextActionClass,
+    pub calibration: TerminalPanelSummary,
+    pub confirmation: TerminalPanelSummary,
+    pub one_sided_95_false_acceptance_upper: f64,
+}
+fn nonzero(digest: Sha256Digest) -> bool {
+    digest.as_bytes().iter().any(|byte| *byte != 0)
+}
+
+/// Bind preregistered panel membership before scores exist. Rust emits this
+/// identity; model scores and downstream capture paths cannot select members.
+pub fn population_identity(rows: &[TerminalObservation]) -> Result<Sha256Digest> {
+    let mut members = rows
+        .iter()
+        .map(|row| {
+            Ok((
+                &row.id,
+                &row.repository_cluster,
+                row.visible_input()?,
+                row.human_annotations,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    members.sort_by(|left, right| left.0.cmp(right.0));
+    Ok(framed_digest(
+        b"airk.arbiter.context-terminal-population/1",
+        &[&serde_json::to_vec(&members)?],
+    ))
+}
+fn validate_terminal_rule(rule: &JointRule) -> Result<()> {
+    ensure!(
+        rule.minimum_raw_margin.is_finite()
+            && rule.minimum_raw_margin >= 0.0
+            && !rule.allowed_gaps.is_empty()
+            && rule.allowed_gaps.len() <= 8
+            && !rule.allowed_reasons.is_empty()
+            && rule.allowed_reasons.len() <= 10
+            && rule.allowed_roles.len() <= 7
+            && rule.allowed_relevance.len() <= 4,
+        "invalid terminal whole-card rule"
+    );
+    unique(&rule.allowed_gaps)?;
+    unique(&rule.allowed_reasons)?;
+    unique(&rule.allowed_roles)?;
+    unique(&rule.allowed_relevance)?;
+    match rule.action {
+        ContextActionClass::Read => anyhow::bail!("generic Read cannot supply terminal semantics"),
+        ContextActionClass::Sufficient => ensure!(
+            rule.allowed_gaps == [Gap::Sufficient]
+                && rule.allowed_reasons == [ContextReason::RetainedEvidenceCoversQuestion]
+                && !rule.allowed_roles.is_empty()
+                && !rule.allowed_roles.contains(&EvidenceRole::Unknown)
+                && !rule.allowed_relevance.is_empty()
+                && rule.allowed_relevance.iter().all(|value| matches!(
+                    value,
+                    RelevanceHypothesis::Useful | RelevanceHypothesis::Complementary
+                )),
+            "terminal Sufficient rule lacks complete retained support semantics"
+        ),
+        ContextActionClass::Clarify => ensure!(
+            rule.allowed_gaps == [Gap::Ambiguous]
+                && rule.allowed_reasons.iter().all(|value| matches!(
+                    value,
+                    ContextReason::AmbiguousQuestion | ContextReason::ConflictingEvidence
+                )),
+            "terminal Clarify rule lacks genuine ambiguity semantics"
+        ),
+        ContextActionClass::NoJustifiedRead => ensure!(
+            !rule.allowed_gaps.contains(&Gap::Sufficient)
+                && rule.allowed_reasons == [ContextReason::NoVerifiedUsefulRead],
+            "terminal NoJustifiedRead rule lacks complete-menu semantics"
+        ),
+    }
+    Ok(())
+}
+
+fn replay(
+    rule: &JointRule,
+    policy: Sha256Digest,
+    rows: &[TerminalObservation],
+) -> Result<TerminalPanelSummary> {
+    ensure!(
+        !rows.is_empty() && rows.len() <= 10_000,
+        "bounded nonempty terminal panel required"
+    );
+    let mut ids = BTreeSet::new();
+    let mut inputs = BTreeSet::new();
+    let mut clusters = BTreeSet::new();
+    let mut accepted = Vec::new();
+    for row in rows {
+        row.validate(rule.action, policy)?;
+        ensure!(
+            ids.insert(&row.id) && inputs.insert(row.visible_input()?),
+            "duplicate terminal question or visible input"
+        );
+        let selected = row
+            .scores
+            .as_ref()
+            .map(|scores| raw_winner(scores))
+            .transpose()?
+            .flatten();
+        if let Some((index, margin)) = selected {
+            let card = &row.roster.cards[index];
+            if rule.supports(card) && margin >= rule.minimum_raw_margin {
+                ensure!(
+                    row.accepted_whole_cards.contains(&card.id),
+                    "false or UNKNOWN terminal admission"
+                );
+                clusters.insert(&row.repository_cluster);
+                accepted.push((
+                    &row.id,
+                    &row.repository_cluster,
+                    row.visible_input()?,
+                    card.id,
+                    margin,
+                    row.human_annotations,
+                    row.native_capture,
+                ));
+            }
+        }
+    }
+    Ok(TerminalPanelSummary {
+        population: rows.len(),
+        accepted: accepted.len(),
+        accepted_repository_clusters: clusters.len(),
+        coverage: accepted.len() as f64 / rows.len() as f64,
+        accepted_sample: framed_digest(
+            b"airk.arbiter.context-terminal-accepted-sample/1",
+            &[&serde_json::to_vec(&accepted)?],
+        ),
+    })
+}
+
+/// CAL-only cutoff fit. It never creates labels, confirmation or qualification.
+pub fn fit_terminal_rule(
+    template: &JointRule,
+    policy: Sha256Digest,
+    rows: &[TerminalObservation],
+) -> Result<Option<JointRule>> {
+    validate_terminal_rule(template)?;
+    ensure!(
+        !rows.is_empty() && rows.len() <= 10_000,
+        "bounded terminal CAL panel required"
+    );
+    let mut seen = BTreeSet::new();
+    let mut inputs = BTreeSet::new();
+    for row in rows {
+        ensure!(
+            seen.insert(&row.id) && inputs.insert(row.visible_input()?),
+            "duplicate terminal CAL question/input"
+        );
+    }
+    let mut boundaries = vec![0.0_f32];
+    for row in rows {
+        row.validate(template.action, policy)?;
+        if let Some(scores) = &row.scores {
+            if let Some((_, margin)) = raw_winner(scores)? {
+                boundaries.push(margin);
+                if margin.next_up().is_finite() {
+                    boundaries.push(margin.next_up());
+                }
+            }
+        }
+    }
+    boundaries.sort_by(f32::total_cmp);
+    boundaries.dedup_by(|a, b| *a == *b);
+    let mut best: Option<(usize, JointRule)> = None;
+    for margin in boundaries {
+        let mut candidate = template.clone();
+        candidate.minimum_raw_margin = margin;
+        // A nonadmitted class is never substituted for the raw global winner.
+        if let Ok(summary) = replay(&candidate, policy, rows) {
+            if summary.accepted > 0
+                && best.as_ref().is_none_or(|(accepted, rule)| {
+                    summary.accepted > *accepted
+                        || summary.accepted == *accepted && margin > rule.minimum_raw_margin
+                })
+            {
+                best = Some((summary.accepted, candidate));
+            }
+        }
+    }
+    Ok(best.map(|(_, rule)| rule))
+}
+
+impl TerminalQualification {
+    /// Native pre-score template. Only its CAL-chosen numeric cutoff may change.
+    pub fn criteria_freeze_document(&self) -> Result<serde_json::Value> {
+        let mut criteria = serde_json::to_value(&self.criteria)?;
+        criteria
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("terminal criteria object"))?
+            .remove("freeze");
+        let mut template = self.rule.clone();
+        template.minimum_raw_margin = 0.0;
+        Ok(
+            serde_json::json!({"schema":"airk.arbiter.context-terminal-criteria-freeze/1","action":self.rule.action,"criteria":criteria,"rule_template":template}),
+        )
+    }
+    pub fn validate_criteria_freeze(&self, raw: &[u8]) -> Result<()> {
+        let actual: serde_json::Value = serde_json::from_slice(raw)?;
+        let expected = self.criteria_freeze_document()?;
+        ensure!(
+            ["schema", "action", "criteria", "rule_template"]
+                .iter()
+                .all(|key| actual[*key] == expected[*key]),
+            "terminal criteria/population/rule differ from the pre-score freeze"
+        );
+        Ok(())
+    }
+
+    pub fn validate(
+        &self,
+        calibration: &JointCalibration,
+        analysis: &IndependenceAnalysis,
+    ) -> Result<TerminalQualificationSummary> {
+        self.criteria.validate()?;
+        validate_terminal_rule(&self.rule)?;
+        ensure!(
+            self.criteria.calibration_population == population_identity(&self.calibration)?
+                && self.criteria.confirmation_population
+                    == population_identity(&self.confirmation)?,
+            "terminal panel differs from preregistered population"
+        );
+        calibration.validate_class_support()?;
+        ensure!(
+            self.schema == QUALIFICATION_SCHEMA
+                && self.rule.action != ContextActionClass::Read
+                && self.model == calibration.model
+                && self.compiler == calibration.compiler
+                && self.task_policy == calibration.task_policy
+                && self.assets == calibration.assets
+                && calibration.schema == CALIBRATION_SCHEMA_V2
+                && calibration
+                    .rules
+                    .iter()
+                    .filter(|rule| rule.action == self.rule.action)
+                    .count()
+                    == 1
+                && calibration.rules.iter().any(
+                    |rule| serde_json::to_vec(rule).ok() == serde_json::to_vec(&self.rule).ok()
+                )
+                && nonzero(self.independence_analysis),
+            "terminal qualification/profile/rule mismatch"
+        );
+        let mut ids = BTreeSet::new();
+        let mut inputs = BTreeSet::new();
+        let cal_clusters: BTreeSet<_> = self
+            .calibration
+            .iter()
+            .map(|row| &row.repository_cluster)
+            .collect();
+        for row in self.calibration.iter().chain(&self.confirmation) {
+            ensure!(
+                ids.insert(&row.id) && inputs.insert(row.visible_input()?),
+                "CAL/confirmation question or visible-input overlap"
+            );
+        }
+        ensure!(
+            self.confirmation
+                .iter()
+                .all(|row| !cal_clusters.contains(&row.repository_cluster)),
+            "CAL/confirmation repository cluster overlap"
+        );
+        let fitted = fit_terminal_rule(&self.rule, self.task_policy, &self.calibration)?
+            .ok_or_else(|| anyhow::anyhow!("no positive zero-error CAL terminal cutoff"))?;
+        ensure!(
+            fitted.minimum_raw_margin.to_bits() == self.rule.minimum_raw_margin.to_bits(),
+            "terminal cutoff differs from the deterministic CAL-only fit"
+        );
+        let cal = replay(&self.rule, self.task_policy, &self.calibration)?;
+        let confirmation = replay(&self.rule, self.task_policy, &self.confirmation)?;
+        ensure!(
+            cal.population >= self.criteria.minimum_cal_population
+                && confirmation.population >= self.criteria.minimum_confirmation_population
+                && cal.accepted >= self.criteria.minimum_cal_accepted
+                && confirmation.accepted >= self.criteria.minimum_confirmation_accepted
+                && cal.coverage >= self.criteria.minimum_coverage
+                && confirmation.coverage >= self.criteria.minimum_coverage,
+            "terminal population/positive/coverage criteria not met"
+        );
+        ensure!(
+            analysis.schema == INDEPENDENCE_SCHEMA
+                && analysis.action == self.rule.action
+                && analysis.criteria_freeze == self.criteria.freeze
+                && analysis.accepted_sample == confirmation.accepted_sample
+                && analysis.accepted_cases == confirmation.accepted
+                && analysis.repository_clusters == confirmation.accepted_repository_clusters
+                && analysis.method == "reviewed_repository_cluster_effective_n/1"
+                && analysis.effective_independent_cases.is_finite()
+                && analysis.effective_independent_cases > 0.0
+                && analysis.effective_independent_cases <= confirmation.accepted as f64,
+            "missing or mismatched reviewed repository-cluster independence analysis"
+        );
+        let upper = 1.0 - 0.05_f64.powf(1.0 / analysis.effective_independent_cases);
+        ensure!(
+            upper.is_finite()
+                && upper < self.criteria.maximum_false_acceptance_upper
+                && upper < 0.01,
+            "terminal one-sided95% false-acceptance upper risk not below frozen limit"
+        );
+        Ok(TerminalQualificationSummary {
+            action: self.rule.action,
+            calibration: cal,
+            confirmation,
+            one_sided_95_false_acceptance_upper: upper,
+        })
+    }
+    /// Compare each human/capture row with exact original approved source bytes.
+    /// The caller, never this metadata, establishes human/native authority.
+    pub fn validate_sources(
+        &self,
+        annotations: &BTreeMap<Sha256Digest, TerminalAnnotations>,
+        captures: &BTreeMap<Sha256Digest, TerminalRawCapture>,
+    ) -> Result<()> {
+        for row in self.calibration.iter().chain(&self.confirmation) {
+            let labels = annotations
+                .get(&row.human_annotations)
+                .ok_or_else(|| anyhow::anyhow!("original human annotation source missing"))?;
+            ensure!(
+                labels.schema == ANNOTATIONS_SCHEMA
+                    && !labels.human_review_reference.trim().is_empty()
+                    && labels.human_review_reference.len() <= 4096
+                    && labels
+                        .rows
+                        .iter()
+                        .map(|label| &label.id)
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        == labels.rows.len(),
+                "human annotation source identity/duplicates"
+            );
+            let label = labels
+                .rows
+                .iter()
+                .find(|label| label.id == row.id)
+                .ok_or_else(|| anyhow::anyhow!("human whole-card label missing"))?;
+            ensure!(
+                label.action == self.rule.action
+                    && label.repository_cluster == row.repository_cluster
+                    && label.visible_input == row.visible_input()?
+                    && label.accepted_whole_cards == row.accepted_whole_cards,
+                "human label does not cover the exact whole-card claim"
+            );
+            let capture = captures
+                .get(&row.native_capture)
+                .ok_or_else(|| anyhow::anyhow!("original native score capture missing"))?;
+            ensure!(
+                capture.schema == RAW_CAPTURE_SCHEMA
+                    && capture.model == self.model
+                    && capture.compiler == self.compiler
+                    && capture.task_policy == self.task_policy
+                    && capture.assets == self.assets
+                    && !capture.execution_identity.trim().is_empty()
+                    && capture.execution_identity.len() <= 4096
+                    && nonzero(capture.native_execution_receipt)
+                    && capture
+                        .rows
+                        .iter()
+                        .map(|raw| &raw.id)
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        == capture.rows.len(),
+                "native terminal capture binding/duplicates"
+            );
+            let raw = capture
+                .rows
+                .iter()
+                .find(|raw| raw.id == row.id)
+                .ok_or_else(|| anyhow::anyhow!("native raw score row missing"))?;
+            ensure!(
+                raw.scores.is_none()
+                    || raw.compiled_input.is_some_and(nonzero)
+                        && raw
+                            .input_tokens
+                            .is_some_and(|tokens| (1..=8192).contains(&tokens)),
+                "scored terminal row lacks actual compiled input binding"
+            );
+            ensure!(
+                raw.visible_input == row.visible_input()? && same_scores(&raw.scores, &row.scores),
+                "native terminal raw scores/input differ"
+            );
+        }
+        Ok(())
+    }
+}
+fn same_scores(left: &Option<Vec<f32>>, right: &Option<Vec<f32>>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| left.to_bits() == right.to_bits())
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests;

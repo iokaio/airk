@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile,mkdir,readdir,watch} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {join,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {browserHarness} from './browser-harness.mjs';
+const out=dirname(fileURLToPath(import.meta.url)), cfg=JSON.parse(await readFile(join(out,'request.json'),'utf8'));
+const result={schema:'airk.private.admin-dom/1',scope:'actual embedded Admin assets, native I3 and actual Edge DOM/clipboard/download',checks:[],comparisons:[],passed:false};
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const b=await browserHarness();result.browser=b.observation;
+const save=async()=>{await writeFile(join(out,'browser-result.json'),JSON.stringify(result,null,2)+'\n');};
+const visible=`e=>!!e.getClientRects().length`;
+async function clickExpression(expression){const rect=await b.evaluate(`(()=>{const e=${expression};if(!e)throw Error('Click target unavailable');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);await b.call('Input.dispatchMouseEvent',{type:'mousePressed',...rect,button:'left',clickCount:1});await b.call('Input.dispatchMouseEvent',{type:'mouseReleased',...rect,button:'left',clickCount:1});}
+const click=sel=>clickExpression(`document.querySelector(${JSON.stringify(sel)})`);
+const btn=text=>clickExpression(`[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(text)}&&e.getClientRects().length)`);
+const panel=title=>`[...document.querySelectorAll('.panel')].find(e=>e.querySelector('h2')?.textContent===${JSON.stringify(title)}&&e.getClientRects().length)`;
+async function snap(name){const data=await b.call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(join(out,name+'.png'),Buffer.from(data.data,'base64'));}
+function nativeCall(operation){const rows=[...b.records.values()].filter(r=>r.url.endsWith('/call/'+operation)&&r.status===200&&r.body);assert.ok(rows.length,'No actual HTTP native response for '+operation);return {row:rows.at(-1),body:JSON.parse(rows.at(-1).body)};}
+async function completePanel(title,operation){await b.drainNetwork();const {row,body}=nativeCall(operation);const pre=await b.evaluate(`(${panel(title)}).querySelector('details .json pre')?.textContent`);assert.ok(pre,'Complete native JSON missing '+title);const value=JSON.parse(pre);assert.deepEqual(value,body.result,'DOM dropped/changed full native result '+operation);result.comparisons.push({operation,request_id:row.id,kind:'full native HTTP result equals rendered Details JSON',value_sha256:sha(JSON.stringify(value))});return {row,value};}
+try {
+ await mkdir(join(out,'downloads'));await b.call('Network.enable');await b.call('Page.enable');await b.call('Security.setIgnoreCertificateErrors',{ignore:true});
+ await b.call('Browser.grantPermissions',{origin:new URL(cfg.url).origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
+ await b.call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:join(out,'downloads'),eventsEnabled:true});
+ await b.call('Page.addScriptToEvaluateOnNewDocument',{source:`window.__adminObserved=[];new MutationObserver(()=>{for(const text of ['Loading','Calling service.resources','Loading Focus and Context status','Reading current CPU, memory and request capacity'])if(document.body?.innerText.includes(text)&&!window.__adminObserved.some(r=>r.text===text))window.__adminObserved.push({text,at:performance.now()});}).observe(document,{subtree:true,childList:true,characterData:true});`});
+ await b.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+ await b.call('Page.navigate',{url:cfg.url});
+ await b.observed(`document.querySelector('nav[aria-label="AIRK main navigation"]')&&document.querySelector('header .instance')`);
+ assert.equal(await b.evaluate(`location.hash.includes('c=')`),false,'Launch code not stripped');
+ const expected=['Overview','Search','Indexes','Activity','Agents','Service','Code','Documents','Evidence','Review','Strategies','Help'];
+ const rail=await b.evaluate(`[...document.querySelectorAll('nav[aria-label="AIRK main navigation"] button')].map(e=>({label:e.getAttribute('aria-label'),title:e.title,icon:e.querySelector('path')?.getAttribute('d'),divider:e.classList.contains('nav-divider'),help:e.classList.contains('nav-help'),labelDisplay:getComputedStyle(e.querySelector('.nav-label')).display}))`);
+ assert.deepEqual(rail.map(e=>e.label),expected);assert.equal(new Set(rail.map(e=>e.icon)).size,12);assert.ok(rail.every(e=>e.title===e.label&&e.icon));assert.deepEqual(rail.filter(e=>e.divider).map(e=>e.label),['Code']);assert.ok(rail.at(-1).help);assert.ok(rail.every(e=>e.labelDisplay!=='none'));result.rail=rail;
+ result.checks.push('12 independently listed accessible destination labels, distinct SVG paths, Code divider and Help last; expanded at 1280');
+ await click('nav button[aria-label="Service"]');await b.observed(`(${panel('Resources')})?.querySelector('details .json pre')&&(${panel('Optional local Arbiter stages')})?.querySelector('details .json pre')`);
+ await completePanel('Optional local Arbiter stages','arbiter.status');
+ const initialization=await b.evaluate(`[...document.querySelectorAll('button')].some(e=>e.textContent==='Initialize both stages off'&&!e.disabled&&e.getClientRects().length)`);
+ if(initialization){await btn('Initialize both stages off');result.checks.push('Explicit real native initialization creates both stages disabled in this fresh isolated fixture only');}
+ await b.observed(`document.querySelector('[aria-label="Arbiter Focus"]')&&document.querySelector('[aria-label="Arbiter Context"]')`);
+ const resources=await completePanel('Resources','service.resources');
+ const summary=await b.evaluate(`(${panel('Resources')}).querySelector('dl').innerText`);assert.ok(summary.includes('Concurrent evidence requests'));result.resource_summary=summary;
+ const detail=await b.evaluate(`(${panel('Resources')}).querySelector('details').open`);assert.equal(detail,false,'Large raw JSON occupies primary screen');
+ const stages=await b.evaluate(`['Focus','Context'].map(name=>({name,text:document.querySelector('[aria-label="Arbiter '+name+'"]').innerText}))`);result.stages=stages;assert.ok(stages.every(e=>e.text.length>10));
+ const routine=await b.evaluate(`document.querySelector('header').innerText`);assert.ok(!routine.includes(cfg.instance));result.routine_header=routine;
+ await snap('service-wide');
+ // Open real complete result; use actual browser clipboard rather than an injected implementation.
+ await clickExpression(`(${panel('Resources')}).querySelector('details summary')`);
+ await clickExpression(`(${panel('Resources')}).querySelector('.json-actions button')`);
+ const clipboard=await b.evaluate(`navigator.clipboard.readText()`);assert.deepEqual(JSON.parse(clipboard),resources.value);result.comparisons.push({operation:'service.resources',kind:'actual clipboard full JSON equals native response',sha256:sha(clipboard)});
+ const downloadBefore=new Set(await readdir(join(out,'downloads')));const downloading=(async()=>{for await(const event of watch(join(out,'downloads'),{signal:AbortSignal.timeout(10000)})){const files=await readdir(join(out,'downloads'));const name=files.find(n=>!downloadBefore.has(n)&&n.endsWith('.json'));if(name)return name;}throw Error('No complete JSON download');})();
+ await clickExpression(`(${panel('Resources')}).querySelectorAll('.json-actions button')[1]`);
+ const filename=await downloading;const exported=await readFile(join(out,'downloads',filename),'utf8');assert.deepEqual(JSON.parse(exported),resources.value);result.comparisons.push({operation:'service.resources',kind:'actual downloaded attachment full JSON equals native response',file:filename,sha256:sha(exported)});
+ await click('nav button[aria-label="Agents"]');await b.observed(`document.querySelector('.au-snippet pre')&&[...document.querySelectorAll('summary')].some(e=>e.textContent==='Complete endpoint result (JSON)'&&e.parentElement.querySelector('pre'))`);
+ await b.drainNetwork();const endpoint=nativeCall('agents.endpoint');assert.deepEqual(endpoint.body.result.manual,cfg.endpoint.manual);assert.deepEqual(endpoint.body.result.endpoint,Object.fromEntries(Object.entries(cfg.endpoint).filter(([key])=>key!=='manual')));result.comparisons.push({operation:'agents.endpoint',kind:'full actual native I3 result equals actual CLI endpoint, including every manual entry',request_id:endpoint.row.id});
+ for(const client of ['claude','codex','vscode']) {await click('#au-tab-'+client);const entry=cfg.endpoint.manual.find(e=>e.client===client);await b.observed(`document.querySelector('.au-snippet figcaption span')?.textContent===${JSON.stringify(entry.file)}`);const text=await b.evaluate(`document.querySelector('.au-snippet pre').textContent`);assert.equal(text,entry.text);await click('.au-snippet button');await b.observed(`document.querySelector('.au-snippet button')?.textContent==='Copied'`);const copied=await b.evaluate(`navigator.clipboard.readText()`);assert.equal(copied,entry.text);result.comparisons.push({operation:'agents.endpoint',client,scope:entry.scope,file:entry.file,format:entry.format,kind:'full native entry target/text rendered and actual clipboard equal',sha256:sha(copied)});}
+ assert.ok(await b.evaluate(`document.body.innerText.includes('If the service changes port, copy a fresh entry')&&document.body.innerText.includes('airkctl agents endpoint')`));await snap('agents-wide');
+ // Twelve destinations twice: actual mouse events, native first-load handlers, active state and named views.
+ result.navigation=[];
+ for(let round=0;round<2;round++)for(const title of expected){await click('nav button[aria-label="'+title+'"]');await b.observed(`document.querySelector('nav button[aria-current="page"]')?.getAttribute('aria-label')===${JSON.stringify(title)}`);const state=await b.evaluate(`({active:document.querySelector('nav button[aria-current="page"]').getAttribute('aria-label'),headings:[...document.querySelectorAll('main h1,main h2')].filter(${visible}).map(e=>e.textContent),hash:location.hash,alerts:[...document.querySelectorAll('main [role="alert"]')].filter(${visible}).map(e=>e.innerText)})`);assert.ok(state.headings.length,'Destination has no visible heading '+title);result.navigation.push({round,title,...state});}
+ result.checks.push('24 actual navigation clicks across all 12 destinations, active highlight and visible named content; native first-load responses retained');
+ await b.call('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});await click('nav button[aria-label="Service"]');
+ const collapsed=await b.evaluate(`[...document.querySelectorAll('nav button')].map(e=>({label:e.getAttribute('aria-label'),display:getComputedStyle(e.querySelector('.nav-label')).display,title:e.title,rect:JSON.parse(JSON.stringify(e.getBoundingClientRect()))}))`);assert.equal(collapsed.length,12);assert.ok(collapsed.every(e=>e.display==='none'&&e.label===e.title));const help=collapsed.at(-1);assert.ok(help.rect.bottom<=900&&help.rect.top>=0,'Pinned Help not in viewport');result.collapsed=collapsed;await snap('service-collapsed');
+ await click('nav button[aria-label="Agents"]');await snap('agents-collapsed');result.checks.push('800px actual collapsed icon-only rail, all aria labels/tooltips preserved, Help visible last');
+ await b.drainNetwork();result.loading_observations=await b.evaluate('window.__adminObserved');
+ // Native HTTP results are retained as whole envelopes; no field normalization, subset or dropped errors.
+ result.network=[];for(const r of b.records.values()){if(r.url.includes('/call/')){result.network.push(r);}else if(r.body&&['Script','Stylesheet','Document'].includes(r.type)){const bytes=Buffer.from(r.body,r.base64?'base64':'utf8');const expectedAsset=cfg.assets[new URL(r.url).pathname.split('/').at(-1)];if(expectedAsset)assert.equal(sha(bytes),expectedAsset.sha256,'Embedded asset differs from candidate source '+r.url);result.network.push({id:r.id,url:r.url,status:r.status,type:r.type,bytes:bytes.length,sha256:sha(bytes),matches_source:!!expectedAsset});}}
+ const served=result.network.filter(r=>r.matches_source);assert.ok(served.some(r=>r.type==='Script')&&served.some(r=>r.type==='Stylesheet'),'No embedded script/CSS identity proof');
+ const api=result.network.filter(r=>r.url.includes('/call/'));assert.ok(api.length>=8,'Insufficient actual native operation coverage');result.actual_native_calls=api.length;result.operations=[...new Set(api.map(r=>r.url.split('/call/')[1]))];result.checks.push('actual served embedded JS/CSS byte hashes equal current sealed candidate assets');
+ result.passed=true;
+} catch(error){result.failure={name:error.name,message:error.message,stack:error.stack};try{result.failure_dom=await b.evaluate('document.body.innerText');await snap('failure');}catch{};throw error;}
+finally{try{await b.drainNetwork();if(!result.network)result.partial_network=[...b.records.values()].filter(r=>r.url.includes('/call/'));await b.close();}finally{await save();}}
+console.log(JSON.stringify({passed:result.passed,checks:result.checks.length,comparisons:result.comparisons.length,navigation:result.navigation?.length,actual_native_calls:result.actual_native_calls,operations:result.operations,browser:result.browser}));

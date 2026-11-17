@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Separate qualification batch; no GpuProbeReservation/product budget transfer.
+use super::*;
+const SCHEMA: &str = "airk.private.cuda-resource-benchmark-request/1";
+const OUTER_MS: u64 = 3_600_000;
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BenchmarkRequest {
+    schema: String,
+    gpu_input: ResourceFilePin,
+    runtime_manifest: ResourceFilePin,
+    expectations: ResourceFilePin,
+    host_limit_bytes: u64,
+    device_limit_bytes: u64,
+    cold_bytes: u64,
+    warm_bytes: u64,
+    headroom_bytes: u64,
+    job_limit_bytes: u64,
+    outer_deadline_ms: u64,
+}
+fn model_limits(model: ModelChoice) -> Result<(u64, u64)> {
+    match model {
+        ModelChoice::FocusQwenReranker06B => Ok((4 << 30, 8 << 30)),
+        ModelChoice::ContextQwenCompact => Ok((16 << 30, 32 << 30)),
+        ModelChoice::ContextQwenLarge => Ok((40 << 30, 48 << 30)),
+        ModelChoice::SmallIntern
+        | ModelChoice::SmallStrands
+        | ModelChoice::LargeIntern
+        | ModelChoice::LargeKev => {
+            anyhow::bail!("model outside the frozen resource benchmark roster")
+        }
+    }
+}
+impl BenchmarkRequest {
+    fn validate(&self, profile: &Profile, policy: &ResourcePolicy) -> Result<DeviceCapacityPlan> {
+        policy.validate()?;
+        ensure!(
+            self.schema == SCHEMA && self.outer_deadline_ms == OUTER_MS,
+            "unknown independent resource batch/schema/cutoff"
+        );
+        self.gpu_input.validate()?;
+        self.runtime_manifest.validate()?;
+        self.expectations.validate()?;
+        ensure!(
+            profile.device_execution.is_some() && profile.cpu_fit.is_none(),
+            "GPU benchmark requires actual native GPU metadata"
+        );
+        let original = model_limits(profile.model)?;
+        ensure!(
+            self.host_limit_bytes == profile.memory_reservation_bytes
+                && (self.host_limit_bytes, self.job_limit_bytes) == original,
+            "original benchmark host/Job bounds differ"
+        );
+        ensure!(
+            self.device_limit_bytes > 0
+                && self
+                    .cold_bytes
+                    .checked_add(self.headroom_bytes)
+                    .is_some_and(|n| n <= self.device_limit_bytes),
+            "original device planning bound differs"
+        );
+        DeviceCapacityPlan::probe(self.cold_bytes, self.warm_bytes, self.headroom_bytes)
+    }
+}
+#[test]
+#[ignore = "NN0: explicit frozen scalar pins/bounds; serializes existing native resource benchmark owner"]
+fn emit_cuda_resource_benchmark_request() -> Result<()> {
+    let started = Instant::now();
+    let limit = number("AIRK_CUDA_DEADLINE_MS")?;
+    ensure!(
+        (1..=120_000).contains(&limit),
+        "original benchmark metadata emission limit differs"
+    );
+    let deadline = started + Duration::from_millis(limit);
+    let gpu_input = env_pin(
+        "AIRK_SOFTWARE_V2_NATIVE_INPUT",
+        "AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256",
+    )?;
+    let (input, profile, files, _) = inputs_from(&gpu_input)?;
+    let compiled = metadata_input(&profile, &files)?;
+    let output = PathBuf::from(text("AIRK_CUDA_REQUEST_OUTPUT")?);
+    ensure!(
+        Instant::now() < deadline,
+        "original benchmark metadata cutoff expired before retention"
+    );
+    let expectations = write_json(
+        &output.with_extension("expectations.json"),
+        &parent_expectations(&gpu_input, &input, &profile, &compiled),
+    )?;
+    let value = BenchmarkRequest {
+        schema: SCHEMA.into(),
+        gpu_input,
+        expectations,
+        runtime_manifest: env_pin(
+            "AIRK_CUDA_RUNTIME_MANIFEST",
+            "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
+        )?,
+        host_limit_bytes: number("AIRK_CUDA_HOST_LIMIT_BYTES")?,
+        device_limit_bytes: number("AIRK_CUDA_DEVICE_LIMIT_BYTES")?,
+        cold_bytes: number("AIRK_CUDA_COLD_BYTES")?,
+        warm_bytes: number("AIRK_CUDA_WARM_BYTES")?,
+        headroom_bytes: number("AIRK_CUDA_HEADROOM_BYTES")?,
+        job_limit_bytes: number("AIRK_CUDA_JOB_LIMIT_BYTES")?,
+        outer_deadline_ms: number("AIRK_CUDA_RESOURCE_OUTER_MS")?,
+    };
+    value.validate(&profile, &input.policy)?;
+    write_json(&output, &value)?;
+    let rows=[ModelChoice::FocusQwenReranker06B,ModelChoice::ContextQwenCompact,ModelChoice::ContextQwenLarge].into_iter().map(|model|->Result<Value>{
+        let(host,job)=model_limits(model)?;
+        Ok(json!({"model":model,"host_limit_bytes":host,"process_containment_bytes":job,"job_limit_bytes":job}))
+    }).collect::<Result<Vec<_>>>()?;
+    write_json(
+        &output.with_extension("policy.json"),
+        &json!({"schema":"airk.private.cuda-resource-benchmark-policy/1","resource_policy":ResourcePolicy::software_v2(),"whole_process_ms":OUTER_MS,"load_operations":1,"warmup_operations":1,"sample_operations":20,"forward_roster":forward_roster(),"model_limits":rows,"gpu_process_peak_required_for_final_qualification":true}),
+    )?;
+    pinned(&value.gpu_input, 1 << 20)?;
+    pinned(&input.profile, 1 << 20)?;
+    ensure!(
+        Instant::now() < deadline,
+        "original benchmark metadata cutoff expired after retention/posthash"
+    );
+    Ok(())
+}
+fn metadata_input(profile: &Profile, files: &Files) -> Result<CompiledInput> {
+    let compiler = profile
+        .assets
+        .iter()
+        .find(|a| a.role == AssetRole::Compiler)
+        .context("resource compiler metadata absent")?;
+    let tokenizer = profile
+        .assets
+        .iter()
+        .find(|a| a.role == AssetRole::Tokenizer)
+        .context("resource tokenizer metadata absent")?;
+    let compiler =
+        Compiler::from_verified(&files.read_asset(compiler)?, &files.read_asset(tokenizer)?)?;
+    resource_input(profile, files, |state, question, options| {
+        compiler.compile(state, question, options)
+    })
+}
+fn operation_roster(digest: Sha256Digest) -> Vec<Value> {
+    std::iter::once(json!({"kind":"load","ordinal":0,"input_digest":null}))
+        .chain(std::iter::once(
+            json!({"kind":"warmup","ordinal":0,"input_digest":digest}),
+        ))
+        .chain((1..=20).map(|n| json!({"kind":"sample","ordinal":n,"input_digest":digest})))
+        .collect()
+}
+fn parent_expectations(
+    gpu_input: &ResourceFilePin,
+    input: &ResourceRunInput,
+    profile: &Profile,
+    compiled: &CompiledInput,
+) -> Value {
+    json!({"schema":"airk.private.cuda-resource-benchmark-expectations/1","native_input":gpu_input,"model":profile.model,"profile":profile.manifest,
+        "policy":input.policy,"policy_digest":input.policy_digest,"expected_resource_input":compiled,
+        "native_operation_roster":operation_roster(compiled.input_digest),"forward_roster":forward_roster()})
+}
+/// Provider Instant starts before sampling native monotonic time. Native journal
+/// and external owner enforce the exact original absolute expiry through sync.
+fn cutoff(
+    original: Instant,
+    original_ns: u64,
+    now: Instant,
+    now_ns: u64,
+    operation_ms: u64,
+) -> Result<(Instant, u64)> {
+    ensure!(
+        operation_ms == 120_000 && now < original && now_ns < original_ns,
+        "original benchmark cutoff exhausted or changed"
+    );
+    let instant = now
+        .checked_add(Duration::from_millis(operation_ms))
+        .context("operation Instant overflow")?
+        .min(original);
+    let native = now_ns
+        .checked_add(operation_ms * 1_000_000)
+        .context("operation native expiry overflow")?
+        .min(original_ns);
+    Ok((instant, native))
+}
+fn observed<T>(
+    journal: &mut operation::Journal,
+    outer: Instant,
+    outer_ns: u64,
+    kind: operation::Kind,
+    ordinal: usize,
+    input: Option<Sha256Digest>,
+    call: impl FnOnce(Instant) -> Result<T>,
+) -> Result<operation::Returned<T>> {
+    let now = Instant::now();
+    let (deadline, expires) = cutoff(
+        outer,
+        outer_ns,
+        now,
+        airk_process::monotonic::now_ns()?,
+        120_000,
+    )?;
+    journal.observe_before(kind, ordinal, input, expires, || call(deadline))
+}
+fn forward_roster() -> Vec<String> {
+    std::iter::once("warmup-0".into())
+        .chain((1..=20).map(|n| format!("sample-{n:02}")))
+        .collect()
+}
+fn actual_forward<T>(
+    completed: &mut Vec<String>,
+    label: &str,
+    call: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let value = call()?;
+    completed.push(label.into());
+    Ok(value)
+}
+#[test]
+#[ignore = "actual owned exclusive GPU window, frozen native input/runtime/bounds; load1 warmup1 samples20, original120/3600"]
+fn cuda_selected_native_resources20() -> Result<()> {
+    let started = Instant::now();
+    let started_ns = airk_process::monotonic::now_ns()?;
+    let request_pin = env_pin(
+        "AIRK_CUDA_RESOURCE_INPUT",
+        "AIRK_CUDA_RESOURCE_INPUT_SHA256",
+    )?;
+    let request: BenchmarkRequest = serde_json::from_slice(&pinned(&request_pin, 1 << 20)?)?;
+    let (input, profile, files, _) = inputs_from(&request.gpu_input)?;
+    let plan = request.validate(&profile, &input.policy)?;
+    let expected: Value = serde_json::from_slice(&pinned(&request.expectations, 16 << 20)?)?;
+    let metadata_compiled = metadata_input(&profile, &files)?;
+    ensure!(
+        expected == parent_expectations(&request.gpu_input, &input, &profile, &metadata_compiled),
+        "native parent expectations differ from frozen compiler/policy/denominator"
+    );
+    let outer = started + Duration::from_millis(OUTER_MS);
+    let outer_ns = started_ns
+        .checked_add(OUTER_MS * 1_000_000)
+        .context("batch native cutoff overflow")?;
+    let actual_job = job_limits(request.job_limit_bytes, request.job_limit_bytes)?;
+    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
+        preset: ResourcePreset::Throughput,
+        ..ResourceConfiguration::default()
+    })?;
+    let available = airk_kernel::service_resource_observations::available_memory();
+    resources.observe(
+        airk_kernel::service_resource_observations::rss(std::process::id()),
+        available,
+        true,
+    );
+    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
+    let charge =
+        Arc::new(resources.reserve_optional(incarnation, request.host_limit_bytes, available)?);
+    let release = charge.release_observer();
+    let (parent, control) = private_control()?;
+    let mut control_parent = Some(parent);
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
+        lease.clone(),
+    )?);
+    let output = output()?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)?;
+    let binary = file_hash(&std::env::current_exe()?)?;
+    let mut receipt = json!({"schema":"airk.private.cuda-native-resource/1","complete":false,"latency_host_placement_passed":false,
+        "evaluation":true,"release_qualified":false,"numeric_status":"unavailable_in_resource_only_run",
+        "input_sha256":request_pin.sha256,"profile_source_sha256":input.profile.sha256,
+        "process_id":std::process::id(),"model":profile.model,"target":current_target(),"isa":isa(),
+        "cpu_fit":profile.cpu_fit,"device_execution":profile.device_execution,
+        "operation_journal":output.with_extension("operations.jsonl"),
+        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
+        "capacity_observation_scope":"selected native device occupancy/headroom only; not per-process allocation or peak",
+        "final_gpu_qualification":false,"gpu_peak_status":"unavailable_complete_process_observer","measured_peak_device_bytes":null,
+        "request":request_pin,"native_input":request.gpu_input,"profile":profile.manifest,"runtime_manifest":request.runtime_manifest,
+        "source_manifest":input.source_manifest,"resource_policy":input.policy,"resource_policy_digest":input.policy_digest,
+        "pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,
+        "bounds":request,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),
+        "original_native_batch_expires_monotonic_ns":outer_ns,"forward_roster":forward_roster(),"completed_forwards":[],
+        "resource":ResourceSeries::new(profile.memory_reservation_bytes)?,"scope":"independent qualification load1/warmup1/samples20; no full process GPU peak, numeric/CAL/product Ready or final GPU qualification"});
+    flush(&mut file, &receipt)?;
+    let mut journal = operation::Journal::create(
+        &output,
+        operation::Identity {
+            input_sha256: request_pin.sha256,
+            profile: profile.manifest,
+            process_id: std::process::id(),
+            native_binary_sha256: binary,
+        },
+        input.policy.deadline_ms,
+    )?;
+    let mut completed = Vec::new();
+    let run=owner.run(||->Result<()> {
+        let mut custody=Custody{scorer:None,device:None,owner:owner.clone(),lease:lease.clone(),charge:Some(charge),control:&mut control_parent,files:Some(files)};
+        ensure!(Instant::now()<outer,"original resource batch expired before load");
+        verify_files(custody.files.as_ref().unwrap(),&profile)?;
+        pinned(&request.runtime_manifest,128<<10)?;
+        let loaded=observed(&mut journal,outer,outer_ns,operation::Kind::Load,0,None,|deadline|{
+            let(root,manifest)=airk_host::gpu_runtime::installed_paths()?;
+            ensure!(manifest.as_path()==Path::new(&request.runtime_manifest.path),"benchmark manifest differs from native installed runtime");
+            let runtime=airk_host::gpu_runtime::admit(lease.clone(),&root,&manifest,deadline)?;
+            ensure!(runtime.manifest_identity()==request.runtime_manifest.sha256,"benchmark runtime differs from frozen pin");
+            let adapters=runtime.adapters(deadline)?;
+            ensure!(adapters.len()==1,"scientific resource benchmark requires exactly one actually observed adapter");
+            let device=runtime.device(adapters[0].uuid,deadline)?;
+            receipt["capacity_before_load"]=serde_json::to_value(device.observation(deadline)?)?;
+            custody.device=Some(device.clone());
+            let catalog=airk_kernel::inference_owner::evaluation_catalog(lease.clone(),vec![profile.clone()])?;
+            let execution=catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device,plan,deadline)?;
+            Scorer::open(execution,custody.files.as_ref().unwrap())
+        })?;
+        receipt["load_us"]=json!(loaded.elapsed_us);receipt["load_native_call_us"]=json!(loaded.native_call_elapsed_us);
+        custody.scorer=Some(loaded.value?);
+        ensure!(loaded.within_deadline,"original resource load deadline exceeded");
+        let scorer=custody.scorer.as_ref().unwrap();
+        let placement=scorer.device_placement()?.context("actual final GPU placement unavailable")?;
+        placement.validate_strict()?;
+        let compiled=resource_input(&profile,custody.files.as_ref().unwrap(),|state,question,candidates|scorer.compile(state,question,candidates))?;
+        ensure!(serde_json::to_value(&compiled)?==expected["expected_resource_input"],"actual native Scorer compiler differs from pre-frozen metadata input");
+        receipt["expectations"]=json!(request.expectations);
+        receipt["native_operation_roster"]=expected["native_operation_roster"].clone();
+        receipt["execution_identity"]=json!(scorer.execution_identity()?);
+        receipt["final_placement"]=json!(placement);
+        receipt["attention_backend_plan"]=scorer.attention_backend_plan()?.unwrap_or(Value::Null);
+        receipt["input"]=json!(compiled);
+        // Original labels + actual authenticated graph plan are retained before
+        // the first real forward. No expected completion is recorded here.
+        flush(&mut file,&receipt)?;
+        let warmed=observed(&mut journal,outer,outer_ns,operation::Kind::Warmup,0,Some(compiled.input_digest),|deadline|
+            actual_forward(&mut completed,"warmup-0",||scorer.score_with_deadline(&compiled,deadline)))?;
+        receipt["warmup"]=json!({"elapsed_us":warmed.elapsed_us,"native_call_elapsed_us":warmed.native_call_elapsed_us,"success":warmed.value.is_ok()});
+        receipt["completed_forwards"]=json!(completed);flush(&mut file,&receipt)?;
+        warmed.value?;
+        ensure!(warmed.within_deadline&&warmed.elapsed_us<=input.policy.p95_limit_us,"first warmup overrun; no measured forward admitted");
+        final_host_peak(peak_rss(),request.host_limit_bytes)?;
+        let mut series=ResourceSeries::new(profile.memory_reservation_bytes)?;
+        let mut ordinal=0;
+        let measured=observe_series(&mut series,&input.policy,|| {
+            ordinal+=1;
+            let label=format!("sample-{ordinal:02}");
+            let returned=observed(&mut journal,outer,outer_ns,operation::Kind::Sample,ordinal,Some(compiled.input_digest),|deadline|
+                actual_forward(&mut completed,&label,||scorer.score_with_deadline(&compiled,deadline)))?;
+            returned.value?;
+            let sample=ResourceSample{elapsed_us:returned.elapsed_us,peak_process_rss_bytes:peak_rss().context("actual benchmark host peak unavailable")?};
+            if !returned.within_deadline&&sample.elapsed_us<=input.policy.p95_limit_us {
+                anyhow::bail!("original parent clipped sample expiry exceeded");
+            }
+            Ok(sample)
+        },|series| {receipt["resource"]=json!(series);flush(&mut file,&receipt) });
+        receipt["resource"]=json!(series);receipt["completed_forwards"]=json!(completed);flush(&mut file,&receipt)?;
+        measured?;
+        ensure!(completed==forward_roster(),"actual completed forward denominator differs");
+        scorer.synchronize(outer)?;ensure!(scorer.device_settled(),"resource GPU settlement remains unknown");
+        let device=custody.device.as_ref().context("actual resource device absent")?;
+        receipt["capacity_after_scores"]=serde_json::to_value(device.observation(outer)?)?;
+        drop(custody.scorer.take());
+        ensure!(!device.poisoned()&&device.pending_claims()==Some(0),"actual resource teardown settlement remains unknown");
+        verify_files(custody.files.as_ref().unwrap(),&profile)?;
+        for pin in [&request_pin,&request.gpu_input,&input.profile] {pinned(pin,1<<20)?;}
+        pinned(&input.source_manifest,16<<20)?;pinned(&request.runtime_manifest,128<<10)?;pinned(&request.expectations,16<<20)?;
+        ensure!(Instant::now()<outer,"original resource batch expired during teardown/posthash");
+        Ok(())
+    });
+    let result = run.and_then(std::convert::identity);
+    drop(owner);
+    drop(lease);
+    let retained = control_parent.is_none();
+    let cleanup = control_parent
+        .take()
+        .map(tempfile::TempDir::close)
+        .transpose();
+    let mut waiting = std::pin::pin!(release.wait());
+    let released = matches!(
+        std::future::Future::poll(
+            waiting.as_mut(),
+            &mut std::task::Context::from_waker(std::task::Waker::noop())
+        ),
+        std::task::Poll::Ready(Ok(()))
+    );
+    receipt["native_control_retained_for_unknown_cuda"] = json!(retained);
+    receipt["native_control_cleanup_observed"] = json!(matches!(&cleanup, Ok(Some(()))));
+    receipt["native_control_cleanup_error"] =
+        json!(cleanup.as_ref().err().map(ToString::to_string));
+    receipt["native_host_charge_release_observed"] = json!(released);
+    let peak = peak_rss();
+    let peak_decision = final_host_peak(peak, request.host_limit_bytes);
+    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
+    let result = match (result, cleanup, peak_decision) {
+        (Err(primary), _, _) => Err(primary),
+        (Ok(()), Err(cleanup), _) => Err(cleanup.into()),
+        (Ok(()), Ok(_), Err(peak)) => Err(peak),
+        (Ok(()), Ok(_), Ok(_)) if released => Ok(()),
+        (Ok(()), Ok(_), Ok(_)) => Err(anyhow::anyhow!("native resource host release unknown")),
+    };
+    receipt["completed_forwards"] = json!(completed);
+    receipt["peak_process_rss_bytes"] = json!(peak);
+    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+    receipt["complete"] = json!(result.is_ok());
+    receipt["latency_host_placement_passed"] = json!(result.is_ok());
+    if let Err(error) = &result {
+        receipt["error"] = json!(format!("{error:#}"));
+        if let Some(refusal) = error.downcast_ref::<cuda::PlacementRefusal>() {
+            receipt["placement_refusal"] = json!(&refusal.observation);
+        }
+    }
+    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
+    flush(&mut file, &receipt)?;
+    if Instant::now() >= outer {
+        receipt["complete"] = json!(false);
+        receipt["latency_host_placement_passed"] = json!(false);
+        receipt["final_retention_exceeded_original_batch_cutoff"] = json!(true);
+        flush(&mut file, &receipt)?;
+        return result.and_then(|()| {
+            Err(anyhow::anyhow!(
+                "original resource batch cutoff exhausted during final receipt retention"
+            ))
+        });
+    }
+    result
+}
+#[cfg(test)]
+mod tests;

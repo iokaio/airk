@@ -1,0 +1,689 @@
+{
+  "schema": "airk.source-disposition/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/models/qwen3.rs",
+      "source_sha256": "70672ffb1cb92d0bcaf8941365ca4bcba2182e2329ce4270978604b4c79369b8",
+      "source_bytes": 26659,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/models/qwen3.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/models/qwen3_moe.rs",
+      "source_sha256": "43076cf700c890fbd0e425649efd9e0d8c6fb1d9fd3d3622980c0aaa7323bc2a",
+      "source_bytes": 26927,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/models/qwen3_moe.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/models/qwen3_next.rs",
+      "source_sha256": "da4620c45390c04e23119e78b423cd76f639eb96ad0e34d784978ffd617e2442",
+      "source_bytes": 50790,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/models/qwen3_next.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/config.rs",
+      "source_sha256": "3534d9f6db0e130de99f64a89a6c92866878cc4a4fcd5d5432963cc5baab0da4",
+      "source_bytes": 23539,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/config.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/mod.rs",
+      "source_sha256": "03e13f3216d4ef839f0fb6487d74ad4da7a1fa8ed740844b7ad20b2cf9a8fed4",
+      "source_bytes": 22799,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/mod.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/mtp.rs",
+      "source_sha256": "cfd695dd0d62d9db2303fd1d2b76a3ccff61b6a86c37635bc6f6e2c5e0e8e9ba",
+      "source_bytes": 7386,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/mtp.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/packed_gdn.rs",
+      "source_sha256": "f15c7382fd85278408d652646ffc4862cfb3112fde230f0b5ddfd9f7191a7c66",
+      "source_bytes": 8534,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/packed_gdn.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/packed_visual.rs",
+      "source_sha256": "f0ebbd4416c4b3fba50628c58e41b1a08bef621e26f6fba6699802e42924b60f",
+      "source_bytes": 9826,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/packed_visual.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/speculative.rs",
+      "source_sha256": "a41fcbdca830548c927fd9b7ad8681fbbd0f04e9b33d6577ba9a71ed4f61ff68",
+      "source_bytes": 37207,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/speculative.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5/text.rs",
+      "source_sha256": "029286097a846f01a138e729908fd8c81a60574ee3a2dfaaf54e74a9f60d2c99",
+      "source_bytes": 69824,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5/text.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5_moe/config.rs",
+      "source_sha256": "0650a61eef82bca0207cc8fa8e830f0ef0791f6762d75b0f391e5cadceb07770",
+      "source_bytes": 8392,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5_moe/config.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5_moe/mod.rs",
+      "source_sha256": "69119e48babf5021d6e5bd8e0a7f07b28f117c0119e67e96b1440e73767bf202",
+      "source_bytes": 23000,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5_moe/mod.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/EricLBuehler--mistral.rs/mistralrs-core/src/vision_models/qwen3_5_moe/text.rs",
+      "source_sha256": "3e3ee8b79b867ce65b3824b516c7fc86e782491755576fb73899d51e923d265b",
+      "source_bytes": 38996,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "EricLBuehler/mistral.rs",
+        "revision": "fb4cdc3730dc64b366724e7637a205a8b7747499",
+        "path": "mistralrs-core/src/vision_models/qwen3_5_moe/text.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--candle/candle-transformers/src/models/quantized_qwen3.rs",
+      "source_sha256": "be39a2f67f6ea304f88393a3e77a0b99ba531e8dffe346cdbe2d8033745a6fad",
+      "source_bytes": 19602,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/inventory.json",
+          "sha256": "cf4c889ba1695e69abd66f0e9a360d0c5fd6dbdcdd8b8bcddb9447c0f4f2aaa5",
+          "bytes": 24161
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/candle",
+        "revision": "cfcbd7186d13271843ce7eb41d25659bd0835850",
+        "path": "candle-transformers/src/models/quantized_qwen3.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--candle/candle-transformers/src/models/quantized_qwen3_moe.rs",
+      "source_sha256": "abe5b2cfedcdc18199bc6b06719ef6bca630926f5d7e441045d81ad449d15087",
+      "source_bytes": 14426,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/inventory.json",
+          "sha256": "cf4c889ba1695e69abd66f0e9a360d0c5fd6dbdcdd8b8bcddb9447c0f4f2aaa5",
+          "bytes": 24161
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/candle",
+        "revision": "cfcbd7186d13271843ce7eb41d25659bd0835850",
+        "path": "candle-transformers/src/models/quantized_qwen3_moe.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--candle/candle-transformers/src/models/qwen3.rs",
+      "source_sha256": "9641e82838549cd75ad60046593274d36d20bae0a9d508444c2427430e372177",
+      "source_bytes": 15852,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/inventory.json",
+          "sha256": "cf4c889ba1695e69abd66f0e9a360d0c5fd6dbdcdd8b8bcddb9447c0f4f2aaa5",
+          "bytes": 24161
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/candle",
+        "revision": "cfcbd7186d13271843ce7eb41d25659bd0835850",
+        "path": "candle-transformers/src/models/qwen3.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--candle/candle-transformers/src/models/qwen3_moe.rs",
+      "source_sha256": "a083f2b88366e29dbaca3949609fa03f9b093834ccc471646a62b0f06d97ea0d",
+      "source_bytes": 11476,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/inventory.json",
+          "sha256": "cf4c889ba1695e69abd66f0e9a360d0c5fd6dbdcdd8b8bcddb9447c0f4f2aaa5",
+          "bytes": 24161
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/candle",
+        "revision": "cfcbd7186d13271843ce7eb41d25659bd0835850",
+        "path": "candle-transformers/src/models/qwen3_moe.rs"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--optimum-onnx/optimum/exporters/onnx/model_configs.py",
+      "source_sha256": "7e4bc6449f0c394144bd3ec801f168c5e644c5c5553e863553c4d1e67a105ba7",
+      "source_bytes": 110809,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/optimum-onnx",
+        "revision": "46533fb66570021f52a39d77112b703762fdaada",
+        "path": "optimum/exporters/onnx/model_configs.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/huggingface--optimum-onnx/optimum/exporters/onnx/model_patcher.py",
+      "source_sha256": "dc91c2c51df97f3e3a4f192c466c626f5c03abe6d05be1f6721cb8eb1882274a",
+      "source_bytes": 66125,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "huggingface/optimum-onnx",
+        "revision": "46533fb66570021f52a39d77112b703762fdaada",
+        "path": "optimum/exporters/onnx/model_patcher.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builder_config.py",
+      "source_sha256": "8537e3af3559b03747b452bece3d085af3ed23e5014695a0b4dd8f11cd6cf3cd",
+      "source_bytes": 83776,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/component-config-inventory.json",
+          "sha256": "82bb4582e25c1977768ed7a36177db819be9a58e98856a28779c2874be31a16f",
+          "bytes": 276
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builder_config.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/base.py",
+      "source_sha256": "15956cd28431d6a439f614c6fa438a383760e7c3d2fa2440281c5c3960b31d63",
+      "source_bytes": 392434,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/builder-base-inventory.json",
+          "sha256": "8e4e25739bb461594e6bcd4847b8fac32b25296ef2779ff76ba009911e31809c",
+          "bytes": 276
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/base.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/qwen.py",
+      "source_sha256": "8df03ec1b87dcaa2720599d86c457d1d3e0a2c290fbfe4f349a9b302e5ea008b",
+      "source_bytes": 5402,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/details-inventory.json",
+          "sha256": "9c9d9709961aa4abbc18ecbf11cf84bd291355c37f019dbfd823e1ca1cea4b5b",
+          "bytes": 2114
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/qwen.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/qwen3_5/__init__.py",
+      "source_sha256": "9edd630af0faa3ae542a680b06e352daff5edd2584a533a6825bcf6091f21ed9",
+      "source_bytes": 402,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/qwen3_5/__init__.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/qwen3_5/model.py",
+      "source_sha256": "6b7c80e8cdd57466b4275d7b46627d0c68ba27588911e27f15f1443f65686478",
+      "source_bytes": 37982,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/qwen3_5/model.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/qwen3_5/mtp.py",
+      "source_sha256": "7bbd1046368d4741b5a7f0884376700ad17a4e079e4a64aa48f3de42d8e88b65",
+      "source_bytes": 5432,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/qwen3_5/mtp.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/microsoft--onnxruntime-genai/src/python/py/models/builders/qwen3_5/text.py",
+      "source_sha256": "c367e703b58193aca17c2b9e3ea9b920b45098a0baf9afc5c1983511e998f14d",
+      "source_bytes": 31737,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/qwen35-details.json",
+          "sha256": "552b26c2af66d1fc5eee7006ee727849d8b451aca7bd0f127ad949dd22fb05ad",
+          "bytes": 6042
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime-genai",
+        "revision": "0f8d01c477f289de9da5e610d701f957f1bf6ca6",
+        "path": "src/python/py/models/builders/qwen3_5/text.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/ort-1.26.0-cpu_contrib_kernels.cc",
+      "source_sha256": "8d6f432a7d8dc9f123bea81f5bb2e7899fda87f83e3e14607211023db215ff79",
+      "source_bytes": 37248,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/cpu-registration-inventory.json",
+          "sha256": "2c6de9dabdfb5e555b3c741504a5cde48a8170953eeaba3a56be3f16b4847e45",
+          "bytes": 593
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime",
+        "revision": "v1.26.0",
+        "path": "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/ort-1.29.0-bert_defs.cc",
+      "source_sha256": "4cf409862292fb3ed7660e34067199ab5215b30d49b3e8f8ec8678711bc8d8bb",
+      "source_bytes": 153387,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/gate-schema-inventory.json",
+          "sha256": "080fe226a76e0f37c3701de2a866a003928f0b66d5e6042042d9b3149310d510",
+          "bytes": 492
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime",
+        "revision": "v1.29.0",
+        "path": "onnxruntime/core/graph/contrib_ops/bert_defs.cc"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/ort-1.29.0-contrib_defs.cc",
+      "source_sha256": "85441fbd74ca613b9b22c7d0915663a3436c2a13b9200e5c8ceb1c68bd0ffcf1",
+      "source_bytes": 256408,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/gate-schema-inventory.json",
+          "sha256": "080fe226a76e0f37c3701de2a866a003928f0b66d5e6042042d9b3149310d510",
+          "bytes": 492
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime",
+        "revision": "v1.29.0",
+        "path": "onnxruntime/core/graph/contrib_ops/contrib_defs.cc"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/ort-1.29.0-cpu_contrib_kernels.cc",
+      "source_sha256": "4d82163c774d15e00f8adc933ec30e46f775aaac2a4613435b81e815584fe603",
+      "source_bytes": 38015,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/cpu-registration-inventory.json",
+          "sha256": "2c6de9dabdfb5e555b3c741504a5cde48a8170953eeaba3a56be3f16b4847e45",
+          "bytes": 593
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime",
+        "revision": "v1.29.0",
+        "path": "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/backend-research/ort-1.30.0-cpu_contrib_kernels.cc",
+      "source_sha256": "0c404c3e8b0b347274847efbf6cf66fb787fe3d9782547a454a7bba45a04e289",
+      "source_bytes": 41445,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/backend-research/ort-1.30.0-cpu_contrib_kernels.source.json",
+          "sha256": "25c1291b778b31a51b31c13c8c0c1717e6d8da7fbab0c246a942b051698f3876",
+          "bytes": 233
+        }
+      ],
+      "upstream": {
+        "repository": "microsoft/onnxruntime",
+        "revision": "v1.30.0",
+        "path": "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/reference-code/jaredpalmer--kev/kev/mlx_model.py",
+      "source_sha256": "49c4a3de3952429e8a4b3945c33b0697a1cd84c41c945709ce6619af2c15842c",
+      "source_bytes": 15050,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/reference-code/jaredpalmer--kev/tree.json",
+          "sha256": "186840033d96ef518119a3297837c7e8167b255358f8cbd98d36c6987e758d5b",
+          "bytes": 34412
+        }
+      ],
+      "upstream": {
+        "repository": "jaredpalmer/kev",
+        "revision": "2074cc44256200bb37540103fa4572901faa10f3",
+        "path": "kev/mlx_model.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/reference-code/jaredpalmer--kev/kev/model.py",
+      "source_sha256": "2ff3b2e67c048e3bc5a0d1a32aafe50804ed315a5564fce06bb4b95697c5271c",
+      "source_bytes": 35153,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/reference-code/jaredpalmer--kev/tree.json",
+          "sha256": "186840033d96ef518119a3297837c7e8167b255358f8cbd98d36c6987e758d5b",
+          "bytes": 34412
+        }
+      ],
+      "upstream": {
+        "repository": "jaredpalmer/kev",
+        "revision": "2074cc44256200bb37540103fa4572901faa10f3",
+        "path": "kev/model.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/src/strands_decider/infer.py",
+      "source_sha256": "08c37cc15e035ac1e680faf7a3045f35cc05bbd2db68ef589efd40229d1dfa34",
+      "source_bytes": 20617,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/compiler-sources.json",
+          "sha256": "9b415d8552ade8793c8452ab14af1ef524629fae85f6fe9552edf113e7bb8120",
+          "bytes": 709
+        }
+      ],
+      "upstream": {
+        "repository": "strands-labs/strands-decider",
+        "revision": "79bf6e7184c166990eec79034667cc0bfd445e12",
+        "path": "src/strands_decider/infer.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/src/strands_decider/modeling.py",
+      "source_sha256": "0cee9f8f8877e161dedec5f1b4ee08b7ad2453ced2549ea3b5729ff376fcdc76",
+      "source_bytes": 28494,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/tree.json",
+          "sha256": "a7449598cea7489c4182536afe165d1b7c479e4b8008fff807a5b1fff4658567",
+          "bytes": 15999
+        }
+      ],
+      "upstream": {
+        "repository": "strands-labs/strands-decider",
+        "revision": "79bf6e7184c166990eec79034667cc0bfd445e12",
+        "path": "src/strands_decider/modeling.py"
+      }
+    },
+    {
+      "source": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/src/strands_decider/prompting.py",
+      "source_sha256": "1f4edc30e0d6ade28cc8473454a14d9c18d023a9604d8520688a413ea704330e",
+      "source_bytes": 11043,
+      "disposition": "upstream_research_input",
+      "reason": "Exact retained publisher SHA-256 or Git blob/size matches pinned upstream source metadata; research input, not AIRK-authored implementation. Source and license evidence remain private; no upstream source copied into AIRK.",
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/reference-code/strands-labs--strands-decider/compiler-sources.json",
+          "sha256": "9b415d8552ade8793c8452ab14af1ef524629fae85f6fe9552edf113e7bb8120",
+          "bytes": 709
+        }
+      ],
+      "upstream": {
+        "repository": "strands-labs/strands-decider",
+        "revision": "79bf6e7184c166990eec79034667cc0bfd445e12",
+        "path": "src/strands_decider/prompting.py"
+      }
+    }
+  ]
+}

@@ -99,11 +99,11 @@ class MandatoryProofControls(unittest.TestCase):
  def test_established_no_site_parent_roster_is_exact(self):
   expected={'reference_owned.py':'2d7a31a64eaba745e32ed83adfbeedb75983ab6f9b5c4cc82714e9371c1895a1','reference_parent_no_site_r2.py':'fe4cc990649d92e041b79cccb3fd7ef1129979a26432b7f02b2d8d28b586ed8d','reference_worker.py':'9c04be28ef06c0a06b8e2cffd4c274348ff141046114cc493d725ce527b694c7'}
   self.assertEqual(n.HELPERS,expected)
-  parent=SimpleNamespace(worker=SimpleNamespace(__file__=HERE/'reference_worker.py'));loaded=[]
-  def load(path,name):loaded.append(Path(path).name);return parent if 'parent' in Path(path).name else object()
+  worker=SimpleNamespace(__file__=n.MAINTAINED_HELPER_ROOT/'reference_worker.py');parent=SimpleNamespace(worker=worker);loaded=[]
+  def load(path,name):loaded.append(Path(path).name);return worker if Path(path).name=='reference_worker.py' else parent if 'parent' in Path(path).name else object()
   with patch.object(n.sys,'path',list(n.sys.path)),patch.object(n,'regular',side_effect=Path),patch.object(n,'digest',side_effect=lambda p:expected[Path(p).name]),patch.object(n,'load',side_effect=load):
    n.helpers({'ownership_helper_root':str(HERE)})
-  self.assertEqual(loaded,['reference_parent_no_site_r2.py','reference_owned.py'])
+  self.assertEqual(loaded,['reference_worker.py','reference_parent_no_site_r2.py','reference_owned.py'])
  def test_wrong_parent_pin_refuses_before_any_load(self):
   with patch.object(n,'regular',side_effect=Path),patch.object(n,'digest',return_value='0'*64),patch.object(n,'load') as loader:
    with self.assertRaisesRegex(ValueError,'ownership primitive'):n.helpers({'ownership_helper_root':str(HERE)})

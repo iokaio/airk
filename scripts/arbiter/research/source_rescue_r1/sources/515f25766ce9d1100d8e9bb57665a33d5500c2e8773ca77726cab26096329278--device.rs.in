@@ -1,0 +1,604 @@
+// SPDX-License-Identifier: Apache-2.0
+//! D08 PRIVATE PROPOSAL. Pure decisions, never native admission or qualification authority.
+use super::*;
+use crate::identity::framed_digest;
+use anyhow::Context;
+
+pub const DEVICE_EXECUTION_SCHEMA: &str = "airk.arbiter.device-execution/1";
+pub const DEVICE_CATALOG_SCHEMA: &str = "airk.arbiter.device-catalog/1";
+pub const DEVICE_CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/4";
+pub const DEVICE_STATUS_SCHEMA: &str = "airk.arbiter.device-status/1";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DevicePolicy {
+    #[default]
+    Auto,
+    Cpu,
+}
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectedModel {
+    Focus,
+    ContextCompact,
+    ContextLarge,
+}
+impl SelectedModel {
+    pub fn model(self) -> ModelChoice {
+        match self {
+            Self::Focus => ModelChoice::FocusQwenReranker06B,
+            Self::ContextCompact => ModelChoice::ContextQwenCompact,
+            Self::ContextLarge => ModelChoice::ContextQwenLarge,
+        }
+    }
+    pub fn stage(self) -> Stage {
+        match self {
+            Self::Focus => Stage::Focus,
+            _ => Stage::Context,
+        }
+    }
+    pub fn from_model(model: ModelChoice) -> Result<Self> {
+        match model {
+            ModelChoice::FocusQwenReranker06B => Ok(Self::Focus),
+            ModelChoice::ContextQwenCompact => Ok(Self::ContextCompact),
+            ModelChoice::ContextQwenLarge => Ok(Self::ContextLarge),
+            _ => anyhow::bail!("historical model cannot acquire a device slot"),
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuBackend {
+    Cuda,
+    DirectMl,
+    CoreMl,
+}
+impl GpuBackend {
+    pub fn runtime(self) -> &'static str {
+        match self {
+            Self::Cuda => "onnxruntime-cuda/1.30.0",
+            Self::DirectMl => "onnxruntime-directml/1.30.0",
+            Self::CoreMl => "onnxruntime-coreml/1.30.0",
+        }
+    }
+    fn priority(self) -> u8 {
+        match self {
+            Self::Cuda => 0,
+            Self::DirectMl => 1,
+            Self::CoreMl => 2,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DevicePrecision {
+    Float32,
+    Float16,
+    Bfloat16,
+    Mixed,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlacementPolicy {
+    StrictGpu,
+    BoundedHybrid { policy: Sha256Digest },
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeviceMemory {
+    Dedicated {
+        measured_peak_bytes: u64,
+        headroom_bytes: u64,
+    },
+    Unified {
+        measured_joint_peak_bytes: u64,
+        headroom_bytes: u64,
+    },
+}
+impl DeviceMemory {
+    pub fn required_bytes(&self) -> Result<u64> {
+        let (peak, headroom) = match self {
+            Self::Dedicated {
+                measured_peak_bytes,
+                headroom_bytes,
+            } => (*measured_peak_bytes, *headroom_bytes),
+            Self::Unified {
+                measured_joint_peak_bytes,
+                headroom_bytes,
+            } => (*measured_joint_peak_bytes, *headroom_bytes),
+        };
+        ensure!(
+            peak > 0 && headroom > 0,
+            "measured device capacity/headroom required"
+        );
+        peak.checked_add(headroom)
+            .context("device capacity overflow")
+    }
+}
+/// GPU-only additive Profile field. None preserves every legacy CPU serialization.
+/// Hashes name compiled, authenticated native policies, not ambient strings or capabilities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceExecution {
+    pub schema: String,
+    pub backend: GpuBackend,
+    pub runtime_build: Sha256Digest,
+    pub compatibility_policy: Sha256Digest,
+    pub provider_options: Sha256Digest,
+    pub math_policy: Sha256Digest,
+    pub precision: DevicePrecision,
+    pub placement: PlacementPolicy,
+    pub graph: Sha256Digest,
+    pub host_fit: CpuFit,
+    pub memory: DeviceMemory,
+}
+impl DeviceExecution {
+    pub fn validate(&self, profile: &Profile) -> Result<()> {
+        ensure!(
+            self.schema == DEVICE_EXECUTION_SCHEMA
+                && profile.runtime == self.backend.runtime()
+                && profile.cpu_fit.is_none()
+                && profile.model.stage().is_some(),
+            "device profile/version/runtime or legacy CPU tier mismatch"
+        );
+        self.host_fit.validate()?;
+        self.memory.required_bytes()?;
+        ensure!(
+            profile
+                .assets
+                .iter()
+                .filter(|asset| asset.role == AssetRole::Model)
+                .all(|asset| asset.sha256 == self.graph),
+            "device graph identity mismatch"
+        );
+        Ok(())
+    }
+    pub fn execution_identity(&self) -> Result<String> {
+        self.host_fit.validate()?;
+        self.memory.required_bytes()?;
+        ensure!(
+            self.schema == DEVICE_EXECUTION_SCHEMA,
+            "unknown device execution schema"
+        );
+        let bytes = serde_json::to_vec(self)?;
+        let digest = framed_digest(b"airk.arbiter.device-execution/1", &[&bytes]);
+        Ok(format!(
+            "{}/device-execution/{digest}",
+            self.backend.runtime()
+        ))
+    }
+}
+/// Exactly three logical model slots; variants do not add selected models.
+/// Each reference resolves only through the authenticated native catalog owner.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VariantReference {
+    pub manifest: Sha256Digest,
+    pub execution_identity: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceCatalog {
+    pub schema: String,
+    pub focus: Vec<VariantReference>,
+    pub context_compact: Vec<VariantReference>,
+    pub context_large: Vec<VariantReference>,
+}
+impl DeviceCatalog {
+    pub fn slot(&self, slot: SelectedModel) -> &[VariantReference] {
+        match slot {
+            SelectedModel::Focus => &self.focus,
+            SelectedModel::ContextCompact => &self.context_compact,
+            SelectedModel::ContextLarge => &self.context_large,
+        }
+    }
+    pub fn validate<'a>(
+        &self,
+        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+    ) -> Result<()> {
+        ensure!(
+            self.schema == DEVICE_CATALOG_SCHEMA,
+            "unknown device catalog schema"
+        );
+        let mut manifests = BTreeSet::new();
+        let mut count = 0usize;
+        for slot in [
+            SelectedModel::Focus,
+            SelectedModel::ContextCompact,
+            SelectedModel::ContextLarge,
+        ] {
+            ensure!(!self.slot(slot).is_empty(), "missing selected model slot");
+            for row in self.slot(slot) {
+                count += 1;
+                ensure!(
+                    count <= 16 && manifests.insert(row.manifest),
+                    "device catalog capacity/duplicate variant"
+                );
+                let profile = resolve(row.manifest).context("unresolved native catalog variant")?;
+                profile.validate()?;
+                ensure!(
+                    profile.manifest == row.manifest
+                        && profile.model == slot.model()
+                        && row.execution_identity == profile.device_execution_identity()?,
+                    "foreign model/execution variant"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceStageConfiguration {
+    pub enabled: bool,
+    pub selected_model: Option<SelectedModel>,
+    pub device_policy: DevicePolicy,
+    pub indexes: Vec<Enrollment>,
+}
+impl DeviceStageConfiguration {
+    pub fn validate(&self, stage: Stage) -> Result<()> {
+        ensure!(
+            self.selected_model
+                .is_none_or(|model| model.stage() == stage),
+            "wrong stage/model slot"
+        );
+        let legacy = StageConfiguration {
+            enabled: false,
+            selected_profile: None,
+            indexes: self.indexes.clone(),
+        };
+        legacy.validate(stage)?;
+        ensure!(
+            !self.enabled || (self.selected_model.is_some() && !self.indexes.is_empty()),
+            "enablement requires model/enrollment"
+        );
+        Ok(())
+    }
+}
+impl DeviceStageConfiguration {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            selected_model: None,
+            device_policy: DevicePolicy::Auto,
+            indexes: Vec::new(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceConfiguration {
+    pub schema: String,
+    pub installation: Sha256Digest,
+    pub catalog: Incarnation,
+    pub revision: u64,
+    pub focus: DeviceStageConfiguration,
+    pub context: DeviceStageConfiguration,
+}
+impl DeviceConfiguration {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == DEVICE_CONFIGURATION_SCHEMA && self.revision > 0,
+            "unknown device configuration"
+        );
+        self.focus.validate(Stage::Focus)?;
+        self.context.validate(Stage::Context)?;
+        let indexes: BTreeSet<_> = self
+            .focus
+            .indexes
+            .iter()
+            .chain(&self.context.indexes)
+            .map(|row| row.index_id)
+            .collect();
+        ensure!(
+            indexes.len() <= MAX_ENROLLMENTS,
+            "device enrollment capacity"
+        );
+        Ok(())
+    }
+}
+impl DeviceConfiguration {
+    /// Explicit migration preserves consent/indexes and forces historical CPU,
+    /// never implicitly opts an existing enabled stage into another device.
+    pub fn migrate_legacy<'a>(
+        legacy: &Configuration,
+        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+    ) -> Result<Self> {
+        legacy.validate()?;
+        let stage =
+            |old: &StageConfiguration, expected: Stage| -> Result<DeviceStageConfiguration> {
+                let selected_model = match old.selected_profile {
+                    None => None,
+                    Some(manifest) => {
+                        let profile =
+                            resolve(manifest).context("legacy selected profile unresolved")?;
+                        profile.validate()?;
+                        ensure!(
+                            profile.manifest == manifest
+                                && profile.device_execution.is_none()
+                                && profile.runtime == RUNTIME,
+                            "legacy profile cannot acquire GPU identity"
+                        );
+                        Some(SelectedModel::from_model(profile.model)?)
+                    }
+                };
+                let value = DeviceStageConfiguration {
+                    enabled: old.enabled,
+                    selected_model,
+                    device_policy: DevicePolicy::Cpu,
+                    indexes: old.indexes.clone(),
+                };
+                value.validate(expected)?;
+                Ok(value)
+            };
+        let value = Self {
+            schema: DEVICE_CONFIGURATION_SCHEMA.into(),
+            installation: legacy.installation,
+            catalog: legacy.catalog,
+            revision: legacy
+                .revision
+                .checked_add(1)
+                .context("configuration revision exhausted")?,
+            focus: stage(&legacy.focus, Stage::Focus)?,
+            context: stage(&legacy.context, Stage::Context)?,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let mut bytes = serde_json::to_vec(self)?;
+        bytes.push(b'\n');
+        ensure!(
+            bytes.len() <= MAX_CONFIGURATION_BYTES,
+            "device configuration byte limit"
+        );
+        Ok(bytes)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionReason {
+    ForcedCpu,
+    NoGpu,
+    Unqualified,
+    TargetUnsupported,
+    RuntimeUnavailable,
+    DriverUnsupported,
+    DeviceUnsupported,
+    GraphUnsupported,
+    ProviderInitializationFailed,
+    AllocationFailed,
+    DeviceMemoryUnknown,
+    DeviceMemoryInsufficient,
+    HostMemoryUnknown,
+    HostMemoryInsufficient,
+    CpuFitInsufficient,
+    CircuitOpen,
+    AuthorityChanged,
+    ObservationStale,
+    DeadlineExpired,
+    SettlementUnknown,
+    NoQualifiedCpu,
+}
+/// available_bytes is an actual native observation after existing real device
+/// usage; subtract ONLY broker reservations not yet represented in that usage.
+/// Unified measured_joint_peak is one shared pool, never host+device summed twice.
+pub fn device_capacity_refusal(
+    requirement: &DeviceMemory,
+    available_bytes: Option<u64>,
+    pending_unbacked_bytes: u64,
+) -> Result<Option<SelectionReason>> {
+    let required = requirement.required_bytes()?;
+    let Some(available) = available_bytes else {
+        return Ok(Some(SelectionReason::DeviceMemoryUnknown));
+    };
+    Ok(
+        if available
+            .checked_sub(pending_unbacked_bytes)
+            .is_some_and(|free| free >= required)
+        {
+            None
+        } else {
+            Some(SelectionReason::DeviceMemoryInsufficient)
+        },
+    )
+}
+/// Actual native observation; pure data is never a reservation/dispatch capability.
+/// No Deserialize: this input comes from the owning native adapter/admission observer.
+#[derive(Clone, Debug)]
+pub struct ObservedCandidate {
+    manifest: Sha256Digest,
+    model: SelectedModel,
+    execution_identity: String,
+    backend: Option<GpuBackend>,
+    adapter_key: String,
+    capability_epoch: u64,
+    rejection: Option<SelectionReason>,
+}
+impl ObservedCandidate {
+    /// Shape/declared qualification validation, NOT final-promoter authentication.
+    /// The production owner resolves only compiled, admitted Profile bytes and
+    /// retains its actual native observation/reservation proof independently.
+    pub fn observe(
+        profile: &Profile,
+        target: &str,
+        adapter_key: String,
+        capability_epoch: u64,
+        native_rejection: Option<SelectionReason>,
+    ) -> Result<Self> {
+        profile.validate()?;
+        let identity = profile.device_execution_identity()?;
+        let qualified = profile.qualification.is_some()
+            && profile
+                .qualified_targets
+                .iter()
+                .any(|row| row.target == target && row.execution_identity == identity);
+        Ok(Self {
+            manifest: profile.manifest,
+            model: SelectedModel::from_model(profile.model)?,
+            execution_identity: identity,
+            backend: profile
+                .device_execution
+                .as_ref()
+                .map(|execution| execution.backend),
+            adapter_key,
+            capability_epoch,
+            rejection: if qualified {
+                native_rejection
+            } else {
+                Some(SelectionReason::Unqualified)
+            },
+        })
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateRejection {
+    pub manifest: Option<Sha256Digest>,
+    pub adapter_key: Option<String>,
+    pub reason: SelectionReason,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedVariant {
+    pub manifest: Sha256Digest,
+    pub execution_identity: String,
+    pub backend: Option<GpuBackend>,
+    pub adapter_key: String,
+    pub capability_epoch: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceSelection {
+    pub schema: String,
+    pub model: SelectedModel,
+    pub policy: DevicePolicy,
+    pub selected: Option<SelectedVariant>,
+    pub reasons: Vec<CandidateRejection>,
+}
+/// Advisory deterministic ordering ONLY. Caller must recheck source/consent,
+/// qualification, actual capacity, epoch and original deadline before native dispatch.
+pub fn select(
+    model: SelectedModel,
+    policy: DevicePolicy,
+    epoch: u64,
+    remaining_us: u64,
+    candidates: &[ObservedCandidate],
+) -> Result<DeviceSelection> {
+    ensure!(candidates.len() <= 16, "device observation capacity");
+    let mut result = DeviceSelection {
+        schema: DEVICE_STATUS_SCHEMA.into(),
+        model,
+        policy,
+        selected: None,
+        reasons: Vec::new(),
+    };
+    if remaining_us == 0 {
+        result.reasons.push(CandidateRejection {
+            manifest: None,
+            adapter_key: None,
+            reason: SelectionReason::DeadlineExpired,
+        });
+        return Ok(result);
+    }
+    let mut seen = BTreeSet::new();
+    for candidate in candidates {
+        ensure!(
+            candidate.model == model
+                && !candidate.execution_identity.is_empty()
+                && candidate.execution_identity.len() <= 4096
+                && candidate.adapter_key.len() <= 256
+                && candidate.capability_epoch > 0
+                && seen.insert((candidate.manifest, candidate.adapter_key.clone())),
+            "foreign/duplicate/unbounded device observation"
+        );
+    }
+    let mut ordered: Vec<_> = candidates.iter().collect();
+    ordered.sort_by_key(|row| {
+        (
+            row.backend.map(|backend| backend.priority()).unwrap_or(3),
+            row.adapter_key.as_str(),
+            row.manifest,
+        )
+    });
+    let gpu_count = candidates
+        .iter()
+        .filter(|row| row.backend.is_some())
+        .count();
+    if policy == DevicePolicy::Cpu {
+        result.reasons.push(CandidateRejection {
+            manifest: None,
+            adapter_key: None,
+            reason: SelectionReason::ForcedCpu,
+        });
+    } else if gpu_count == 0 {
+        result.reasons.push(CandidateRejection {
+            manifest: None,
+            adapter_key: None,
+            reason: SelectionReason::NoGpu,
+        });
+    }
+    for candidate in ordered {
+        if policy == DevicePolicy::Cpu && candidate.backend.is_some() {
+            continue;
+        }
+        let rejection = if candidate.capability_epoch != epoch {
+            Some(SelectionReason::ObservationStale)
+        } else {
+            candidate.rejection
+        };
+        if let Some(reason) = rejection {
+            result.reasons.push(CandidateRejection {
+                manifest: Some(candidate.manifest),
+                adapter_key: Some(candidate.adapter_key.clone()),
+                reason,
+            });
+            continue;
+        }
+        result.selected = Some(SelectedVariant {
+            manifest: candidate.manifest,
+            execution_identity: candidate.execution_identity.clone(),
+            backend: candidate.backend,
+            adapter_key: candidate.adapter_key.clone(),
+            capability_epoch: epoch,
+        });
+        break;
+    }
+    if result.selected.is_none()
+        && candidates
+            .iter()
+            .all(|candidate| candidate.backend.is_some())
+    {
+        result.reasons.push(CandidateRejection {
+            manifest: None,
+            adapter_key: None,
+            reason: SelectionReason::NoQualifiedCpu,
+        });
+    }
+    Ok(result)
+}
+/// No automatic replay after uncertain work. The one original deadline is input,
+/// never created/refreshed here. Real native settlement proof remains owner-held.
+pub fn fallback_permitted(
+    work_started: bool,
+    settlement_observed: bool,
+    authority_current: bool,
+    remaining_us: u64,
+) -> std::result::Result<(), SelectionReason> {
+    if !authority_current {
+        return Err(SelectionReason::AuthorityChanged);
+    }
+    if work_started && !settlement_observed {
+        return Err(SelectionReason::SettlementUnknown);
+    }
+    if remaining_us == 0 {
+        return Err(SelectionReason::DeadlineExpired);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

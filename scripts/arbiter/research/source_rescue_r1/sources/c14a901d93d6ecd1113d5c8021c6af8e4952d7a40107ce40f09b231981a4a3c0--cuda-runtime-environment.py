@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Explicit GPU-only static Cargo handoff; no CPU-validator fallback or GPU activation."""
+from pathlib import Path
+import importlib.util,json,os,subprocess
+STATIC_KEYS={'LIBONNXRUNTIME_NO_PKG_CONFIG','ORT_SKIP_DOWNLOAD','ORT_PREFER_DYNAMIC_LINK','ORT_LIB_LOCATION','ORT_LIB_PROFILE'}
+def _load(name):
+ p=Path(__file__).with_name(name+'.py');s=importlib.util.spec_from_file_location(name.replace('-','_'),p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
+
+def environment(destination,build,aggregate):
+ runtime=_load('cuda-static-runtime')
+ projection=runtime.static_projection(build,aggregate)
+ if projection['target']!=runtime.TARGET:raise ValueError('GPU static environment target differs')
+ return {'LIBONNXRUNTIME_NO_PKG_CONFIG':'1','ORT_SKIP_DOWNLOAD':'1','ORT_PREFER_DYNAMIC_LINK':'0','ORT_LIB_LOCATION':str(Path(destination)/'gpu-aggregate'),'ORT_LIB_PROFILE':'Release'}
+
+def verify_handoff(path,expected_handoff_sha256,repo_root):
+ runtime=_load('cuda-static-runtime');aggregate_owner=_load('cuda-static-aggregate');core=runtime.load(Path(repo_root)/'scripts/provision-static-onnx-runtime.py','cpu_owner_for_gpu_environment')
+ path=core.plain(path,regular=True)
+ if core.digest(path)!=expected_handoff_sha256:raise runtime.GpuProofUnavailable('reviewed GPU environment pin differs')
+ value=core.read_json(path)
+ if set(value)!={'schema','request','build','aggregate','environment','activation_pins_available'} or value['schema']!='airk.cuda-static-environment/1' or value['activation_pins_available'] is not False:raise runtime.GpuProofUnavailable('GPU environment format/activation claim differs')
+ request=value['request']
+ if set(request)!={'destination','producer_file','lock_file','receipt_sha256'}:raise runtime.GpuProofUnavailable('GPU verifier request fields differ')
+ destination=core.plain(request['destination']);build=runtime.verify_build(destination,request['producer_file'],request['lock_file'],request['receipt_sha256'],repo_root);aggregate=aggregate_owner.verify_aggregate(destination,build,core)
+ expected=environment(destination,build,aggregate)
+ if value['build']!=build or value['aggregate']!=aggregate or value['environment']!=expected or set(expected)!=STATIC_KEYS:raise runtime.GpuProofUnavailable('GPU static handoff no longer matches actual build/aggregate')
+ return {'environment':expected,'static_ort':runtime.static_projection(build,aggregate),'gpu_build':build,'gpu_aggregate':aggregate,'activation_pins_available':False}
+
+def handoff_value(destination,producer_file,lock_file,receipt_sha256,build,aggregate):
+ return {'schema':'airk.cuda-static-environment/1','request':{'destination':str(destination),'producer_file':str(producer_file),'lock_file':str(lock_file),'receipt_sha256':receipt_sha256},'build':build,'aggregate':aggregate,'environment':environment(destination,build,aggregate),'activation_pins_available':False}

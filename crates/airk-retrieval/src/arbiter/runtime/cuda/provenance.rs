@@ -87,6 +87,23 @@ pub(super) struct CheckpointHistory {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct IncrementalHistory {
+    pub mode: String,
+    pub parent_producer_sha256: Sha256Digest,
+    pub parent_build_proof_sha256: Sha256Digest,
+    pub parent_aggregate_sha256: Sha256Digest,
+    pub recipe_sha256: Sha256Digest,
+    pub source_before_sha256: Sha256Digest,
+    pub source_after_sha256: Sha256Digest,
+    pub patch_sha256: Sha256Digest,
+    pub new_object_sha256: Sha256Digest,
+    pub new_session_sha256: Sha256Digest,
+    pub aggregate_sha256: Sha256Digest,
+    pub qualification: bool,
+    pub cold_build_qualified: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PublicRuntimeProvenance {
     pub schema: String,
     pub target: String,
@@ -102,6 +119,8 @@ pub(super) struct PublicRuntimeProvenance {
     pub historical_failed_parent: Option<Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_history: Option<CheckpointHistory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incremental_history: Option<IncrementalHistory>,
     pub aggregate: Aggregate,
     pub components: Vec<Component>,
     pub tools: Vec<Tool>,
@@ -207,6 +226,42 @@ fn validate_description(
             && value.historical_failed_parent.is_none_or(nonzero),
         "missing public build/source identity"
     );
+    if let Some(history) = &value.incremental_history {
+        ensure!(
+            history.mode == "incremental-finalgraph"
+                && !history.qualification
+                && !history.cold_build_qualified
+                && history.parent_producer_sha256.to_string()
+                    == "f9fac8eb2fe1a1cb5191118124503782792ca6d3aff14d02326167cd7276b178"
+                && history.parent_aggregate_sha256.to_string()
+                    == "042c970193bf3d2fc7c80f53b055f74130c653d561f7735142fc01b01cebac00"
+                && value.static_core_build != history.parent_producer_sha256
+                && history.aggregate_sha256 == value.aggregate.file.sha256
+                && history.aggregate_sha256 != history.parent_aggregate_sha256
+                && history.source_before_sha256 != history.source_after_sha256
+                && value.checkpoint_history.is_some()
+                && value
+                    .components
+                    .iter()
+                    .any(|component| component.name == "onnxruntime"
+                        && component.source_changes.contains(&history.patch_sha256)
+                        && component
+                            .source_changes
+                            .contains(&history.source_after_sha256))
+                && [
+                    history.parent_build_proof_sha256,
+                    history.recipe_sha256,
+                    history.source_before_sha256,
+                    history.source_after_sha256,
+                    history.patch_sha256,
+                    history.new_object_sha256,
+                    history.new_session_sha256,
+                ]
+                .into_iter()
+                .all(nonzero),
+            "invalid public incremental history"
+        );
+    }
     if let Some(history) = &value.checkpoint_history {
         ensure!(
             history.mode == "checkpointed-warm"

@@ -1,350 +1,59 @@
 # Working on AIRK
 
-## Mandatory execution identity (Codex and Claude Code)
+AIRK is an independent Artifact Indexing and Retrieval Kernel. These standing rules apply to Codex, Claude Code and delegated agents. Keep AGENTS.md and CLAUDE.md byte-identical.
 
-All work must run as the current logged-in human user on the execution host.
-Never use an agent-specific sandbox account, another human account, SYSTEM,
-root, a service account or alternate credentials. An elevated shell is allowed
-only when it retains the same logged-in user's identity.
+## Execution identity
 
-- Before the first shell or filesystem operation in a session, select the
-  execution mode that runs as the logged-in user. Verify the effective account
-  and stable identity (Windows SID or Unix UID) using a read-only command through
-  that mode, and compare it with the host's logged-in human account. A home
-  directory, environment variable, Git author or repository owner alone is not
-  identity proof. Never use the default sandbox account even for diagnostics.
-- On this Windows host, use the verified logged-in-user execution path
-  (Codex: require_escalated when the default shell uses a sandbox identity).
-  Reuse existing authorization; do not change sandbox configuration or grant
-  another account access as a workaround. Claude Code must likewise verify its
-  shell identity before working.
-- Apply the rule to every file and folder creation or mutation, including
-  direct file-edit tools, shell redirection, temporary files, caches, virtual
-  environments, downloads, generated fixtures, Cargo/npm/Python outputs, Git
-  operations, receipts, installer tests and artifacts. Use only tools whose
-  execution identity has been established; a verified shell does not establish
-  the identity of a separate tool process.
-- On Windows, also verify the token's default file-owner SID
-  (`WindowsIdentity.Owner`) equals the verified human user's SID before any
-  mutation. A matching effective user alone is insufficient. Check every
-  intended output parent and its inherited access policy before writing; refuse
-  foreign-owned or inaccessible output parents. Audit newly created files for
-  that same owner before consuming, staging or claiming a pass. Unverified
-  direct-edit tools are unavailable for writes. All child processes retain the
-  verified user and default owner; never set a different owner on new files.
-- Child processes, background jobs, delegated agents, build/test runners,
-  installers and services started for tests must retain that identity. Give
-  delegated agents this rule explicitly. Never launch a process under another
-  account or use a system-wide service installation to bypass it.
-- Before a remote batch on Mac Neo, verify the SSH execution identity against
-  that host's logged-in human user. Do not assume the Windows username applies
-  remotely. Never use sudo, su or another SSH account to create outputs.
-- Keep output paths in the authorized workspace or the verified user's own
-  approved temporary/cache locations. Check resolved paths and the effective
-  output-directory access policy before writing. Never direct work into another
-  account's profile or agent-specific sandbox directories.
-- If the identity is wrong, unknown or cannot be preserved by a tool or child
-  process, stop that operation before it creates files. Use an already
-  authorized same-user execution path when available; otherwise report the
-  precise blocker and continue independent compliant work. Do not fall back to
-  the sandbox account, change ACLs/ownership, add global Git trust exceptions or
-  delete/recreate foreign-owned artifacts to obtain a pass.
-- Existing foreign-owned files are not permission to adopt or overwrite them.
-  Preserve them and report blocked inputs. Record verified identities and any
-  unavailable same-user operations in the execution ledger.
-
-These requirements apply equally to both agents and every campaign. Keep this
-section and the rest of AGENTS.md and CLAUDE.md byte-identical.
-
-AIRK is an independent Artifact Indexing and Retrieval Kernel. This file holds the standing rules for agents. Campaign-specific state lives in "Current work" at the end and in the documents it names. Keep AGENTS.md and CLAUDE.md byte-identical.
-
-Before changing behavior, read the affected source, its tests and the owning component's `CONTRACT.md`. Consult README.md, CONTRIBUTING.md and docs/architecture.md when relevant. Do not preload manuals or dated history.
-
-## Repository map
-
-| Path | What it owns | Contract |
-|---|---|---|
-| `crates/airk-core/` | Shared native types and read/service contracts | `src/read_limits/CONTRACT.md`, `src/service_records/CONTRACT.md`, `src/install_record/CONTRACT.md` |
-| `crates/airk-process/`, `crates/airk-host/` | Native processes, platform adapters, install files/layout and checkpoint fences | Host `src/{native_command,install_files,install_layout,checkpoint_fence}/CONTRACT.md` |
-| `crates/airk-ingest/`, `crates/airk-store/`, `crates/airk-retrieval/` | Extraction, persisted indexes and retrieval/inference primitives | Store `src/store_fs/CONTRACT.md`; otherwise owning source/tests |
-| `crates/airk-kernel/` | Publication, query execution, budgets and Workbench plans | Owning source/tests and `docs/architecture.md` |
-| `crates/airk-mcp/` | Canonical evidence handlers, MCP schemas and SDK transport | `docs/read-interface-parity.md`, native schemas/tests |
-| `crates/airk-ipc/` | Same-user transport, frames and I1 control protocol | `CONTRACT.md` |
-| `crates/airkctl/` | CLI, session and agent-config writing | `src/contract/CONTRACT.md` (I2) |
-| `crates/airk-endpoint/`, `crates/airk-https/` | Endpoint contracts, HTTPS gateway and Admin handlers | Endpoint `src/admin_contract/CONTRACT.md`; HTTPS `src/admin_plane/CONTRACT.md` (I3) |
-| `crates/airk-catalog-control/`, `crates/airk-frontend/` | Catalog mutations and service-side client/read adapters | Owning source/tests; I1/I2/I3 where crossed |
-| `crates/airk-inference/`, `crates/airk-supervisor/` | Inference lifetime and in-process workers | Owning source/tests and `docs/process-model.md` |
-| `crates/airk-installer/`, `crates/airk-service/`, `crates/airk-cli/` | Installation, resident service/setup and thin `airk` executable | Service `src/setup_role/CONTRACT.md`; Core install-record contract |
-| `packages/vscode/` | VS Code host, Explorer and Workbench | I2 plus `docs/split/contracts.md` |
-| `packages/admin/` | Browser/Admin presentation and shared UI workflows | I3 plus `docs/split/contracts.md` |
-| `scripts/`, `.github/workflows/` | Checks, packaging, installers and release workflows | `CONTRIBUTING.md`, `docs/ci-and-builds.md`, script tests |
-| `temp/`, `.airk/` and private fixture/state subpaths under `artifacts/` (listed in Current work) | Local scratch and private/index state. Never staged, packaged or published. | none |
-
-Contract paths in the table are relative to their named crate. Dependency direction: clients/transports call owning service/kernel APIs; kernel uses ingest/store/retrieval, which use Core contracts. Core and process foundations have no AIRK dependencies. Exact edges live in Cargo manifests and `scripts/dev/boundary-exceptions.json`; architectural rationale is in docs/architecture.md.
-
-## Commands
-
-Run from the repository root with pinned toolchains and provisioned inputs. Select the affected crate/features/tests; these commands are a menu, not a mandatory full run for every edit.
-
-| Purpose | Command |
-|---|---|
-| Format / verify | `cargo fmt --all`; `cargo fmt --all -- --check` |
-| Scoped Rust check (Clippy) | `python scripts/dev-check.py -p <crate>` plus needed features/targets |
-| Scoped tests | `cargo nextest run --profile ci -p <crate> --locked --timings -E '<test expression>'` (add required features/target directory) |
-| Integration preflight | `python scripts/check-service-clients.py --runtime-dir <matched-debug-pair-dir> --files 16 --model --report <receipt.json>` |
-| Doctests | `cargo test --doc --workspace --locked --timings` |
-| Extension type check / build | `npm run compile --prefix packages/vscode`; tests: `npm test --prefix packages/vscode` |
-| Admin build / verify / tests | `npm run build --prefix packages/admin`; `npm run check --prefix packages/admin`; `npm test --prefix packages/admin` |
-| Read-surface parity | Use the [per-surface selections](docs/read-interface-parity.md#current-per-surface-selections) for CLI/session, MCP, Admin and Workbench |
-| Final workspace gate | `cargo clippy --workspace --all-targets --all-features --locked --timings -- -D warnings`, then `cargo test --workspace --all-features --locked --timings` |
-| Package tested native pair | `python scripts/package-native.py --target <native-target> --runtime-dir <tested-pair-dir> --output artifacts/<fresh-output>` |
-| Package compiled universal VSIX | `python scripts/package-extension.py --channel stable --output artifacts/<fresh-output>` |
-| Repository / whitespace checks | `pwsh -NoProfile -File scripts/check-repo.ps1`; `git diff --check` |
-
-Nextest is pinned to `0.9.148`; the `ci` profile disables retries and excludes long campaigns by default. Final qualification restores excluded campaigns with `--ignore-default-filter` when using Nextest and runs doctests separately.
-
-Build the matched debug pair with `python scripts/build-service-runtime.py --destination <matched-debug-pair-dir> --profile debug` after provisioning model/static ORT inputs and sealing Admin assets. See [required qualification](CONTRIBUTING.md#required-qualification) and [split build order](docs/ci-and-builds.md). The builder stages matching `airk`/`airkctl` images and metadata; do not mix binaries from separate builds. Packaging consumes tested artifacts; full local build wrappers are in CONTRIBUTING.md.
-
-Do not run `cargo check` before an equivalent Clippy run; it compiles the same code twice.
-
-## Definition of done
-
-Select checks by changed behavior and the claim being made, using the owning contract, actual callers and active plan. Confirm selectors/features against live source. Combine applicable rows; broaden only for changed dependencies, unexplained failures or uncovered acceptance criteria. This is a selection aid, not an approval gate.
-
-| Change | Checks | What it proves |
-|---|---|---|
-| Prose or agent instructions | Relevant content/links, repository check and whitespace; repository check enforces AGENTS/CLAUDE hash equality | Documentation consistency, not runtime behavior |
-| Rust in one crate | Format, scoped dev-check and focused regressions, including refusal/recovery; report selected count | Selected crate behavior in the tested configuration |
-| Platform-only Rust | Scoped Clippy first on that platform, then affected regressions | Changed platform path only |
-| Component interface/state/invariants/lock order/test commands | Applicable checks plus owning CONTRACT.md update | Contract and implementation remain aligned |
-| Shared native contract | Reviewed contract and fixtures landed before consumers; affected consumer checks | Agreed shape/semantics and exercised consumers |
-| Structural move | Exact bytes for digested/persisted formats, parsed equality elsewhere; unchanged test identities/assertions; rerunnable script for large moves; affected embedded/package checks | Preserved behavior at measured boundaries |
-| CLI/session, Admin, Workbench or MCP reads | [Per-surface selections](docs/read-interface-parity.md#current-per-surface-selections), full-result/input comparisons through canonical handlers and affected real transports; document inapplicable operations | Equivalent exercised inputs/results; mocks alone do not qualify transport parity |
-| Frontend callback/view | Typecheck, affected behavior tests, regenerated asset verification; embedded/package consumer checks when qualifying an artifact | UI logic; artifact checks additionally cover shipped bytes |
-| Harness/script | Focused script tests and affected consumers; no unrelated native rebuild | Harness behavior, not fresh native qualification |
-| Installer, persistence or process ownership | Cheap failure/recovery regressions, then affected real process/platform/artifact checks on reviewed inputs | Ownership/recovery at the exercised boundary |
-| Release or platform outcome | Final workspace gate, doctests, runtime/package checks and active plan's qualification campaigns | Only the qualified platforms/artifacts; scoped passes do not replace final gates |
+- Before the first shell or filesystem operation, select a same-human execution mode and use a read-only command to verify the effective account and stable SID/UID against the host's logged-in human. A home directory, environment variable, Git author or repository owner is not identity proof. Never use an agent sandbox account, another human, SYSTEM, root, a service account or alternate credentials, even for diagnostics. Elevation is allowed only as that same human.
+- On Windows, use the verified human execution path (`require_escalated` when the default shell uses a sandbox identity). Reuse authorization; do not change sandbox configuration or grant another account access. Before any mutation, also verify `WindowsIdentity.Owner` equals the human SID.
+- Every filesystem operation and child process must retain that identity and default owner, including edits, temporary files, caches, downloads, fixtures, builds, tests, Git, installers, jobs and services. Verify each tool's execution identity separately; a verified shell does not establish a separate edit tool's identity. Unverified direct-edit tools are unavailable for writes. Do not use a system-wide service or set a different file owner to bypass these rules.
+- Before writing, check resolved output paths, every intended output parent and inherited access policy. Use only the authorized workspace or the verified human's approved temporary/cache locations. Refuse foreign-owned or inaccessible parents; audit new outputs for the human owner before consuming, staging or claiming a pass. Existing foreign-owned files do not authorize adoption or overwrite.
+- Use the [checked Windows execution procedure](CONTRIBUTING.md#checked-windows-execution): dot-source the guard through the verified human shell, check parents before writes and created outputs afterward, and enumerate child/cache outputs. The guard is a read-only metadata preflight, not atomic confinement.
+- Before every Mac Neo batch, compare the SSH UID with that host's logged-in human; do not assume the Windows identity applies. Never use `sudo`, `su` or another SSH account for outputs.
+- If identity is wrong, unknown or cannot be preserved, stop that operation before creating files; use an already-authorized same-user path or report the precise blocker and continue compliant independent work. Never work around it with ACL/ownership changes, global Git trust exceptions, another profile, or deletion/recreation of foreign artifacts. Record verified identities and unavailable operations in the ledger. Only explicit, scoped user exceptions in the current assignment may modify these restrictions.
 
 ## Authority
 
-Do without asking:
+- Complete the authorized outcome across approved milestones without repeated permission requests. Routine implementation, diagnosis, regression, documentation and validation choices are autonomous; failures and handoffs are not approval gates. Continue independent work when a dependency is blocked.
+- Ask for unresolved user-owned decisions, material scope expansion, a new crate unless already approved with extraction criteria met, or changes to wire shapes, digest inputs or persisted formats without a recorded contract decision. Obtain any required human consent.
+- Commit or push reviewed milestones only within the current assignment's authorized branch/remote scope. Publication, deployment, merging, opening a PR and messaging others each require explicit authorization.
+- Preserve unfinished and unrelated work; exclude unrelated improvements. Report facts, correct problems and continue. Do not apologize, invent approvals or claim unobserved results.
 
-- Complete the authorized outcome end to end, across approved component and milestone boundaries. Progress updates and agent handoffs are not approval gates.
-- Make routine implementation, diagnostic, regression, documentation and validation choices.
-- Continue in-scope corrections after failures. A failed-run count does not require reapproval.
-- Commit and push reviewed milestones within the branch/remote scope recorded in Current work.
+## Source and architecture
 
-Ask first:
+- **All authored code belongs in maintained, nonignored repository folders from its first draft**, including experimental implementation, analysis, data preparation, training, fine-tuning, evaluation, export, collectors, build tools and reproduction scripts in any language. Commit it within the authorized scope, with an appropriate folder README explaining purpose, inputs, outputs and use. Never keep the sole implementation in `artifacts/`, `temp/`, caches or other ignored folders.
+- Ignored folders hold private inputs, training examples, weights, checkpoints, caches, generated outputs and receipts. Generated source copies for isolated builds are allowed only with a maintained source owner and recorded provenance; they are not independent implementation owners. Do not commit training data or weights distributed through releases.
+- Never stage, package or publish `temp/`, `.airk/`, or the assignment's private artifact/state roots, fixtures, credentials, indexed source copies or live state. Only verified distributable payloads may be published from separate package output directories; package outputs are not automatically private state. Preserve ignore patterns, SPDX headers and dependency notices.
+- Preserve collection/root isolation, indexed revisions, original document locations, budgets, failure reporting and source read-only behavior. Do not add unapproved cloud providers, external databases, sidecars or agent orchestration. Munarium, VCP and `temp/` are inspiration; do not copy their implementation. Never alter identities or weaken checks to obtain a pass.
+- Before changing behavior, read the affected source, tests and owning `CONTRACT.md`. Use the [component map](docs/architecture/airk-architecture.md#component-contract-map) to locate ownership; consult README, CONTRIBUTING and architecture when relevant. Do not preload manuals or dated history.
+- Clients/transports call service/kernel APIs; kernel uses ingest/store/retrieval, which use Core contracts. Core and process foundations have no AIRK dependencies. Exact edges are in Cargo manifests and `scripts/dev/boundary-exceptions.json`.
+- Shared native contracts have one Rust owner. Extend it through the approved schema-to-TypeScript generation pilot and Rust-emitted semantic cases; do not handwrite TypeScript/Python mirrors. Existing `airk-state/1` formats require retained-fixture schema-identity proof or an approved new state contract before changing.
+- Separate mechanical restructuring from behavior changes. Add modules inside the owning crate and untangle there before extracting; keep items private or `pub(crate)` unless externally needed. Do not add Rust `#[path]` mounts except thin platform switches, `include!` of Rust source, or unreachable source files.
+- Keep exhaustive per-plane dispatch. Registries may consolidate catalogs with one handler, authorization rule and conformance applicability per operation. Use owning hooks rather than feature-specific branches in generic indexing, worker or MCP paths.
+- Delete code only with evidence: it is uncompiled, has no caller after a clean compile and Clippy, or a reviewed compatibility row identifies a tested surviving owner. A legacy name alone is insufficient; predecessor discovery, source selection, shutdown and resumable cleanup may remain live duties. Line counts and cosmetic splitting do not establish completion.
+- CLI/session, Admin, Workbench and MCP reads must use one canonical implementation. Preserve all inputs and fields across views, copies and exports, including provenance, readiness, coverage, continuations and error/retry details. Disclose truncation/subsets. Compare full equivalent inputs/results, normalizing only documented transport identities/timing, and exercise real reshaping transports; renderer mocks alone do not prove parity.
 
-- A genuinely unresolved user-owned decision, or a material scope expansion.
-- A new crate, unless the active plan already approves it and its extraction criteria are met.
-- A change to wire shapes, digest inputs or persisted formats without a recorded contract decision.
-- Anything requiring human consent.
+## Working procedure
 
-Never without explicit authorization for that action: publish, deploy, merge, open a PR, or message other people.
+1. Read the current assignment before campaign work. Once per session, discover AIRK MCP tools and call status to confirm binding. If absent/failing, report briefly and use local tools; do not repeatedly retry or change configuration. Inspect `.codex/config.toml` and `.mcp.json` only to diagnose access. Prefer scoped AIRK navigation, retain revision identity and verify live bytes; use `rg` for live/unindexed content and direct tools for edits, builds, tests and Git.
+2. Start with the cheapest useful diagnostic; scoped tests, type checks and compiler diagnostics need no prior full investigation or ledger entry. Trace defects through sibling callers and ownership, persistence, concurrency, recovery and platform boundaries. Keep a focused reproduction, fix the known failure class and add a cheap diagnostic seam when needed.
+3. Delegate independent investigation, implementation, review and tests when useful. Give agents explicit same-human identity rules, file ownership and acceptance criteria. The primary agent may reassign within scope and reviews the combined result independently of implementers. Working alone, label review as self-review. Separately required security/contract reviews still apply.
+4. Assign one Cargo owner per host/target; never share a target concurrently, and verify compiler descendants have exited before handoff. Separate Windows/Mac targets may build concurrently. Reuse warm Windows checkout/isolated targets; no routine `cargo clean` or replacement. Use pinned toolchains, provisioned inputs, Nextest profiles and integration preflights. Keep Cargo `--timings`; development incremental defaults are on for Windows, off elsewhere, without changing release/CI policy.
+5. Use PowerShell quoting and repository-relative paths on Windows; use the assignment's POSIX shell for Mac Neo. Batch Mac checks over existing SSH, retain evidence outside the target and clean that target after every batch, including failures, because disk is limited.
+6. Review combined changes before expensive builds, installed journeys, qualification or corrective pushes. Freeze consumed inputs and retain receipts. Expensive runs confirm reviewed code; they are not the debugging loop. Stop a failing batch and collect diagnostics. After repeated failure, revise the diagnosis and provide cheap regression evidence before another expensive attempt. Never retry unchanged failed inputs until green, relax limits/assertions/retries or manufacture cleanup evidence.
 
-While one dependency is blocked, continue independent work. Keep unrelated improvements out of the patch. Preserve unfinished and unrelated work in the tree.
+## Validation and completion
 
-Report facts, correct problems and continue. Do not apologize, invent approvals or claim results you did not observe.
+- Before selecting checks, read the applicable [validation matrix](CONTRIBUTING.md#agent-validation-matrix) and [command reference](CONTRIBUTING.md#agent-command-reference). Those requirements remain mandatory for the matching change/claim; combine rows and confirm selectors/features against live source. Broaden only for changed dependencies, unexplained failures or uncovered acceptance criteria.
+- Batch compatible regressions and recheck affected consumers only. Reuse unchanged artifacts and passed evidence under their original identities. Report filtered test counts; zero selected is a failure. Do not run `cargo check` before equivalent Clippy.
+- Test expectations must be independent of the code under test; never generate expected operation sets from implementation catalogs. Inject clocks/observers for portable decision tests; wait on events under deadlines, never fixed sleeps. Do not hide flakes with retries or relaxed limits; quarantine requires owner, reason and expiry. Keep assertion-only tests outside production modules where practical.
+- Record substantive outcomes, decisions, blockers, validation scope/results and expensive-run receipts in the existing ledger. Receipts retain exact commands, source/artifact identities and timings; Cargo records also include scope, target directory, incremental setting and elapsed time. Routine edits need no separate plan/checkpoint.
+- Distinguish findings, reproductions, hypotheses, passes and unavailable/skipped checks. State evidence limits: local success is not cross-platform qualification, compilation is not runtime qualification, and packaging produces a candidate. Release completion requires the authorized workflow and verified published outputs.
+- Update affected documentation and identify dated history. Before a commit/push/PR cycle, check README, documentation index, release notes and Marketplace/VSIX text against current version/changes; edit only what is wrong. Synchronize native/extension versions and lockfiles, honor an approved/completed bump once per PR, and remind the user about the patch/build increment before a feature/fix PR if unhandled.
+- Commit with the authorized human's configured identity and `git commit -s`; verify the DCO `Signed-off-by` trailer. No agent signatures or invented approvals. Run repository and whitespace checks; AGENTS/CLAUDE equality is required.
 
-## Product invariants
+## Current assignment
 
-- Preserve collection/root isolation, indexed revision identity, original document locations, budgets, failure reporting and source read-only behavior.
-- Never stage, package or publish `temp/`, `.airk/` and private fixture/state subpaths under `artifacts/` (listed in Current work). Package outputs under `artifacts/` are not automatically private state, but only verified distributable payloads may be published; never include fixtures, credentials, indexed source copies or live state.
-- Do not add unapproved cloud providers, external databases, sidecars or agent orchestration.
-- Munarium, VCP and `temp/` are inspiration. Do not copy their implementation.
-- Preserve unrelated user work, ignore patterns, source SPDX headers and dependency license notices.
-- Never alter identities or weaken a check to obtain a pass.
+Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/arbiter-final`, local commits only; no push, PR, merge, publication or deployment authorization.
 
-### Read-surface parity
-
-airkctl CLI/session, Admin, Workbench and MCP reads go through one canonical implementation and must return equivalent results.
-
-- Preserve all supported inputs and result fields across commands, structured views, copies and exports. This includes provenance, readiness, coverage, continuations and error/retry details.
-- Disclose truncation and selected subsets.
-- Regressions compare full equivalent results and input catalogs, normalizing only documented transport identities and timing.
-- Exercise native handlers and the real transports wherever they reshape results. Renderer mocks alone do not establish parity.
-
-## Contracts and structure
-
-- Shared native contracts have one owner, in Rust. Extend the Rust owner and use the approved generation pilot and Rust-emitted semantic cases. Do not add handwritten TypeScript or Python mirrors; they drift.
-- Existing `airk-state/1` formats need retained-fixture schema-identity proof, or an approved new state contract, before they change.
-- Keep behavior changes and mechanical restructuring in separate, distinguishable steps so each can be reviewed for what it is.
-- Add modules inside the owning crate. Untangle inside the crate before extracting. Keep new items private or `pub(crate)` unless an external caller needs them.
-- Do not add Rust `#[path]` mounts (thin platform switches excepted), `include!` of Rust source, or unreachable source files.
-- Keep exhaustive per-plane dispatch. Registries may consolidate duplicated catalogs, with one handler, one authorization rule and one conformance applicability per operation. Use owning hooks, not feature-specific branches, in generic indexing, worker or MCP paths.
-- Delete code only with evidence: it is uncompiled, it has no caller after a clean compile and Clippy, or a reviewed compatibility row names a tested surviving owner. A legacy-looking name is not evidence. Predecessor discovery, source selection, shutdown proof and resumable cleanup may still be live duties.
-- Test expectations must be independent of the code under test. Do not generate expected operation sets from implementation catalogs; such a test cannot fail when the catalog is wrong.
-- Line counts and cosmetic splitting are not completion criteria.
-
-## Validation
-
-Cheap first:
-
-- Start with the cheapest useful diagnostic. Scoped tests, type checks and compiler diagnostics may guide investigation without a full investigation or ledger entry first.
-- Batch related regressions and compatible test configurations.
-- A filtered run must report its selected count. Zero selected is a failure.
-- Recheck only affected consumers during iteration. Reuse unchanged artifacts and passed evidence under their original identities.
-
-Behavior defects:
-
-- Trace the affected flow and its sibling callers. Keep a focused reproduction. Fix the whole known failure class, not the one instance.
-- Review the ownership, persistence, concurrency, recovery and platform boundaries the change touches.
-- Add a cheap seam when an expensive failure cannot otherwise be diagnosed locally.
-
-Expensive runs (builds, installed journeys, qualification) confirm reviewed code. They are not the debugging loop.
-
-- Review the combined change before an expensive run or corrective push. With delegated work, the primary agent reviews independently of the implementers. Working alone, do an explicit self-review and do not call it independent. Separately required security or contract reviews still apply.
-- Freeze consumed inputs for expensive runs; retain validation evidence as specified in Task ledger and reporting.
-- On failure, stop the batch and collect its diagnostics before correcting.
-- After a repeated failure, produce a revised diagnosis and cheap regression evidence before the next expensive attempt.
-- Never retry unchanged failed inputs until green, weaken assertions, widen limits or retries, or manufacture cleanup evidence.
-
-Tests:
-
-- Keep decision logic testable across hosts. Inject clocks and observers for deadlines and state transitions.
-- No fixed sleeps. Wait on observed events under a deadline.
-- Do not hide flakes with retries or relaxed limits. A quarantine needs an owner, a reason and an expiry.
-- Keep assertion-only tests outside production modules where practical, to avoid release recompilation.
-
-## Build and host
-
-Primary development host: Windows with PowerShell (`pwsh`); commands use PowerShell quoting and repository-relative paths except Mac Neo commands, whose shell is specified in Current work.
-
-- One Cargo owner per host and target directory at a time. Windows and Mac Neo may build concurrently on their separate targets. Verify compiler descendants have exited before handing off a target; never share a target between concurrent owners.
-- Reuse the persistent checkout target or the existing isolated target (see Current work). Do not routinely `cargo clean` or replace warm targets on Windows; rebuilding them is slow.
-- Development incremental defaults: on for Windows, off elsewhere. Do not change release or CI policy to match local iteration.
-- Keep Cargo `--timings` for necessary builds and Clippy.
-- Reuse the pinned Nextest profiles and integration preflights from CONTRIBUTING.md.
-- Mac checks: see Current work for the host. Batch them over the existing SSH setup. Disk there is limited, so copy evidence outside the target and `cargo clean` after every batch, including failed ones.
-
-## Parallel agents
-
-Use them when independent investigation, implementation or review helps. Give each clear file ownership and acceptance criteria. The primary agent reviews the combined change and may reassign work within the approved scope. Parallel agents edit, investigate and run independent tests. Only the assigned Cargo owner for each host/target builds; separate Windows and Mac Neo owners may build concurrently.
-
-## Navigation
-
-- Once per session, discover the AIRK MCP tools and call status to confirm project binding. If they are absent or failing, say so briefly and use local tools. Do not retry repeatedly or change configuration to make discovery succeed. Inspect `.codex/config.toml` and `.mcp.json` only when diagnosing access.
-- Prefer AIRK tools for scoped indexed navigation. The index may be stale: keep the revision identity and verify the live file before editing.
-- Use `rg` for live verification and anything the index does not cover. Editing, builds, tests and Git use direct tools.
-
-## Task ledger and reporting
-
-Record substantive work in the existing ledger (see Current work): outcome, decisions, blockers, validation scope/results and expensive-run receipt paths. Receipts retain exact commands, source/artifact identities and timings; Cargo records also include scope, target directory, incremental setting and elapsed time. Keep entries proportional; routine edits need no separate plan or checkpoint.
-
-At handoff distinguish findings, reproductions, hypotheses, passes and skipped/unavailable checks. State what the evidence proves and what remains unknown. Local success does not establish cross-platform qualification or unimplemented capabilities. Packaging produces a candidate; release completion requires the authorized release workflow and verified published outputs.
-
-## Documentation, versions and commits
-
-- Update documentation affected by implemented behavior. Keep dated historical records identifiable as such.
-- Before a commit/push/PR cycle, check README, the documentation index, release notes and Marketplace/VSIX text against the current version and change. Edit only what is wrong.
-- Keep native and extension versions and lockfiles synchronized. Honor an approved or completed bump once per PR. Before a feature or fix PR, remind the user about the patch/build increment if it has not been handled.
-- Every commit uses the authorized human contributor's configured identity and `git commit -s`. Verify the DCO `Signed-off-by` trailer. Do not add agent signatures or invented approvals.
-
-## Glossary
-
-- **Receipt**: A retained result/evidence record tied to request, source or artifact identity; native operation receipts and local validation-run receipts have different owners.
-- **Qualification**: Evidence from the required runtime, transport, package and platform checks on identified inputs; compilation alone is insufficient.
-- **Plane**: A protocol/authority boundary, such as evidence reads, local control or browser Admin management.
-- **Fence order**: The owning contract's order of locks and revision/authority checks that prevents stale or unauthorized publication or delivery.
-- **Arbiter**: The approved optional local evidence-gathering/answer capability inside the existing service, bounded by the active plan.
-- **P10**: The Arbiter package in the advanced-split plan. Historical build receipts also used this name for a Cargo target; call that directory the **isolated target** in new records.
-- **Mac Neo**: The existing macOS arm64 SSH qualification/signing host; location and ignored connection configuration are in Current work.
-- **I1**: Same-user local IPC control request/frame contract owned by airk-ipc.
-- **I2**: airkctl caller contract: commands, exit/error/version documents and session protocol.
-- **I3**: Browser Admin HTTP envelope, authentication/admission and operation contract.
-- **Generation pilot**: The approved Rust schema-to-TypeScript generation path for I2/I3; semantic rules remain tested against Rust-emitted cases.
-- **Compatibility row**: A reviewed compatibility-inventory entry identifying retained behavior, its surviving owner and preservation evidence.
-- **Installed journey**: An end-to-end test against an installed product, including its actual host/process and cleanup behavior.
-- **Matched debug pair**: airk and airkctl built/staged together by the runtime builder with matching source, version, contract and artifact metadata.
-- **Isolated target**: The persistent Cargo build/cache directory assigned to this campaign; its path is in Current work.
-
-## Current work
-
-Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:42Z).
-
-| Need | Source |
-|---|---|
-| Ordered implementation plan and D01–D08 user decisions | docs/arbiter/final-plan.md |
-| Known issues and historical candidate evidence | docs/arbiter/knownissues.md |
-| Weight-experiment rationale | docs/arbiter/weights-v2-plan.md |
-| Progress ledger | docs/simplify/one-process-ledger.md |
-| Existing split decisions and contracts | docs/split/split-plan.md, docs/split/contracts.md |
-| Standing simplification decisions | docs/simplify-plan.md |
-
-- Branch: feat/arbiter-final, created from feat/advanced-split. The user authorized
-  this branch and an opening DCO-signed commit containing the pending files and
-  agent-instruction cleanup. Commit locally; no push to this new branch, PR,
-  merge, publication or deployment is authorized.
-- Current task: implement all steps of docs/arbiter/final-plan.md, authorized
-  by the user on 15 November 2026. Execution T0 is recorded in the ledger;
-  the updated 72-hour total deadline applies across sessions: 19 November 2026
-  at 05:29:42 UTC (18 November, 10:29:42 p.m. America/Denver), with T0 unchanged.
-- The final plan supersedes the old advanced-split execution deadline and
-  campaign ordering. Preserve prior ledger entries as historical evidence.
-- For this authorized implementation, the user superseded the original 24-hour
-  target/48-hour cap, then36 hours, with72 hours total from recorded T0. Use
-  only this Windows machine and Mac Neo. Deliver a Windows candidate first, then attempt all applicable
-  supported-platform gates and report genuine blockers. No paid/cloud compute
-  or cloud teachers.
-- D08 now includes FP32 GPU execution first, then FP16 with efficient attention,
-  both available for1.9.0 with automatic admitted CPU fallback. Keep each variant's
-  identity and qualification separate; no relaxed gates or silent model switch.
-- Preserve the selected bundled MiniLM plus independent optional Focus
-  (Qwen3-Reranker-0.6B) and Context Compact/Large (Qwen3-1.7B/4B). Terminal
-  classes stay unavailable until their own evidence passes. Use suitable
-  existing human-reviewed labels; missing labels block only dependent
-  acceptance/promotion, while independent work continues.
-- The approved qualification target is a new default of 8192 shared input tokens
-  and 120 seconds, including all client timeouts, with a measured p95 limit of
-  120 seconds. Report actual component and end-to-end latency. Historical
-  2048-token/30-second evidence remains historical; Focus's graph remains
-  512 tokens per pair unless separately re-exported and qualified.
-- Automatic agent-config edits require a reviewed safe policy for the entire
-  file and recovery path; otherwise provide the complete canonical manual
-  entry. No account, ACL or retention-policy workaround.
-- Current-version index regeneration is authorized when upgrade cannot preserve
-  the current contract. Preserve source files and unrelated user work. DiskANN
-  remains the selected disk-backed vector engine. The superseded installed-editor
-  repair does not resume.
-- Resume from live source, the final plan, ledger and exact receipts. Keep
-  contract-first ordering, explicit parallel file ownership, one Cargo
-  owner per host/target and primary review before expensive integrated runs. A failing model
-  or unavailable host does not stop independent product checks.
-- User exception approved during implementation: reviewed in-scope tracked-file
-  content edits may proceed while preserving each existing owner and ACL exactly.
-  This does not authorize writing foreign-owned ignored artifacts, caches or
-  private state, or changing ownership/access policy.
-- Restart checkpoint requested on 17 November 2026. Read the final restart
-  checkpoint in docs/simplify/one-process-ledger.md before resuming. No new model
-  run or native build was started after the pause request. The permanent checked
-  execution helper was unfinished at that checkpoint. It is now implemented and
-  reviewed as scripts/dev/assert-human-execution.ps1. Dot-source it through the
-  verified human shell, call Assert-AirkOutputParent before writes and
-  Assert-AirkCreatedOutput before consuming outputs. Enumerate child/cache outputs;
-  the guard is a read-only metadata preflight, not atomic confinement.
-- The user explicitly authorizes repairing foreign ownership in this repository
-  to TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. The user is
-  handling existing owner/access repair through the Windows UI. This supersedes
-  the earlier ownership-preservation restriction for that repair only. No
-  alternate account, new sandbox account, global permission change or agent-led
-  access-policy workaround is authorized. Reobserve affected metadata before
-  consuming historical custody; retain the original receipts unchanged.
-- Retained training data, checkpoints, calibration/reference inputs and receipts
-  under artifacts/ are not disposable Cargo caches. The current Cargo target is
-  target/; an explicitly selected artifacts/v190/p10-target clean affects that
-  target only. Never delete all artifacts/ as a build cleanup. Preserve exact
-  research outputs and use reviewed build-output cleanup when space requires it.
-- Build target for this execution: target/ (human-owned warm checkout target).
-  The designated artifacts/v190/p10-target root is foreign-owned and remains
-  preserved. Do not clean targets or share them across concurrent checkouts.
-- Mac Neo: existing SSH setup, POSIX sh batches, checkout ~/code/airk;
-  connection details in ignored artifacts/v190/neo-connection.local.json.
-  Verify the host's logged-in user before any batch. Preserve evidence outside
-  its target and clean that target after each batch, including failures.
-- Private state includes temp/, .airk/, artifacts/one-process/native-fixtures*/,
-  artifacts/editor-qualification/, artifacts/advanced-split/models/weights-v2/,
-  artifacts/v190/final-plan/ and any fixture/state/cache/data roots under
-  campaign artifacts. Never stage or package private state, credentials,
-  indexed source copies or training examples. Verified distributable outputs
-  belong in separate fresh package directories.
+Definitions are in the [architecture glossary](docs/architecture/airk-architecture.md#agent-workflow-glossary). The [17 November 2026 preservation map](docs/agent-rules-migration.md) records this editorial restructuring; it is an audit record, not another source of policy.

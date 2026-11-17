@@ -1,0 +1,5 @@
+# Independent numeric source contract
+
+Implementation lives in this directory; all publisher inputs, runtime manifests, reviewed retained evidence, source exports, plans and emitted arrays remain private artifacts. The existing native helper loader authenticates the maintained byte-identical three-helper closure and prevents a shadow reference_worker import. Fresh preparation consumes an explicit state root, evidence root and FP32 export root and seals maintained helper/reference source paths. Existing historical reviews continue to authenticate original bytes only; they are not new execution evidence.
+
+The Focus W8 adapter retains the exact original numerical/storage semantics and contract in the retained focus-w8-reference-contract.md. It does not invoke ORT or infer source approval. Assembler settlement and full-array comparisons are unchanged. Native Core fixture shapes are copied from the native template, never reconstructed in Python. Explicit existing private output roots admit only fresh children; tracked source cannot be an output root. No model run or source qualification is granted by preparation or migration.

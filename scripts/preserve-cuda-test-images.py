@@ -3,6 +3,10 @@
 import argparse
 import datetime
 import hashlib
+import importlib.util
+import struct
+import sys
+sys.dont_write_bytecode = True
 import json
 import os
 import re
@@ -31,9 +35,23 @@ def require(ok, message):
         raise ValueError(message)
 
 
-def digest(path):
+def check_deadline(deadline):
+    if deadline is not None:
+        require(time.monotonic() < deadline, 'original graph provenance deadline expired')
+
+
+def digest(path, *, deadline=None):
+    check_deadline(deadline)
+    value = hashlib.sha256()
     with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        while True:
+            check_deadline(deadline)
+            block = stream.read(4 << 20)
+            check_deadline(deadline)
+            if not block:
+                break
+            value.update(block)
+    return value.hexdigest()
 
 
 def regular(path):
@@ -45,13 +63,14 @@ def regular(path):
     return path
 
 
-def pin(path):
+def pin(path, *, deadline=None):
+    check_deadline(deadline)
     path = regular(path)
-    return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': digest(path)}
+    return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': digest(path,deadline=deadline)}
 
 
-def exact_pin(path, sha):
-    value = pin(path)
+def exact_pin(path, sha, *, deadline=None):
+    value = pin(path,**({} if deadline is None else {'deadline':deadline}))
     require(value['sha256'] == sha, 'caller-pinned bytes changed: ' + str(path))
     return value
 
@@ -168,12 +187,12 @@ def validate_receipt(value, native_group, log_name):
     require(value['log'] == log_name and value['command'][1:] == CARGO_ARGUMENTS, 'exact offline no-run command required')
 
 
-def cargo_rows(text):
+def cargo_rows(text, archive=ARCHIVE):
     rows = [json.loads(line) for line in text.splitlines() if line.lstrip().startswith('{')]
     finish = [r for r in rows if r.get('reason') == 'build-finished']
     require(len(finish) == 1 and finish[0].get('success') is True, 'one actual successful Cargo finish required')
     ort = [r for r in rows if r.get('reason') == 'build-script-executed' and '#ort-sys@' in r.get('package_id', '')]
-    require(len(ort) == 1 and ort[0]['package_id'].endswith('#ort-sys@2.0.0-rc.10') and ort[0]['linked_libs'] == ['static=onnxruntime'] and ort[0]['linked_paths'] == ['native=' + str(ARCHIVE.parent)], 'exact CUDA static link required')
+    require(len(ort) == 1 and ort[0]['package_id'].endswith('#ort-sys@2.0.0-rc.10') and ort[0]['linked_libs'] == ['static=onnxruntime'] and ort[0]['linked_paths'] == ['native=' + str(Path(archive).parent)], 'exact CUDA static link required')
     selected = []
     for package in ['airk-inference', 'airk-retrieval']:
         matches = [r for r in rows if r.get('reason') == 'compiler-artifact' and r.get('profile', {}).get('test') is True and r.get('executable') and r.get('target', {}).get('kind') == ['lib'] and r['target'].get('name') == package.replace('-', '_') and Path(r.get('manifest_path', '')).resolve() == (ROOT/'crates'/package/'Cargo.toml').resolve()]
@@ -253,6 +272,151 @@ def copy_one(before, destination, root, guard_sha, payload=False):
     return after
 
 
+PROVENANCE_OWNERS = (
+    'scripts/cuda-runtime-environment.py', 'scripts/cuda-static-runtime.py',
+    'scripts/cuda-static-aggregate.py', 'scripts/cuda-static-incremental.py',
+    'scripts/cuda-static-archive.py', 'scripts/cuda-static-checkpointed.py',
+    'scripts/cuda-static-continuation-r12.py',
+    'scripts/cuda-static-runtime/verification/checkpoint_sections.py',
+    'scripts/cuda-static-runtime/verification/materialized.py',
+    'scripts/cuda-component-execution.py', 'scripts/provision-static-onnx-runtime.py',
+    'scripts/static-onnx-runtime-lock.json',
+)
+GRAPH_EXPORT = 'airk_ort_collect_final_graph_metadata_v1'
+OLD_PRODUCER = 'f9fac8eb2fe1a1cb5191118124503782792ca6d3aff14d02326167cd7276b178'
+
+
+def source_roster(path, sha, *, deadline=None):
+    check_deadline(deadline)
+    kw = {} if deadline is None else {'deadline':deadline}
+    roster_pin = exact_pin(path, sha,**kw)
+    require(roster_pin['bytes'] <= 1 << 20, 'bounded provenance source roster required')
+    rows = json.loads(Path(path).read_bytes())
+    require(isinstance(rows, dict) and set(rows) == set(PROVENANCE_OWNERS), 'exact reviewed provenance source closure required')
+    check_deadline(deadline)
+    return roster_pin, [exact_pin(ROOT / key, rows[key],**kw) for key in PROVENANCE_OWNERS]
+
+
+def verify_environment(path, sha, roster_path, roster_sha, *, deadline=None):
+    check_deadline(deadline)
+    kw = {} if deadline is None else {'deadline':deadline}
+    roster_pin, sources = source_roster(roster_path, roster_sha,**kw)
+    env_pin = exact_pin(path, sha,**kw)
+    require(Path(path).is_relative_to(USER_ROOT), 'incremental environment outside approved human root')
+    require(env_pin['bytes'] <= 16 << 20, 'bounded incremental environment required')
+    env = json.loads(Path(path).read_bytes())
+    require(env.get('schema') == 'airk.cuda-static-environment/5', 'explicit incremental /5 environment required')
+    owner_path = ROOT / 'scripts/cuda-runtime-environment.py'
+    spec = importlib.util.spec_from_file_location('preservation_incremental_environment', owner_path)
+    owner = importlib.util.module_from_spec(spec); spec.loader.exec_module(owner)
+    check_deadline(deadline)
+    verified = owner.verify_handoff(path, sha, ROOT,**kw)
+    check_deadline(deadline)
+    proof = verified['gpu_build']; aggregate = verified['gpu_aggregate']
+    require(proof.get('schema') == 'airk.cuda-static-build-proof/3' and proof == env['build']
+            and aggregate == env['aggregate'] and verified.get('activation_pins_available') is False,
+            'dedicated incremental producer verification differs')
+    archive = proof['new_aggregate']; producer = proof['build_receipt']
+    require(pin(archive['path'],**kw) == archive and pin(producer['path'],**kw) == producer
+            and producer['sha256'] != OLD_PRODUCER and archive['sha256'] != ARCHIVE_SHA,
+            'fresh actual producer/archive required')
+    require(verified['environment'] == {'LIBONNXRUNTIME_NO_PKG_CONFIG':'1','ORT_SKIP_DOWNLOAD':'1',
+            'ORT_PREFER_DYNAMIC_LINK':'0','ORT_LIB_LOCATION':str(Path(archive['path']).parent),'ORT_LIB_PROFILE':'Release'},
+            'actual incremental archive environment differs')
+    require(source_roster(roster_path, roster_sha,**kw) == (roster_pin, sources), 'provenance sources changed during verification')
+    return {'environment':env_pin,'source_roster':roster_pin,'source_pins':sources,
+            'proof':proof,'aggregate':aggregate,'archive':archive,'producer':producer}
+
+
+def validate_graph_manifest(manifest, manifest_pin, runtime, provenance, *, deadline=None):
+    check_deadline(deadline)
+    require(manifest.get('schema') == 'airk.native.cuda-runtime-manifest/1'
+            and manifest.get('ort_version') == '1.30.0', 'native graph runtime manifest required')
+    producer = provenance['producer']
+    name = manifest.get('producer_name')
+    require(isinstance(name, str) and Path(name).name == name and name not in ['', '.', '..'], 'direct native producer leaf required')
+    require(manifest.get('static_core_build') == manifest.get('producer_sha256') == producer['sha256']
+            and manifest.get('producer_bytes') == producer['bytes'] and producer['sha256'] != OLD_PRODUCER,
+            'native manifest/fresh producer binding differs')
+    require(Path(manifest_pin['path']) == Path(runtime) / 'airk-cuda-runtime.json', 'reviewed manifest outside runtime')
+    actual = pin(Path(runtime) / name,**({} if deadline is None else {'deadline':deadline}))
+    require((actual['bytes'],actual['sha256']) == (producer['bytes'],producer['sha256']), 'runtime producer bytes differ')
+    return actual
+
+
+def exported_collectors(path, *, deadline=None):
+    """Read bounded actual PE exports without executing the image or tools."""
+    check_deadline(deadline)
+    pe(path)
+    check_deadline(deadline)
+    with Path(path).open('rb') as f:
+        size = Path(path).stat().st_size
+        def read(offset, count):
+            check_deadline(deadline)
+            require(0 <= offset <= size and 0 <= count <= 1 << 20 and offset + count <= size, 'PE export read bound')
+            f.seek(offset); data = f.read(count); check_deadline(deadline); require(len(data) == count, 'short PE export read'); return data
+        header = int.from_bytes(read(60,4),'little')
+        coff = read(header+4,20); sections = int.from_bytes(coff[2:4],'little'); optional_size = int.from_bytes(coff[16:18],'little')
+        require(0 < sections <= 96 and 120 <= optional_size <= 4096, 'PE section/header bound')
+        optional = read(header+24,optional_size)
+        require(int.from_bytes(optional[108:112],'little') >= 1, 'PE export directory absent')
+        export_rva, export_size = struct.unpack_from('<II',optional,112)
+        section_rows=[]
+        for index in range(sections):
+            section=read(header+24+optional_size+index*40,40)
+            virtual_size,rva,raw_size,raw_offset=struct.unpack_from('<IIII',section,8)
+            section_rows.append((rva,raw_size,raw_offset,int.from_bytes(section[36:40],'little')))
+        def mapped(rva, count):
+            candidates=[(offset+rva-start,flags) for start,raw_size,offset,flags in section_rows if start <= rva and rva+count <= start+raw_size]
+            require(len(candidates)==1, 'PE export RVA ambiguous/outside raw section'); return candidates[0]
+        def at(rva,count): return read(mapped(rva,count)[0],count)
+        directory=at(export_rva,40)
+        functions,names,functions_rva,names_rva,ordinals_rva=struct.unpack_from('<IIIII',directory,20)
+        require(0 < names <= functions <= 65536, 'PE export table bound')
+        name_table=at(names_rva,names*4); ordinal_table=at(ordinals_rva,names*2); function_table=at(functions_rva,functions*4)
+        found=[]
+        for index in range(names):
+            name_rva=struct.unpack_from('<I',name_table,index*4)[0]
+            name=bytearray()
+            for n in range(4096):
+                char=at(name_rva+n,1)
+                if char==b'\0':break
+                name.extend(char)
+            else: raise ValueError('PE export name bound')
+            decoded=name.decode('ascii')
+            if decoded in ['airk_ort_collect_final_placement_v1',GRAPH_EXPORT]:
+                ordinal=struct.unpack_from('<H',ordinal_table,index*2)[0]; require(ordinal < functions, 'PE export ordinal bound')
+                target=struct.unpack_from('<I',function_table,ordinal*4)[0]
+                require(not export_rva <= target < export_rva+export_size and mapped(target,1)[1] & 0x20000000,
+                        'collector is forwarded or nonexecutable')
+                found.append(decoded)
+        require(sorted(found)==sorted(['airk_ort_collect_final_placement_v1',GRAPH_EXPORT]), 'both actual static collector exports required')
+        return sorted(found)
+
+
+def verify_graph_binding(binding, manifest_pin, image_pin, build_pin, *, deadline=None):
+    check_deadline(deadline)
+    kw = {} if deadline is None else {'deadline':deadline}
+    require(binding.get('schema') == 'airk.private.cuda-finalgraph-image-binding/1'
+            and binding.get('build_receipt') == build_pin and binding.get('manifest') == manifest_pin,
+            'exact finalgraph image provenance binding required')
+    for row in [binding['preserver_source'],binding['cargo_json'],manifest_pin,image_pin]:
+        require(pin(row['path'],**kw) == row, 'graph image binding input drift')
+    require(binding['preserver_source'] == pin(Path(__file__).resolve(),**kw), 'reviewed graph preserver changed')
+    expected=verify_environment(binding['environment']['path'],binding['environment']['sha256'],
+                                binding['source_roster']['path'],binding['source_roster']['sha256'],**kw)
+    require(all(binding.get(k)==v for k,v in expected.items()), 'finalgraph producer proof drift')
+    runtime=Path(manifest_pin['path']).parent
+    actual=validate_graph_manifest(json.loads(Path(manifest_pin['path']).read_bytes()),manifest_pin,runtime,expected,**kw)
+    require(actual==binding['runtime_producer'], 'runtime producer binding drift')
+    ort,_=cargo_rows(Path(binding['cargo_json']['path']).read_text(encoding='utf-8'),Path(expected['archive']['path']))
+    require(ort==binding['actual_static_ORT_rows'], 'actual finalgraph Cargo link differs')
+    exports=exported_collectors(image_pin['path'],**kw)
+    require(binding['image_exports'].get(image_pin['sha256'])==exports, 'actual image collector export differs')
+    check_deadline(deadline)
+    return expected
+
+
 def run(args):
     helper_pin = exact_pin(Path(__file__).resolve(), args.approved_script_sha256)
     guard_pin = exact_pin(GUARD, args.guard_sha256)
@@ -267,31 +431,52 @@ def run(args):
     owner_policy(parents[str(USER_ROOT)], payload=True)
     receipt_pin = exact_pin(args.receipt, args.receipt_sha256)
     log_pin = exact_pin(args.log, args.log_sha256)
-    env_pin = exact_pin(ENVIRONMENT, ENVIRONMENT_SHA)
-    archive_pin = exact_pin(ARCHIVE, ARCHIVE_SHA)
-    require(archive_pin['bytes'] == 899807276, 'static archive size differs')
+    incremental = getattr(args, 'incremental_finalgraph', False)
+    graph_binding = None
     receipt = json.loads(args.receipt.read_bytes())
     validate_receipt(receipt, args.native_group, args.log.name)
-    env = json.loads(ENVIRONMENT.read_bytes())
-    require(env['schema'] == 'airk.cuda-static-environment/4' and env['activation_pins_available'] is False and env['aggregate']['output']['sha256'] == ARCHIVE_SHA and env['environment'] == {'LIBONNXRUNTIME_NO_PKG_CONFIG':'1','ORT_SKIP_DOWNLOAD':'1','ORT_PREFER_DYNAMIC_LINK':'0','ORT_LIB_LOCATION':str(ARCHIVE.parent),'ORT_LIB_PROFILE':'Release'}, 'original static environment differs')
-    ort, selected = cargo_rows(args.log.read_text(encoding='utf-8'))
+    if incremental:
+        require(all(getattr(args,k,None) for k in ['incremental_environment','incremental_environment_sha256','provenance_source_roster','provenance_source_roster_sha256','manifest_sha256']), 'complete reviewed incremental inputs required')
+        provenance=verify_environment(args.incremental_environment,args.incremental_environment_sha256,args.provenance_source_roster,args.provenance_source_roster_sha256)
+        env_pin,archive_pin=provenance['environment'],provenance['archive']
+        manifest_pin=exact_pin(args.runtime/'airk-cuda-runtime.json',args.manifest_sha256)
+        runtime_producer=validate_graph_manifest(json.loads(Path(manifest_pin['path']).read_bytes()),manifest_pin,args.runtime,provenance)
+        ort,selected=cargo_rows(args.log.read_text(encoding='utf-8'),Path(archive_pin['path']))
+        graph_binding={'schema':'airk.private.cuda-finalgraph-image-binding/1',**provenance,
+            'manifest':manifest_pin,'runtime_producer':runtime_producer,'build_receipt':receipt_pin,
+            'cargo_json':log_pin,'actual_static_ORT_rows':ort,'image_exports':{},'preserver_source':helper_pin}
+    else:
+        env_pin = exact_pin(ENVIRONMENT, ENVIRONMENT_SHA)
+        archive_pin = exact_pin(ARCHIVE, ARCHIVE_SHA)
+        require(archive_pin['bytes'] == 899807276, 'static archive size differs')
+        receipt = json.loads(args.receipt.read_bytes())
+        validate_receipt(receipt, args.native_group, args.log.name)
+        env = json.loads(ENVIRONMENT.read_bytes())
+        require(env['schema'] == 'airk.cuda-static-environment/4' and env['activation_pins_available'] is False and env['aggregate']['output']['sha256'] == ARCHIVE_SHA and env['environment'] == {'LIBONNXRUNTIME_NO_PKG_CONFIG':'1','ORT_SKIP_DOWNLOAD':'1','ORT_PREFER_DYNAMIC_LINK':'0','ORT_LIB_LOCATION':str(ARCHIVE.parent),'ORT_LIB_PROFILE':'Release'}, 'original static environment differs')
+        ort, selected = cargo_rows(args.log.read_text(encoding='utf-8'))
     originals = {}
     for package, row in selected:
         source = regular(row['executable'])
         require(source.is_relative_to(Path(receipt['target_directory']).resolve()) and 0 < source.stat().st_size <= 4 << 30, 'image outside actual target/size bounds')
         pe(source)
         originals[package] = snapshot(source)
+        if incremental: graph_binding['image_exports'][originals[package]['pin']['sha256']] = exported_collectors(source)
     runtime = runtime_census(args.runtime, args.guard_sha256)
     require(census_digest(runtime) == args.runtime_census_sha256, 'reviewed full runtime census differs')
     runtime_policy = policy(args.runtime)
     owner_policy(runtime_policy, payload=True)
-    validate_runtime(runtime)
+    if incremental:
+        require(any(row['pin']==graph_binding['manifest'] for row in runtime) and any(row['pin']==graph_binding['runtime_producer'] for row in runtime), 'fresh manifest/producer absent from runtime census')
+    else:
+        validate_runtime(runtime)
     context = None
     require(bool(args.compile_input_context) == bool(args.compile_input_context_sha256), 'compile-context path/hash pair required')
     if args.compile_input_context:
         context = exact_pin(args.compile_input_context, args.compile_input_context_sha256)
         require(context['bytes'] <= 16 << 20, 'bounded compile context required')
     pins = [helper_pin, guard_pin, receipt_pin, log_pin, env_pin, archive_pin] + ([context] if context else [])
+    if incremental:
+        pins += [graph_binding[k] for k in ['source_roster','producer','manifest','runtime_producer']] + graph_binding['source_pins']
     def reopen(addition=None):
         require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() == head, 'HEAD drift')
         for value in pins:
@@ -303,6 +488,8 @@ def run(args):
         for package, value in originals.items():
             require(snapshot(value['pin']['path']) == value, 'original native image drift: ' + package)
         require(all(policy(p) == value for p, value in parents.items()), 'output parent policy drift')
+        if incremental:
+            verify_graph_binding(graph_binding,graph_binding['manifest'],originals['airk-inference']['pin'],receipt_pin)
     reopen()
     make_directory(args.output, ARTIFACT_ROOT, args.guard_sha256)
     outcome = {'status':'RUNNING','native_group':args.native_group,'source_commit':head,'native_model_request_dispatched':False}
@@ -324,6 +511,7 @@ def run(args):
             bindings.append({'materialized_image':image,'actual_cargo_artifact':row,'pe':machine,'original':original,'preserved':after})
         reopen(addition)
         inventory = {'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':head,'native_group':args.native_group,'actual_build_receipt':receipt_pin,'images':result,'source_dirty':bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT,text=True)),'scope':'Independent CUDA lib-test copies, one additive Inference filename; all preexisting runtime objects unchanged. No execution or qualification.'}
+        if incremental: inventory['static_graph_binding']=graph_binding
         inventory_path = args.output/'native-test-images.json'
         write_json(inventory_path, inventory, ARTIFACT_ROOT, args.guard_sha256)
         write_json(args.output/'cargo-image-bindings.json', {'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(inventory_path),'build_receipt':receipt_pin,'cargo_json':log_pin,'actual_static_ORT_rows':ort,'cuda_static_environment':env_pin,'actual_static_archive':archive_pin,'caller_compile_input_context':context,'incremental':receipt['incremental'],'runtime_source_census':runtime,'runtime_source_census_sha256':args.runtime_census_sha256,'runtime_directory':str(args.runtime),'runtime_addition':addition,'preexisting_runtime_objects_unchanged':True,'images':bindings,'preserver_source':pin(Path(__file__).resolve()),'guard_source':pin(GUARD),'native_model_request_dispatched':False,'qualification':False}, ARTIFACT_ROOT, args.guard_sha256)
@@ -342,6 +530,12 @@ def main():
         parser.add_argument('--'+name, type=Path, required=True)
     for name in ['approved-script-sha256','guard-sha256','receipt-sha256','log-sha256','native-group','source-commit','runtime-census-sha256']:
         parser.add_argument('--'+name, required=True)
+    parser.add_argument('--incremental-finalgraph', action='store_true')
+    parser.add_argument('--incremental-environment',type=Path)
+    parser.add_argument('--incremental-environment-sha256')
+    parser.add_argument('--provenance-source-roster',type=Path)
+    parser.add_argument('--provenance-source-roster-sha256')
+    parser.add_argument('--manifest-sha256')
     parser.add_argument('--inference-name', required=True)
     parser.add_argument('--compile-input-context', type=Path)
     parser.add_argument('--compile-input-context-sha256')

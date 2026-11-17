@@ -1,0 +1,233 @@
+{
+  "schema": "airk.research-source-migration/1",
+  "files": [
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/audit_imports.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/audit_imports.py",
+      "original_sha256": "57945ece1e3498779f1947fa0ed7d6878c0db9007e11ab76ce97759f60f87c69",
+      "maintained_sha256": "57af5ab4b4dc6e63c24f9d58ae4f3cc774f67a61e3b70bb8158659e740b0dad7",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "57af5ab4b4dc6e63c24f9d58ae4f3cc774f67a61e3b70bb8158659e740b0dad7",
+      "original_bytes": 3652,
+      "maintained_bytes": 3690
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/focus_worker.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/focus_worker.py",
+      "original_sha256": "a2dd7292584d4657e17fbb1ba42ff5d8f3e99b99e89373ff833b84fece2f2366",
+      "maintained_sha256": "56f00c5bdad097c2f8ff41f3cc0e637b9ba8fae629add2cc80b91e4adb388874",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "56f00c5bdad097c2f8ff41f3cc0e637b9ba8fae629add2cc80b91e4adb388874",
+      "original_bytes": 15233,
+      "maintained_bytes": 15271
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/gpu_identity.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/gpu_identity.py",
+      "original_sha256": "804ad12737c73c352b8ee8cd708560ffe53082c0d9c394d176a50f2a70267285",
+      "maintained_sha256": "39f6c096fe40ec5ba279c08cb44c9db9d95e0b0d5e5a75374630eb2993fb6e1b",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "39f6c096fe40ec5ba279c08cb44c9db9d95e0b0d5e5a75374630eb2993fb6e1b",
+      "original_bytes": 1539,
+      "maintained_bytes": 1577
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/launch_owned.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/launch_owned.py",
+      "original_sha256": "e2acc6e85a5f990b125e5a039990f35c5f31712ccd67c3cccf8cb65e2b995c41",
+      "maintained_sha256": "405b09900437edccaeff1b997055a3b6558854c0d2b61b0c27963e84dbbe55ca",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "405b09900437edccaeff1b997055a3b6558854c0d2b61b0c27963e84dbbe55ca",
+      "original_bytes": 9863,
+      "maintained_bytes": 9901
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/make_plan.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/make_plan.py",
+      "original_sha256": "f4c3fd10c4d5489fbc7a41d5a2238ef23297b1ee55c3e527d47d9c982b885428",
+      "maintained_sha256": "a5ee34785a4296d14101ac49123f4b6a9a8cfce2cda48ce6eb27ee022a23c93d",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit maintained reference dependency/private output/test paths; normalize line endings to LF",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "a4b1cbafd44f3257653c2f7a9ccde13db0830a24bd9cdcaa0dc69cd2ac748417",
+      "original_bytes": 9152,
+      "maintained_bytes": 9924
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/select_instruction.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/select_instruction.py",
+      "original_sha256": "70b4dcfa8029dfdd56f4ee198f4fb0273aa7196d4a21711e6f98c8890a681920",
+      "maintained_sha256": "502442997c6c768e9ee8cadce7b3c9305aa296490400fdce768da5af626d491c",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "8caad22b8a6bbded0742133b17157c603b57dd5a279f359e7bb241b8fa08af47",
+      "original_bytes": 2155,
+      "maintained_bytes": 2834
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/source_epoch.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/source_epoch.py",
+      "original_sha256": "338331a484dc5196b393b8a38c0ba3b5ff71503be25b5ed1e91f02a9d1b94244",
+      "maintained_sha256": "24dde368bc3440e163d0db556d8b1903b63e488b09e0c8ca66d432e11c32764c",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "24dde368bc3440e163d0db556d8b1903b63e488b09e0c8ca66d432e11c32764c",
+      "original_bytes": 3699,
+      "maintained_bytes": 3737
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_bootstrap.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_bootstrap.py",
+      "original_sha256": "7ce9bfa672a2076cac251350cb45ac7f2cc2e464568acb4822a23eed186984ac",
+      "maintained_sha256": "f86a23c90bc99b87d229b8e7768b1300bcc29c9879b97a96a98052dd5ff7bada",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "f86a23c90bc99b87d229b8e7768b1300bcc29c9879b97a96a98052dd5ff7bada",
+      "original_bytes": 1371,
+      "maintained_bytes": 1409
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_final_clock.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_final_clock.py",
+      "original_sha256": "94af310bdebbce6da757c1dba39d57aaace0f5b0f4742824ef53b29884c3d60f",
+      "maintained_sha256": "0adb913c01cd3fb1484f016e40c707f71e3acc027ca9ca98e7ff30ad0dab2bc2",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "0adb913c01cd3fb1484f016e40c707f71e3acc027ca9ca98e7ff30ad0dab2bc2",
+      "original_bytes": 4522,
+      "maintained_bytes": 4560
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_gpu_identity.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_gpu_identity.py",
+      "original_sha256": "ac17b7ce03a32405c5a27ee7313261d7cdeed3fca1fc37585988155f83a8e6aa",
+      "maintained_sha256": "ca3fddfc3c3ae349dad6bcf03d49b1ec553ec124dc22a1b076019d07784947b5",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "ca3fddfc3c3ae349dad6bcf03d49b1ec553ec124dc22a1b076019d07784947b5",
+      "original_bytes": 2254,
+      "maintained_bytes": 2292
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_lora_torch.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_lora_torch.py",
+      "original_sha256": "b0af9f5ded609d58a03abf8517e66345e947326d92f82b9ee0b01e5dd85d2c22",
+      "maintained_sha256": "35e05d307412fc8554186cdd8e40548679d880e3bc50f2640f97cc4f8ed6daea",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "35e05d307412fc8554186cdd8e40548679d880e3bc50f2640f97cc4f8ed6daea",
+      "original_bytes": 3334,
+      "maintained_bytes": 3372
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_no_site.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_no_site.py",
+      "original_sha256": "9223d9d17ae167feb6cf24b431a2cb059cb14b2f1052ccf0a7a0534372cc8a55",
+      "maintained_sha256": "9194cb95e85b280cae43ad38226e55337abab88ee32306dc1b42bb44229a7aa7",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "explicit maintained reference dependency/private output/test paths; normalize line endings to LF"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "fec40ff267161a258fa5cf4f3618bd76235dd9660e44ac00a50ae447b23c315a",
+      "original_bytes": 2482,
+      "maintained_bytes": 2547
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_source_epoch.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_source_epoch.py",
+      "original_sha256": "a1cc1bcb48a6aed5739c86c015e634ed71e40d9b348a872bfd3c94632e710fd4",
+      "maintained_sha256": "e3363eb16b4463e32946c2b5f7346bff6f4650f9d0900b44c37c169cc90648f2",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "e3363eb16b4463e32946c2b5f7346bff6f4650f9d0900b44c37c169cc90648f2",
+      "original_bytes": 4769,
+      "maintained_bytes": 4807
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_worker_logic.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_worker_logic.py",
+      "original_sha256": "a9b6eab6077fe387bac530c4e0007a53087e7d33afe0336ac51ae6953b76f7a9",
+      "maintained_sha256": "a2c57ee866e354ef589d19c91fa147596998af80b9c96e140b811aa07790d787",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "a2c57ee866e354ef589d19c91fa147596998af80b9c96e140b811aa07790d787",
+      "original_bytes": 11346,
+      "maintained_bytes": 11384
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/test_workflow.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/test_workflow.py",
+      "original_sha256": "c5951e2b96214d89da1d262ac982e889e7ca83ce58d6a0e20c4d16db6777ad10",
+      "maintained_sha256": "b05e5782f71f3c2843d0566f1f140b330d24684c050b6ffd40c58d527b335ea8",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "b05e5782f71f3c2843d0566f1f140b330d24684c050b6ffd40c58d527b335ea8",
+      "original_bytes": 6606,
+      "maintained_bytes": 6644
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/worker_logic.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/worker_logic.py",
+      "original_sha256": "995b9aed1e8048a5ede0b1e5109aa5b97a5c1fb4b62ee280ac1d5e248c5a0b25",
+      "maintained_sha256": "89e5ea525d18aeefc3102562ec772764112d4d80123058d7de25732d9bbe66ec",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "89e5ea525d18aeefc3102562ec772764112d4d80123058d7de25732d9bbe66ec",
+      "original_bytes": 8510,
+      "maintained_bytes": 8548
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/f2-native-worker-implementation-r8/workflow.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/workflow.py",
+      "original_sha256": "3241d83e4ab3b051e770dcd300b9b5de9bdc90dbc660aa011d1be2c891684d8e",
+      "maintained_sha256": "130e9aff1da56c0707396730c5e1ea6da4b582417c568245b5da173538674082",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "130e9aff1da56c0707396730c5e1ea6da4b582417c568245b5da173538674082",
+      "original_bytes": 6213,
+      "maintained_bytes": 6251
+    }
+  ],
+  "data_weights_receipts_included": false
+}

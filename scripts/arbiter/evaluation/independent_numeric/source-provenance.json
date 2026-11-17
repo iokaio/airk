@@ -1,0 +1,67 @@
+{
+  "schema": "airk.source-relocation/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/prepare_reference.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/prepare_reference.py",
+      "original_sha256": "48cb64cd883df6bfd8e52ba2ddd53e15b28796a2551c1be4abfe0c7948d833e1",
+      "maintained_sha256": "52c0a91cdd74faf3021a3ee78064a9771f17369dbaaaf50b7d006394f44529c6",
+      "changes": [
+        "maintained helpers/references; explicit private state/evidence/export roots"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/assemble_references.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/assemble_references.py",
+      "original_sha256": "a679816177b985d0c120fd992c708970fb9472d9d3eedc4ac5c1fd55c64facbb",
+      "maintained_sha256": "a13933f613e7f311f40c55616a5abff91e9100787b112476b305075f42acd99c",
+      "changes": [
+        "maintained worker and explicit private output root"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/focus_w8_reference.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/focus_w8_reference.py",
+      "original_sha256": "fbda6a1a8b317f602f0426c384e9b01aaff571cf33413ef2d11274da7aee6de2",
+      "maintained_sha256": "6fcc75ec4b7ca354dc86275948df76563f522a2f15d93eed8b35128424988758",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/test_reference_preparation.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/test_reference_preparation.py",
+      "original_sha256": "f92ef66415b51798fb39d82547f27584d7c122d669b5ba0f8cf04b8a34707e78",
+      "maintained_sha256": "6eddec377e23747e0b68168b95bd008974b7e5b2c994d7f02f40b070ccb32756",
+      "changes": [
+        "maintained helper imports and private fixture paths"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/test_reference_assembly.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/test_reference_assembly.py",
+      "original_sha256": "b18e6a1f189024a14c4352932b24e8d4e0c09ad16a1320c7af35ea277d8c8f1d",
+      "maintained_sha256": "5a6b9f3f30c8d2c3db221b6776815841b6562d96fa77000613dbe2922360ec7c",
+      "changes": [
+        "private test state and explicit output root"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/test_focus_w8_reference.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/test_focus_w8_reference.py",
+      "original_sha256": "55a4751fc771e8c03dac2f1c3f4ec5a46957edfbc9bae96afa622bd64ccf2ab4",
+      "maintained_sha256": "e73ef75d800944b4059b11e9cd6147c1543cfe8f30af1f5477413827ecd74b76",
+      "changes": [
+        "SPDX header",
+        "private synthetic test output root"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/reference_parent.py",
+      "destination": "scripts/arbiter/evaluation/independent_numeric/reference_parent.py",
+      "original_sha256": "775e32da732446919789490ca5a30b0b3d863f570b7bf1852d56e9e7c7391354",
+      "maintained_sha256": "775e32da732446919789490ca5a30b0b3d863f570b7bf1852d56e9e7c7391354",
+      "changes": []
+    }
+  ]
+}

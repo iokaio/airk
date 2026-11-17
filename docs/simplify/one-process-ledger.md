@@ -7898,3 +7898,119 @@ Current Windows source retains the runtime-only admission pass and complete fina
 Final-graph collector, producer runner, Python handoff and native provenance are separate ignored proposals. New build-proof/3 and environment/5 will authenticate an actual fresh one-TU derivation; old checkpoint/2, producerf9fac, aggregate042c and profile3179 are immutable. No proposed output is yet compiled or admitted. Independent early collector review caught pre-bound string copies/attribute precollection; correction and final decoder review are required before execution. Graph-only capture will have a distinct explicit result contract and cannot relabel the failed placement-log observation or qualify inference.
 
 Identity reverified as TYAI\tdotn, User/Owner/interactive SID1002. All336 Git output directory policies pass the checked same-human rule; only sample hooks exist. No target clean, ACL/owner change, model retry or publication occurred. Parallel file ownership is component_review(graph collector/native diagnostic), gpu_inventory(producer/verifier), platform_inventory(Python handoff consumers), fp16_readiness(native provenance), guard(parent graph envelope), focus_review(independent review). Windows Cargo remains idle pending integrated review.
+
+### 2026-11-17 — reproducibility source migration authorized
+
+User explicitly requires compiled/trained artifact reproducibility implementation in committed source, including analysis, training, fine-tuning, export and evaluation in every language. Training data and release weights remain outside Git. Every destination folder requires a README explaining purpose, behavior, dependencies, input acquisition and reproduction commands/status. Final handoff must summarize actual committed migrations and link each README, with remaining gaps explicit.
+
+Validated loader/placement checkpoint committed locally as a3dbc74331499855cd44befd5d234bafbbb65363 with Tyler Jensen DCO; no push. Reviewed finalgraph C++ patch a1a95c9b4401e302d7046159f882fdafa735bf7b32542314f75b333b902870c9 copied byte-identically into scripts/cuda-static-runtime/final-graph-metadata/collector.patch with README/CONTRACT; parent build folder README added. After-source db00479a is uncompiled; original TU prefix7acab remains identical. Historical private source/receipts are preserved.
+
+Audit already identifies operational reference process helpers, checkpoint composer/section validation and Focus workflow/custody/export implementations imported from ignored artifacts. Maintained helper migration and narrow checkpoint verification extraction are underway; broader research-code inventory includes earlier reproducible experiments. Do not claim this audit or migration complete yet.
+
+### 17 November 2026 — agent instruction restructuring
+
+The user requested and approved condensing AGENTS.md/CLAUDE.md while preserving
+their rules. Standing rules now separate identity, authority, source/architecture,
+working procedure, validation/completion and the mandatory current assignment.
+Command and validation tables move to CONTRIBUTING; map/glossary move to the
+current architecture guide. docs/agent-rules-migration.md maps every baseline
+block to its destination. The authorized new rule keeps all authored code,
+including experimental/reproduction code, in maintained nonignored folders with
+READMEs; ignored data, weights and outputs remain excluded.
+
+Historical campaign facts removed from the entry-file narrative: the user
+authorized feat/arbiter-final from feat/advanced-split and its opening DCO commit
+containing pending files and instruction cleanup; this is not new push authority.
+The original 24-hour target/48-hour cap was superseded by 36 hours, then 72 hours
+from unchanged T0; only the current 19 November 05:29:42 UTC deadline applies.
+At the 17 November restart checkpoint no new model run/native build started after
+the pause request, and the execution helper was unfinished. It was subsequently
+implemented/reviewed. The checkpoint and later receipts remain historical facts,
+not a claim that work is still paused. Ownership/access repair exceptions remain
+explicit in the current assignment; no new ACL or alternate-user authority.
+
+Independent preservation review closed after restoring the general test-expectation independence rule and explicit fixtures exclusion. Final entry files are byte-identical at SHA256 e45734eca7d6b0e2c7932260325dc61943d489ff0a161d1dafeb40c7c4c7b0a2: 1751 words each, down from 4105 (57% reduction). All 174 original blocks are mapped. Repository checks passed for 3981 public files; scoped whitespace checks passed. Existing owners and ACLs were preserved and new files audited to the verified human SID1002. This is documentation validation, not runtime or model qualification.
+
+### 17 November 2026 — maintained native graph source checks
+
+E/graph-native-source-checks-r1 scoped Clippy failed on four mechanical diagnostics
+(type complexity, two collapsible conditions, scalar range pattern); retained
+21.167753s failure. Reviewed corrections introduce type aliases/equivalent syntax
+and refresh the exact source-transition pin, without relaxing checks or admission.
+E/graph-native-source-checks-r2 freezes native input group
+1a271ce38dcbf874bda463bdf737b3575b4dfd5cdda5dae472bb804ff109fcb2.
+Scoped airk-retrieval/airk-inference all-features offline Clippy passes32.414712s;
+focused Nextest passes161/161,304 skipped,36.981468s including build/1.340s tests.
+Receipts retain commands, source identities, Cargo timing and JUnit
+01f33c5cae62eba88aeecba285306925a29faa6a7d1ff730b0e1167c38831cb6.
+Target is human-owned target/; Clippy incremental explicitly off, Nextest uses
+profile defaults with environment unset. Existing old static core was used only
+for compilation and synthetic controls; no new C++ collector compilation,
+actual graph collection, inference or GPU qualification follows. Output owners
+were audited to SID1002 and no Cargo/rustc/clippy/cl process remained afterward.
+
+### 17 November 2026 — reviewed source rescue checkpoint before broad closure
+
+Retained analysis, training, fine-tuning, MiniLM/Qwen export, numerical/goal
+orchestration, acquisition/rights, ORT/CUDA build and diagnostic implementations
+in maintained source folders. Exact duplicates share owners; historical versions
+retain original and maintained hashes, reversible SPDX prefixes where required,
+README purposes and explicit non-launcher status. Native/client proposals use
+inert templates rather than unreachable Rust modules. No corpus payloads,
+weights, checkpoints, credentials, indexed source copies or live state staged.
+The README catalogue is docs/arbiter/source-rescue.md (159 receiving READMEs).
+
+Independent lane reviews closed. Component lane covers1222 source/generated
+paths (806 original source occurrences,654 copies,416 independently reproduced
+JavaScript outputs); evaluation archive527origins/404copies; training/conversion
+history207paths (189 authored/18 proven corpus); native/client190paths
+(182 authored-owner mappings/8 upstream); public admission/rights/acquisition
+44source captures plus36 upstream dispositions. Earlier active recipe/helper
+migrations retain separate exact maps and their focused tests. Counts overlap
+across source aliases; they are not a summed unique-file claim.
+
+Scoped source-rescue-reconciliation-r4.json d82af28ce7e3bd16da427997a3ca6c62e331333702ede15507c4be20607d6983
+reopened all10356 declared candidates in22.9324s with0errors/0unclassified.
+It verified2003 maintained mappings,7042 current tracked owner pins,449 reachable
+historical raw identities,78 explicitly normalized identities,303 corpus,
+65 upstream and416 generated-code dispositions. An initial historical-worktree
+fallback was rejected during primary review: the final verifier rehashes current
+owners and caught one otherwise-lost old CPU test version, now rescued as .rs.in.
+Older reports are retained and do not substitute for this corrected evidence.
+
+Git byte audit r3/r4 result06514acf19ab71470ca6117efe06bf81a5ce0382ecb9a0f13cd566f96546ff55
+checks1621 present paths/1586 mapped or helper pins, including502 CRLF files;
+filtered Git objects equal raw bytes. Thirteen obsolete exact attribute entries
+remain disclosed, not removed by a broad cleanup. Repository check passed5481
+public files before the final read-only audit helpers; full staged check follows.
+Native scoped Clippy/161regressions are recorded separately above. Source tests
+and source capture are not model/native-execution or release qualification.
+
+All104 exact previously denied shallow paths are readable after USER-applied
+permission grants. Agents changed no ACLs. New reobservation receipt
+source-access-reobservation-r1.json7ea295e7837812ca7130fa3d86dad24adcd93a3b508f9d83a664ce963bd6ed2d
+preserves current metadata separately from old denials. tmporolob5v/synthetic.py
+matches the maintained training-execution test's generated Windows bytes exactly;
+no fixture was executed. Full artifacts, additional formats, embedded-source and
+newly accessible recursive scans remain in progress. This checkpoint does NOT
+claim all artifact code rescued. Commit the reviewed scope locally; no push.
+The unwired scripts/cuda-component-execution/graph_provenance.py draft is excluded.
+After broad rescue completion, update final-plan.md to require maintained owners
+and implement missing current adapters before continuing the campaign.
+
+Staged review correction: -text preserves502 CRLF sources, so their exact-path
+attributes explicitly recognize CR-at-EOL while retaining blank-at-EOL,
+blank-at-EOF and space-before-tab checks. No source bytes were normalized.
+Staged diff whitespace remains NONPASS with150 inherited findings in19 retained
+historical sources/patches. Each is an exact original body (or reversible SPDX
+prefix), including required diff-context spaces; no blanket waiver or global
+whitespace-pass claim is made. Current incremental owner/test whitespace was
+corrected with equal ASTs and64/64 controls passing1.343s. New producer identity
+fdec741918bf4711a0dbcf6141a3cd0bba2c4525579ed24496fd644bd36ff8a1
+supersedes23d44a only for future reviewed recipes, never old evidence. Tests now
+7f8973a66acdaf90dc7cf58b9a04b9ba4e87ce79dde0ff8637495c203f6d6e3d.
+Byte audit r5 passes1621paths/1586pins, receipt5c239187a1eab2c36ee8e8fa5736ec937e9c8b41ddc71444ffbbb4f97916d4c4.
+Final pre-stage repository check passes5486publicfiles. Source map copy flags are
+now explicitly labeled as historical inventory fields; current maintained-owner
+presence and no-execution status are separate. Broader source/access scans
+remain open, including newly identified generated fixture boundaries.

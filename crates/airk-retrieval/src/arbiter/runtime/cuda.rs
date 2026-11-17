@@ -27,7 +27,11 @@ pub use custody::{
 };
 pub(super) mod diagnostic;
 #[cfg(feature = "test-support")]
+pub(super) mod graph_metadata;
+#[cfg(feature = "test-support")]
 pub use diagnostic::{LoadObserver, LoadSnapshot};
+#[cfg(feature = "test-support")]
+pub use graph_metadata::{Observation as GraphMetadataObservation, Row as GraphMetadataRow};
 mod eligibility;
 mod manifest;
 mod numeric;
@@ -546,6 +550,26 @@ impl CudaDevice {
             fit.headroom_bytes,
         )
     }
+    #[cfg(feature = "test-support")]
+    pub(super) fn graph_metadata(
+        &self,
+        session: &ort::session::Session,
+        deadline: Instant,
+        placement: &PlacementObservation,
+    ) -> Result<GraphMetadataObservation> {
+        in_time(deadline)?;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            self.runtime
+                .loaded
+                .graph_metadata(session, deadline, placement)
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            let _ = (session, placement);
+            anyhow::bail!("final graph metadata unavailable")
+        }
+    }
     pub(super) fn placement(
         &self,
         session: &ort::session::Session,
@@ -725,6 +749,8 @@ pub struct RuntimeAssemblyInput {
     pub producer_sha256: Sha256Digest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpointed_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incremental_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custody_copies: Vec<MetadataCustodyCopy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

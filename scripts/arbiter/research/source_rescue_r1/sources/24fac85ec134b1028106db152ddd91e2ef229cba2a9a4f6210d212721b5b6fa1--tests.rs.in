@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+#[test]
+fn gpu_precision_only_restricts_gpu_and_auto_orders_fp32_then_fp16_then_cpu() {
+    for (preference, expected) in [
+        (GpuPrecisionPreference::Auto, [true, true, true]),
+        (GpuPrecisionPreference::Fp32, [true, false, true]),
+        (GpuPrecisionPreference::Fp16, [false, true, true]),
+    ] {
+        assert_eq!(
+            [
+                gpu_precision_allows(preference, Some(DevicePrecision::Float32)),
+                gpu_precision_allows(preference, Some(DevicePrecision::Float16)),
+                gpu_precision_allows(preference, None)
+            ],
+            expected
+        );
+    }
+    assert_eq!(
+        [
+            precision_rank(Some(DevicePrecision::Float32)),
+            precision_rank(Some(DevicePrecision::Float16)),
+            precision_rank(None)
+        ],
+        [0, 1, 2]
+    );
+}
+#[test]
+fn known_failed_large_cpu_candidate_is_never_auto_fit_but_model_switch_is_not_invented() {
+    assert!(!cpu_model_allowed(ModelChoice::ContextQwenLarge, true));
+    assert!(cpu_model_allowed(ModelChoice::ContextQwenLarge, false));
+    assert!(cpu_model_allowed(ModelChoice::ContextQwenCompact, true));
+    assert!(cpu_model_allowed(ModelChoice::FocusQwenReranker06B, true));
+}
+#[test]
+fn current_and_legacy_management_routes_are_distinct_and_import_never_changes_consent() {
+    assert!(current_request(&ManagementRequest::StatusDevice));
+    assert!(!current_request(&ManagementRequest::Status));
+    assert!(current_request(&ManagementRequest::ConfigureDevice {
+        expected_revision: 1,
+        stage: Stage::Context,
+        configuration: DeviceStageConfiguration::disabled()
+    }));
+    assert!(!current_request(&ManagementRequest::Cancel {
+        expected_revision: 1,
+        stage: Stage::Focus
+    }));
+}
+#[cfg(feature = "local-inference")]
+fn document() -> DeviceConfiguration {
+    DeviceConfiguration::disabled(
+        airk_core::identity::Sha256Digest::from_bytes([1; 32]),
+        airk_core::identity::Incarnation::from_bytes([2; 16]),
+        DeviceCatalogBinding {
+            catalog: airk_core::identity::Sha256Digest::from_bytes([3; 32]),
+            source: airk_core::identity::Sha256Digest::from_bytes([4; 32]),
+        },
+    )
+}
+#[cfg(feature = "local-inference")]
+#[test]
+fn final_device_delivery_refuses_generation_revision_and_compiled_source_binding_changes()
+-> Result<()> {
+    let document = document();
+    let shared = Arc::new(Shared::default());
+    shared.install(
+        document.clone(),
+        Stage::Context,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let generation = shared.generation.load(std::sync::atomic::Ordering::Acquire);
+    let delivery = Delivery {
+        binding: document.device_catalog.clone(),
+        policy: NativeConfiguration::device(document.clone(), vec![])?,
+        shared: shared.clone(),
+        generation,
+        devices: vec![],
+    };
+    delivery.current(&document)?;
+    let mut changed = document.clone();
+    changed.revision += 1;
+    assert!(delivery.current(&changed).is_err());
+    let mut changed = document.clone();
+    changed.device_catalog.source = airk_core::identity::Sha256Digest::from_bytes([5; 32]);
+    assert!(delivery.current(&changed).is_err());
+    shared
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    assert!(delivery.current(&document).is_err());
+    Ok(())
+}
+#[cfg(feature = "local-inference")]
+#[test]
+fn changed_device_document_does_not_reuse_cached_native_selection_as_authority() -> Result<()> {
+    let shared = Shared::default();
+    let document = document();
+    let first = shared.install(document.clone(), Stage::Focus, None, None, None, None, None)?;
+    assert!(first.same_document(&shared.policy(document.clone())?));
+    let generation = shared.generation.load(std::sync::atomic::Ordering::Acquire);
+    let mut current = document;
+    current.revision += 1;
+    current.context.device_policy = DevicePolicy::Cpu;
+    let next = shared.policy(current.clone())?;
+    assert!(!first.same_document(&next));
+    assert!(next.selected_profile(Stage::Focus).is_none());
+    shared.install(current, Stage::Context, None, None, None, None, None)?;
+    assert_eq!(
+        shared.generation.load(std::sync::atomic::Ordering::Acquire),
+        generation + 1
+    );
+    Ok(())
+}

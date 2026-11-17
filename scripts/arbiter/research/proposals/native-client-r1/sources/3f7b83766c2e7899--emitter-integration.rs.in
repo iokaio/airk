@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: Apache-2.0
+//! UNMOUNTED PROPOSAL: insert inside the future owning G5 metadata emitter.
+//! Construction must reuse its reviewed protected-input opener, never raw paths.
+use airk_core::arbiter::Asset;
+use airk_process::directory::{ObjectIdentity, OpenedDirectory, identity};
+use anyhow::{Result, ensure};
+use std::{fs::File, io::{Read, Seek, SeekFrom}, time::Instant};
+
+struct HeldG5Asset {
+    file: File,
+    parent: OpenedDirectory,
+    file_id: ObjectIdentity,
+    parent_id: ObjectIdentity,
+    name: String,
+    bytes: u64,
+}
+impl HeldG5Asset {
+    // No constructor here: the emitter's protected opener must establish custody
+    // and policy before recording these IDs. This sketch grants no input authority.
+    fn visit(
+        &self,
+        asset: &Asset,
+        deadline: Instant,
+        recheck_protected: &mut dyn FnMut(&File, &OpenedDirectory) -> Result<()>,
+        consume: &mut dyn FnMut(&mut dyn Read) -> Result<()>,
+    ) -> Result<()> {
+        let check = || -> Result<()> {
+            ensure!(Instant::now() < deadline, "original G5 metadata expiry");
+            ensure!(asset.name == self.name && asset.bytes == self.bytes,
+                "G5 asset differs from retained input");
+            let meta = self.file.metadata()?;
+            ensure!(meta.is_file() && meta.len() == self.bytes
+                && identity(&self.file)? == self.file_id
+                && identity(self.parent.as_file())? == self.parent_id,
+                "G5 retained object identity or length changed");
+            #[cfg(windows)] {
+                use std::os::windows::fs::MetadataExt;
+                ensure!(meta.file_attributes() & 0x400 == 0, "G5 reparse input");
+            }
+            Ok(())
+        };
+        check()?;
+        recheck_protected(&self.file, &self.parent)?;
+        let mut reader = &self.file;
+        reader.seek(SeekFrom::Start(0))?;
+        let result = consume(&mut reader);
+        let post = check().and_then(|_| recheck_protected(&self.file, &self.parent));
+        // Run postcustody even on read failure; never replace the primary error.
+        result.and(post)
+    }
+}
+// The future emitter builds one exact asset-name -> HeldG5Asset map before
+// calling prepare_fp16_probe_profile. Its external visitor looks up that map
+// and calls visit with the unchanged deadline and its existing policy recheck.
+// It keeps the map alive through metadata writes and the final ownership audit.

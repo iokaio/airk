@@ -15,7 +15,7 @@ const LEGACY_RUNTIME_SOURCE: &str =
     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
 // Exact runtime owner hook bytes. A different build source requires a new reviewed row.
 const CURRENT_RUNTIME_SOURCE: Option<&str> =
-    Some("254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0");
+    Some("a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5");
 const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
 const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
 const CURRENT_TASK: &str = "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab";

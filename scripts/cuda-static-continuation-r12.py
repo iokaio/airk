@@ -26,7 +26,7 @@ def verify_tree_command(o,child,proposal,continuation,cwd,stage,argv,tools,comma
  runtime=module('cuda-static-runtime');script=o.plain(continuation/'commands'/(stage+'.cmd'),regular=True)
  if script.read_bytes()!=canonical_command_bytes(argv,tools,continuation,stage):raise runtime.GpuProofUnavailable('actual canonical command bytes differ')
  original=[str(Path(os.environ.get('SystemRoot','C:/Windows'))/'System32/cmd.exe'),'/d','/c',str(script)]
- owner=runtime.load(proposal/'process_tree.py','exact_r12_tree_contract');request=owner.command_request(original,cwd,continuation,stage);request_path=o.plain(continuation/(stage+'-tree-request.json'),regular=True)
+ owner=child if child is not None and hasattr(child,'command_request') else runtime.load(proposal/'process_tree.py','exact_r12_tree_contract');request=owner.command_request(original,cwd,continuation,stage);request_path=o.plain(continuation/(stage+'-tree-request.json'),regular=True)
  if o.read_json(request_path)!=request:raise runtime.GpuProofUnavailable('actual tree request differs from exact original command')
  expected=[str(owner.POWERSHELL),'-NoLogo','-NoProfile','-NonInteractive','-File',str(proposal/'wait_process_tree.ps1'),'-Request',str(request_path)]
  if command.get('argv')!=expected or command.get('tree_request')!=str(request_path) or os.path.normcase(command.get('log',''))!=os.path.normcase(str(continuation/'logs'/(stage+'.log'))) or not o.successful(command):raise runtime.GpuProofUnavailable('actual natural complete command tree missing')

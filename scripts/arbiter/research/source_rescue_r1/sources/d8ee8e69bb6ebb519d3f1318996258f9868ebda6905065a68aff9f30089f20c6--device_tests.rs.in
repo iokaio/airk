@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+#[test]
+fn new_assets4_preserves_legacy_three_receipts_and_custody()->Result<()> {
+    let (root,legacy,profile)=fixture()?;populate(&legacy,&profile)?;
+    let original=root.path().join("arbiter-v3/assets").join(profile.manifest.to_string()).join("receipt.json");let bytes=std::fs::read(&original)?;
+    let current=AssetStore::open_device(legacy.ownership.clone(),legacy.installation,legacy.catalog)?;
+    assert_eq!(current.phase(&profile)?,None);assert!(!root.path().join("arbiter-v4").exists());
+    populate(&current,&profile)?;let pin=current.pin(&profile)?;assert_eq!(pin.read(&profile.assets[0])?,b"asset-data");
+    let raw=std::fs::read(root.path().join("arbiter-v4/assets").join(profile.manifest.to_string()).join("receipt.json"))?;
+    let record:serde_json::Value=serde_json::from_slice(&raw)?;assert_eq!(record["schema"],"airk.arbiter.assets/4");assert_eq!(record["configuration_schema"],"airk.arbiter.configuration/4");
+    assert_eq!(std::fs::read(&original)?,bytes);assert_eq!(legacy.pin(&profile)?.read(&profile.assets[0])?,b"asset-data");
+    assert!(current.remove(&profile,1).is_err());drop(pin);current.remove(&profile,1)?;assert_eq!(std::fs::read(original)?,bytes);Ok(())
+}
+#[test]
+fn assets4_sealed_partial_recovery_never_adopts_legacy_generation()->Result<()> {
+    let (root,legacy,profile)=fixture()?;let current=AssetStore::open_device(legacy.ownership.clone(),legacy.installation,legacy.catalog)?;
+    let transaction=current.begin(&profile,2)?;let mut writer=transaction.asset(&profile.assets[0])?.unwrap();writer.write_all(b"asset")?;drop(writer);transaction.cancel()?;
+    let parent=root.path().join("arbiter-v4/assets").join(profile.manifest.to_string());
+    let stage=std::fs::read_dir(&parent)?.filter_map(|entry|entry.ok()).find(|entry|entry.file_name().to_string_lossy().starts_with("stage-")).unwrap().path();
+    let partial:serde_json::Value=serde_json::from_slice(&std::fs::read(stage.join(format!("{}.partial.json",profile.assets[0].name)))?)?;
+    assert_eq!(partial["schema"],"airk.arbiter.partial/4");assert_eq!(partial["operation"]["schema"],"airk.arbiter.assets/4");
+    current.remove(&profile,2)?;assert_eq!(current.phase(&profile)?,Some(Phase::Removed));assert!(!root.path().join("arbiter-v3").exists());Ok(())
+}

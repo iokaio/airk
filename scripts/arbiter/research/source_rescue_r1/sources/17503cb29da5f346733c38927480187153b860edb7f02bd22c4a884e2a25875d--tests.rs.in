@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Synthetic metadata/refusal cases only; no DLL, device or model qualification.
+use super::*;
+fn hash(n: u8) -> Sha256Digest {
+    Sha256Digest::from_bytes([n; 32])
+}
+fn fixture() -> (PublicRuntimeProvenance, Vec<manifest::RuntimeFile>) {
+    let files = vec![
+        PublicFile {
+            name: "onnxruntime_providers_shared.dll".into(),
+            bytes: 7,
+            sha256: hash(1),
+        },
+        PublicFile {
+            name: "onnxruntime_providers_cuda.dll".into(),
+            bytes: 9,
+            sha256: hash(2),
+        },
+    ];
+    let native = files
+        .iter()
+        .map(|v| manifest::RuntimeFile {
+            name: v.name.clone(),
+            bytes: v.bytes,
+            sha256: v.sha256,
+            imports: BTreeSet::new(),
+            delay_imports: BTreeSet::new(),
+        })
+        .collect();
+    let components = vec![
+        Component {
+            name: "onnxruntime".into(),
+            version: Some("1.30.0".into()),
+            upstream_sha1: None,
+            source_revision: None,
+            original_url: None,
+            source_kind: SourceKind::Archive,
+            source_sha256: hash(3),
+            inventory_sha256: Some(hash(4)),
+            source_changes: vec![hash(5)],
+        },
+        Component {
+            name: "cuda".into(),
+            version: Some("12.8.1".into()),
+            upstream_sha1: None,
+            source_revision: None,
+            original_url: None,
+            source_kind: SourceKind::InstalledToolkitInventory,
+            source_sha256: hash(6),
+            inventory_sha256: Some(hash(6)),
+            source_changes: vec![],
+        },
+        Component {
+            name: "cudnn".into(),
+            version: Some("9.10.2.21".into()),
+            upstream_sha1: None,
+            source_revision: None,
+            original_url: None,
+            source_kind: SourceKind::Archive,
+            source_sha256: hash(7),
+            inventory_sha256: Some(hash(8)),
+            source_changes: vec![],
+        },
+    ];
+    let legal = vec![
+        LegalNotice {
+            component: "onnxruntime".into(),
+            file: PublicFile {
+                name: "airk-cuda-notice-onnxruntime-license.txt".into(),
+                bytes: 2,
+                sha256: hash(9),
+            },
+            original_source_sha256: hash(3),
+        },
+        LegalNotice {
+            component: "cuda".into(),
+            file: PublicFile {
+                name: "airk-cuda-notice-cuda-license.txt".into(),
+                bytes: 3,
+                sha256: hash(10),
+            },
+            original_source_sha256: hash(6),
+        },
+        LegalNotice {
+            component: "cudnn".into(),
+            file: PublicFile {
+                name: "airk-cuda-notice-cudnn-license.txt".into(),
+                bytes: 4,
+                sha256: hash(11),
+            },
+            original_source_sha256: hash(7),
+        },
+    ];
+    (
+        PublicRuntimeProvenance {
+            schema: "airk.native.cuda-runtime-provenance/1".into(),
+            target: "x86_64-pc-windows-msvc".into(),
+            ort_version: "1.30.0".into(),
+            static_core_build: hash(12),
+            producer_script_sha256: hash(13),
+            producer_lock_sha256: hash(14),
+            verifier_sha256: hash(15),
+            build_proof_sha256: hash(16),
+            configure_argv_sha256: hash(17),
+            legal_inventory_sha256: hash(18),
+            legal_owner_sha256: hash(19),
+            historical_failed_parent: Some(hash(20)),
+            aggregate: Aggregate {
+                file: PublicFile {
+                    name: "onnxruntime.lib".into(),
+                    bytes: 70_000,
+                    sha256: hash(21),
+                },
+                proof_sha256: hash(22),
+                receipt_sha256: hash(23),
+                plan_sha256: hash(24),
+            },
+            components,
+            tools: vec![
+                Tool {
+                    name: "compiler".into(),
+                    version: Some("14.44.35207".into()),
+                    version_kind: Some("msvc-toolset".into()),
+                    bytes: 3,
+                    sha256: hash(25),
+                },
+                Tool {
+                    name: "cmake".into(),
+                    version: Some("3.31.6".into()),
+                    version_kind: Some("reported-tool-version".into()),
+                    bytes: 4,
+                    sha256: hash(26),
+                },
+                Tool {
+                    name: "ninja".into(),
+                    version: Some("1.12.1".into()),
+                    version_kind: Some("reported-tool-version".into()),
+                    bytes: 5,
+                    sha256: hash(27),
+                },
+            ],
+            options: vec![
+                BuildOption {
+                    name: "onnxruntime_USE_CUDA".into(),
+                    value: "ON".into(),
+                },
+                BuildOption {
+                    name: "onnxruntime_BUILD_SHARED_LIB".into(),
+                    value: "OFF".into(),
+                },
+                BuildOption {
+                    name: "onnxruntime_BUILD_CUDA_EP_AS_PLUGIN".into(),
+                    value: "OFF".into(),
+                },
+                BuildOption {
+                    name: "CMAKE_CUDA_ARCHITECTURES".into(),
+                    value: "86".into(),
+                },
+            ],
+            files,
+            legal,
+        },
+        native,
+    )
+}
+fn raw_asset(value: &PublicRuntimeProvenance) -> Result<(Vec<u8>, Asset)> {
+    let raw = serde_json::to_vec(value)?;
+    let asset = Asset {
+        name: NAME.into(),
+        role: AssetRole::Notice,
+        bytes: raw.len() as u64,
+        sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
+    };
+    Ok((raw, asset))
+}
+fn accepts(value: &PublicRuntimeProvenance, native: &[manifest::RuntimeFile]) -> bool {
+    let (raw, asset) = raw_asset(value).unwrap();
+    validate(&raw, &asset, hash(12), native).is_ok()
+}
+#[test]
+fn public_provenance_roundtrip_and_exact_legal_assets() -> Result<()> {
+    let (value, native) = fixture();
+    let (raw, asset) = raw_asset(&value)?;
+    let parsed = validate(&raw, &asset, hash(12), &native)?;
+    assert_eq!(serde_json::to_vec(&parsed)?, raw);
+    let legal = parsed.legal_assets();
+    assert_eq!(
+        legal.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
+        [
+            "airk-cuda-notice-onnxruntime-license.txt",
+            "airk-cuda-notice-cuda-license.txt",
+            "airk-cuda-notice-cudnn-license.txt"
+        ]
+    );
+    assert!(legal.iter().all(|v| v.role == AssetRole::Notice));
+    let text = String::from_utf8(raw)?;
+    assert!(!text.contains("C:\\"));
+    assert!(!text.contains("/Users/"));
+    Ok(())
+}
+#[test]
+fn public_provenance_refuses_tampered_bytes_and_wrong_static_build() -> Result<()> {
+    let (value, native) = fixture();
+    let (mut raw, asset) = raw_asset(&value)?;
+    assert!(validate(&raw, &asset, hash(31), &native).is_err());
+    raw.push(b' ');
+    assert!(validate(&raw, &asset, hash(12), &native).is_err());
+    let mut wrong = asset.clone();
+    wrong.role = AssetRole::Fixture;
+    assert!(validate(&serde_json::to_vec(&value)?, &wrong, hash(12), &native).is_err());
+    Ok(())
+}
+#[test]
+fn public_provenance_refuses_driver_second_core_case_alias_and_roster_drift() {
+    let (value, native) = fixture();
+    for name in [
+        "nvcuda.dll",
+        "onnxruntime.dll",
+        "cuinj64_128.dll",
+        "helper.dll",
+        "ONNXRUNTIME_PROVIDERS_CUDA.DLL",
+        "../cudart64_12.dll",
+    ] {
+        let mut changed = value.clone();
+        changed.files[1].name = name.into();
+        assert!(!accepts(&changed, &native), "{name}");
+    }
+    let mut changed = value.clone();
+    changed.files[1].sha256 = hash(30);
+    assert!(!accepts(&changed, &native));
+    let mut changed = value.clone();
+    changed.files.push(changed.files[0].clone());
+    assert!(!accepts(&changed, &native));
+}
+#[test]
+fn public_provenance_refuses_missing_legal_and_private_paths() {
+    let (value, native) = fixture();
+    let mut changed = value.clone();
+    changed.legal.pop();
+    assert!(!accepts(&changed, &native));
+    for name in [
+        "C:/Users/tdotn/license.txt",
+        "notices/cuda/license.txt",
+        "airk-cuda-notice-cuda-../license.txt",
+        "airk-cuda-notice-cuda-library.dll",
+    ] {
+        let mut changed = value.clone();
+        changed.legal[1].file.name = name.into();
+        assert!(!accepts(&changed, &native));
+    }
+    let mut changed = value.clone();
+    changed.tools[0].version = Some("C:/private/compiler.log".into());
+    assert!(!accepts(&changed, &native));
+}
+#[test]
+fn public_provenance_refuses_duplicate_or_unknown_fields() -> Result<()> {
+    let (value, native) = fixture();
+    let (raw, _) = raw_asset(&value)?;
+    let text = String::from_utf8(raw)?;
+    for changed in [
+        text.replacen(
+            "{",
+            "{\"schema\":\"airk.native.cuda-runtime-provenance/1\",",
+            1,
+        ),
+        text.replacen("{", "{\"qualified\":true,", 1),
+    ] {
+        let raw = changed.into_bytes();
+        let asset = Asset {
+            name: NAME.into(),
+            role: AssetRole::Notice,
+            bytes: raw.len() as u64,
+            sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
+        };
+        assert!(validate(&raw, &asset, hash(12), &native).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn public_provenance_refuses_shared_core_options_fake_source_kind_and_bounds() {
+    let (value, native) = fixture();
+    let mut changed = value.clone();
+    changed.options[1].value = "ON".into();
+    assert!(!accepts(&changed, &native));
+    let mut changed = value.clone();
+    changed.components[1].source_kind = SourceKind::Archive;
+    assert!(!accepts(&changed, &native));
+    let mut changed = value.clone();
+    changed.aggregate.file.bytes = 0;
+    assert!(!accepts(&changed, &native));
+    let mut changed = value.clone();
+    changed.options.push(changed.options[0].clone());
+    assert!(!accepts(&changed, &native));
+}

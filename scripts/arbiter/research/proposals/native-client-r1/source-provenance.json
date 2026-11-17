@@ -1,0 +1,2007 @@
+{
+  "schema": "airk.source-relocation/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-asset-capacity-repair-r1/capacity_probe.rs",
+      "original_sha256": "e542a7d72b12aadf73606e237061880d796b79b4c590e7425e26098542db353b",
+      "original_bytes": 2116,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e542a7d72b12aadf--capacity_probe.rs.in",
+      "maintained_sha256": "e542a7d72b12aadf73606e237061880d796b79b4c590e7425e26098542db353b",
+      "maintained_bytes": 2116,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r2/native-proposal/attention_diagnostic.rs",
+      "original_sha256": "206179e80c19ad27847a92dbd10c6db77d0b035fac7edd7ae2daff780d5c8ef8",
+      "original_bytes": 11179,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/206179e80c19ad27--attention_diagnostic.rs.in",
+      "maintained_sha256": "206179e80c19ad27847a92dbd10c6db77d0b035fac7edd7ae2daff780d5c8ef8",
+      "maintained_bytes": 11179,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r2/native-proposal/runtime.rs",
+      "original_sha256": "fb8547323fbfe01b4a9067daaa23b5a5cf45170f47c982a7a23009eb06d00358",
+      "original_bytes": 31998,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/fb8547323fbfe01b--runtime.rs.in",
+      "maintained_sha256": "fb8547323fbfe01b4a9067daaa23b5a5cf45170f47c982a7a23009eb06d00358",
+      "maintained_bytes": 31998,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r3/native-proposal/attention_diagnostic.rs",
+      "original_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "original_bytes": 11518,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/55f744f3dd71eb88--attention_diagnostic.rs.in",
+      "maintained_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "maintained_bytes": 11518,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r3/native-proposal/runtime.rs",
+      "original_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "original_bytes": 32874,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/1ff5e6cf73aea28c--runtime.rs.in",
+      "maintained_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "maintained_bytes": 32874,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r4/native-proposal/attention_diagnostic.rs",
+      "original_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "original_bytes": 11518,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/55f744f3dd71eb88--attention_diagnostic.rs.in",
+      "maintained_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "maintained_bytes": 11518,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r4/native-proposal/runtime.rs",
+      "original_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "original_bytes": 32874,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/1ff5e6cf73aea28c--runtime.rs.in",
+      "maintained_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "maintained_bytes": 32874,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r5/native-proposal/attention_diagnostic.rs",
+      "original_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "original_bytes": 11518,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/55f744f3dd71eb88--attention_diagnostic.rs.in",
+      "maintained_sha256": "55f744f3dd71eb8851a475c322d02923faf98a3b3e666f101d45351c245f2be0",
+      "maintained_bytes": 11518,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-attention-proposal-r5/native-proposal/runtime.rs",
+      "original_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "original_bytes": 32874,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/1ff5e6cf73aea28c--runtime.rs.in",
+      "maintained_sha256": "1ff5e6cf73aea28cbf05eb73898cb2a77adbbf2833e397c03c311c65be96da66",
+      "maintained_bytes": 32874,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-native-metadata-proposal-r1/compact_graph.rs",
+      "original_sha256": "146b5f28c99a992236dee9202509a91b34caa48d5d4e0c7c0d6b6d3f996c0379",
+      "original_bytes": 12297,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/146b5f28c99a9922--compact_graph.rs.in",
+      "maintained_sha256": "146b5f28c99a992236dee9202509a91b34caa48d5d4e0c7c0d6b6d3f996c0379",
+      "maintained_bytes": 12297,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-profile-only-proposal-r1/attention_diagnostic.rs",
+      "original_sha256": "f9f2af563652e4c7e1a81ff0f814bc7d40161f1d922f0467f3666bb77cd6b27e",
+      "original_bytes": 11486,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f9f2af563652e4c7--attention_diagnostic.rs.in",
+      "maintained_sha256": "f9f2af563652e4c7e1a81ff0f814bc7d40161f1d922f0467f3666bb77cd6b27e",
+      "maintained_bytes": 11486,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/compact-profile-only-proposal-r1/runtime.rs",
+      "original_sha256": "cb033364afd19570ba8af82f607f050cf2f3e3e7ef3dfdb0167ffd29658d5307",
+      "original_bytes": 31303,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/cb033364afd19570--runtime.rs.in",
+      "maintained_sha256": "cb033364afd19570ba8af82f607f050cf2f3e3e7ef3dfdb0167ffd29658d5307",
+      "maintained_bytes": 31303,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/native_eval_session.cjs",
+      "original_sha256": "d86bfb2188b8ea1d78de86e4efa61d07bdbcca06381fdda7d41c041c72352a1c",
+      "original_bytes": 12634,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d86bfb2188b8ea1d--native_eval_session.cjs",
+      "maintained_sha256": "d86bfb2188b8ea1d78de86e4efa61d07bdbcca06381fdda7d41c041c72352a1c",
+      "maintained_bytes": 12634,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/public-focus-build-observation-repair-r1/duplicate-source-control-r1/failed-applied-baseline.rs",
+      "original_sha256": "f8734c9285dc6844e043ed3625ab1b1162d61839924106b1384962b0b64d4150",
+      "original_bytes": 9642,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f8734c9285dc6844--failed-applied-baseline.rs.in",
+      "maintained_sha256": "f8734c9285dc6844e043ed3625ab1b1162d61839924106b1384962b0b64d4150",
+      "maintained_bytes": 9642,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/public-focus-build-observation-repair-r1/proposed-r3/crates/airk-supervisor/src/runtime_metadata/build_tests.rs",
+      "original_sha256": "f8734c9285dc6844e043ed3625ab1b1162d61839924106b1384962b0b64d4150",
+      "original_bytes": 9642,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f8734c9285dc6844--failed-applied-baseline.rs.in",
+      "maintained_sha256": "f8734c9285dc6844e043ed3625ab1b1162d61839924106b1384962b0b64d4150",
+      "maintained_bytes": 9642,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/public-focus-build-observation-repair-r1/proposed/crates/airk-supervisor/src/runtime_metadata/build_tests.rs",
+      "original_sha256": "b0418896e1db6cf18dbd26852efb49ad606b39c6a1c67b7bb3621e0d80e15ca2",
+      "original_bytes": 9646,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b0418896e1db6cf1--build_tests.rs.in",
+      "maintained_sha256": "b0418896e1db6cf18dbd26852efb49ad606b39c6a1c67b7bb3621e0d80e15ca2",
+      "maintained_bytes": 9646,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal-r2/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs",
+      "original_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "original_bytes": 25691,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ec7cc95e11d4e43a--attention_diagnostic.rs.in",
+      "maintained_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "maintained_bytes": 25691,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal-r2/crates/airk-retrieval/src/arbiter/runtime.rs",
+      "original_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "original_bytes": 37655,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/917c88076ee529a6--runtime.rs.in",
+      "maintained_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "maintained_bytes": 37655,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal-r2/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs",
+      "original_sha256": "7a73f9e6bd72deef6a5e1e439da4702f602fb7fcb632ee2a3d4281ad35f6c6d3",
+      "original_bytes": 31539,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7a73f9e6bd72deef--compact_graph.rs.in",
+      "maintained_sha256": "7a73f9e6bd72deef6a5e1e439da4702f602fb7fcb632ee2a3d4281ad35f6c6d3",
+      "maintained_bytes": 31539,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs",
+      "original_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "original_bytes": 25691,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ec7cc95e11d4e43a--attention_diagnostic.rs.in",
+      "maintained_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "maintained_bytes": 25691,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal/crates/airk-retrieval/src/arbiter/runtime.rs",
+      "original_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "original_bytes": 37655,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/917c88076ee529a6--runtime.rs.in",
+      "maintained_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "maintained_bytes": 37655,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs",
+      "original_sha256": "b9dcf7c0b68ca117a9412334d5a413965ae259c4ee6fb5cb0e58837c85b1e4be",
+      "original_bytes": 23766,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b9dcf7c0b68ca117--regeneration.rs.in",
+      "maintained_sha256": "b9dcf7c0b68ca117a9412334d5a413965ae259c4ee6fb5cb0e58837c85b1e4be",
+      "maintained_bytes": 23766,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/combined-native-proposal/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs",
+      "original_sha256": "7a73f9e6bd72deef6a5e1e439da4702f602fb7fcb632ee2a3d4281ad35f6c6d3",
+      "original_bytes": 31539,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7a73f9e6bd72deef--compact_graph.rs.in",
+      "maintained_sha256": "7a73f9e6bd72deef6a5e1e439da4702f602fb7fcb632ee2a3d4281ad35f6c6d3",
+      "maintained_bytes": 31539,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/native-proposal-r3/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs",
+      "original_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "original_bytes": 25691,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ec7cc95e11d4e43a--attention_diagnostic.rs.in",
+      "maintained_sha256": "ec7cc95e11d4e43a56722a6ebf13ba320cafa12768ed08e9fa6a25331adad591",
+      "maintained_bytes": 25691,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/large-gqa-proposal-r1/dense-mask-proposal-r1/native-proposal-r3/crates/airk-retrieval/src/arbiter/runtime.rs",
+      "original_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "original_bytes": 37655,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/917c88076ee529a6--runtime.rs.in",
+      "maintained_sha256": "917c88076ee529a6d43965a92499d8e5ee7693804e38f842a581a2aa13a9c2cb",
+      "maintained_bytes": 37655,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r1/shared/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r1/shared/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r2/shared/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r2/shared/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r3/shared/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r3/shared/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r4/shared/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-composed-launch-preparation-r4/shared/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r1/helpers/native_eval_session.cjs",
+      "original_sha256": "d86bfb2188b8ea1d78de86e4efa61d07bdbcca06381fdda7d41c041c72352a1c",
+      "original_bytes": 12634,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d86bfb2188b8ea1d--native_eval_session.cjs",
+      "maintained_sha256": "d86bfb2188b8ea1d78de86e4efa61d07bdbcca06381fdda7d41c041c72352a1c",
+      "maintained_bytes": 12634,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r1/helpers/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r1/helpers/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r2/helpers/native_delivery.cjs",
+      "original_sha256": "d4677ba507f417834de668c3567d91e62f3710119dea628ddc3bd192279f393d",
+      "original_bytes": 1167,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d4677ba507f41783--native_delivery.cjs",
+      "maintained_sha256": "d4677ba507f417834de668c3567d91e62f3710119dea628ddc3bd192279f393d",
+      "maintained_bytes": 1167,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r2/helpers/native_eval_session.cjs",
+      "original_sha256": "9aba1abbc1ff535674c6c2965d239d319bedf0f8d82b98548403a3d1a447fd73",
+      "original_bytes": 13204,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9aba1abbc1ff5356--native_eval_session.cjs",
+      "maintained_sha256": "9aba1abbc1ff535674c6c2965d239d319bedf0f8d82b98548403a3d1a447fd73",
+      "maintained_bytes": 13204,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r2/helpers/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r2/helpers/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r2/test_native_delivery.cjs",
+      "original_sha256": "805542f29be1b309cc316c6e11f6325408dab70d9ef6860e4eebd0d624187e90",
+      "original_bytes": 793,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/805542f29be1b309--test_native_delivery.cjs",
+      "maintained_sha256": "805542f29be1b309cc316c6e11f6325408dab70d9ef6860e4eebd0d624187e90",
+      "maintained_bytes": 793,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r3/helpers/native_delivery.cjs",
+      "original_sha256": "d4677ba507f417834de668c3567d91e62f3710119dea628ddc3bd192279f393d",
+      "original_bytes": 1167,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d4677ba507f41783--native_delivery.cjs",
+      "maintained_sha256": "d4677ba507f417834de668c3567d91e62f3710119dea628ddc3bd192279f393d",
+      "maintained_bytes": 1167,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r3/helpers/native_eval_session.cjs",
+      "original_sha256": "9aba1abbc1ff535674c6c2965d239d319bedf0f8d82b98548403a3d1a447fd73",
+      "original_bytes": 13204,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9aba1abbc1ff5356--native_eval_session.cjs",
+      "maintained_sha256": "9aba1abbc1ff535674c6c2965d239d319bedf0f8d82b98548403a3d1a447fd73",
+      "maintained_bytes": 13204,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r3/helpers/native_policy.cjs",
+      "original_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "original_bytes": 872,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "maintained_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "maintained_bytes": 872,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r3/helpers/session_controller.cjs",
+      "original_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "original_bytes": 6187,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "maintained_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "maintained_bytes": 6187,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/r154-fresh-attribution-preparation-r3/test_native_delivery.cjs",
+      "original_sha256": "805542f29be1b309cc316c6e11f6325408dab70d9ef6860e4eebd0d624187e90",
+      "original_bytes": 793,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/805542f29be1b309--test_native_delivery.cjs",
+      "maintained_sha256": "805542f29be1b309cc316c6e11f6325408dab70d9ef6860e4eebd0d624187e90",
+      "maintained_bytes": 793,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/software-v2-native-execution-preparation-r1/operation-proposal/operation.rs",
+      "original_sha256": "3a2126f095c72222b7f770a7beb649fca77fc74e1fe4a71b427b3cf16f4f1419",
+      "original_bytes": 6437,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3a2126f095c72222--operation.rs.in",
+      "maintained_sha256": "3a2126f095c72222b7f770a7beb649fca77fc74e1fe4a71b427b3cf16f4f1419",
+      "maintained_bytes": 6437,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/software-v2-native-execution-preparation-r1/operation-proposal/operation/tests.rs",
+      "original_sha256": "7bdf021d7d1a9cdd56f65301d3a71bf21df4ee5952474d747f6b9b8ad9a8cdc4",
+      "original_bytes": 8949,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7bdf021d7d1a9cdd--tests.rs.in",
+      "maintained_sha256": "7bdf021d7d1a9cdd56f65301d3a71bf21df4ee5952474d747f6b9b8ad9a8cdc4",
+      "maintained_bytes": 8949,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/software-v2-native-execution-preparation-r2/owner-projection-proposal/owned_projection.rs",
+      "original_sha256": "b870b1f8d7ae81fe9f2fb6c7842cca573a5c0faa59f0dd3701e70d2820bcd7ed",
+      "original_bytes": 9191,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b870b1f8d7ae81fe--owned_projection.rs.in",
+      "maintained_sha256": "b870b1f8d7ae81fe9f2fb6c7842cca573a5c0faa59f0dd3701e70d2820bcd7ed",
+      "maintained_bytes": 9191,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/ann-regenerated-dev-query-preparation-r1/ann_self_accessor.rs",
+      "original_sha256": "72bdabf1c837278c0f1b34fceaf77407e71222eb8ab51b01d522b8f50d19cc4d",
+      "original_bytes": 2007,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/72bdabf1c837278c--ann_self_accessor.rs.in",
+      "maintained_sha256": "72bdabf1c837278c0f1b34fceaf77407e71222eb8ab51b01d522b8f50d19cc4d",
+      "maintained_bytes": 2007,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/ann-self-vector-probe-r1/ann_self.rs",
+      "original_sha256": "4e8af664c66700db9b27aac2a1a20324e30b936883f781aee3e6c5854d057952",
+      "original_bytes": 10644,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/4e8af664c66700db--ann_self.rs.in",
+      "maintained_sha256": "4e8af664c66700db9b27aac2a1a20324e30b936883f781aee3e6c5854d057952",
+      "maintained_bytes": 10644,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/ann-self-vector-probe-r1/mutable_seed_fix_r1.rs",
+      "original_sha256": "4308cb48e454d00b7b05c9796d9b51a8a3eb97b65765b49d0c367634668906c1",
+      "original_bytes": 24894,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/4308cb48e454d00b--mutable_seed_fix_r1.rs.in",
+      "maintained_sha256": "4308cb48e454d00b7b05c9796d9b51a8a3eb97b65765b49d0c367634668906c1",
+      "maintained_bytes": 24894,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/ann-self-vector-probe-r1/self_probe.rs",
+      "original_sha256": "24201bbb76f9611034d4583bd7d0c757895b052cf15b08b6bf31005216963a9a",
+      "original_bytes": 11119,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/24201bbb76f96110--self_probe.rs.in",
+      "maintained_sha256": "24201bbb76f9611034d4583bd7d0c757895b052cf15b08b6bf31005216963a9a",
+      "maintained_bytes": 11119,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/frontend-focus-purpose-r1/proposed/crates/airk-mcp/src/focus_handler_tests.rs",
+      "original_sha256": "86e60336e24080767da69414ff4d333aba18c6c6baea1fe3d167c05c1372fcf6",
+      "original_bytes": 22605,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/86e60336e2408076--focus_handler_tests.rs.in",
+      "maintained_sha256": "86e60336e24080767da69414ff4d333aba18c6c6baea1fe3d167c05c1372fcf6",
+      "maintained_bytes": 22605,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-cli/tests/model_catalog.rs",
+      "original_sha256": "c5f386b8e54cc823c7f853cad882436362099da20f3494ff7c98ff30604d553a",
+      "original_bytes": 3913,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c5f386b8e54cc823--model_catalog.rs.in",
+      "maintained_sha256": "c5f386b8e54cc823c7f853cad882436362099da20f3494ff7c98ff30604d553a",
+      "maintained_bytes": 3913,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-host/build.rs",
+      "original_sha256": "78fa51e23694ac68eb7a754c0b9b0b11ec389dfe2245b77619b5b27b2410b60b",
+      "original_bytes": 5431,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/78fa51e23694ac68--build.rs.in",
+      "maintained_sha256": "78fa51e23694ac68eb7a754c0b9b0b11ec389dfe2245b77619b5b27b2410b60b",
+      "maintained_bytes": 5431,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-kernel/src/shared_models.rs",
+      "original_sha256": "2efd4247d459946b1faedbb66a197068f94d187887eacac61c3bd8fe52e1b0e3",
+      "original_bytes": 14063,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2efd4247d459946b--shared_models.rs.in",
+      "maintained_sha256": "2efd4247d459946b1faedbb66a197068f94d187887eacac61c3bd8fe52e1b0e3",
+      "maintained_bytes": 14063,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-kernel/src/shared_models/embedded_tests.rs",
+      "original_sha256": "c79e5ee4e3d18ba4bc67a325877a966a76e32ad736082dc74ddfdb31d8fc6bd9",
+      "original_bytes": 12374,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c79e5ee4e3d18ba4--embedded_tests.rs.in",
+      "maintained_sha256": "c79e5ee4e3d18ba4bc67a325877a966a76e32ad736082dc74ddfdb31d8fc6bd9",
+      "maintained_bytes": 12374,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-retrieval/src/model.rs",
+      "original_sha256": "f52d667ed1d4055cfa25bb2cd33f70a1ab523b5c9c3ea9e046bfa6faa4b4243a",
+      "original_bytes": 59903,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f52d667ed1d4055c--model.rs.in",
+      "maintained_sha256": "f52d667ed1d4055cfa25bb2cd33f70a1ab523b5c9c3ea9e046bfa6faa4b4243a",
+      "maintained_bytes": 59903,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-retrieval/src/model/object_metadata_tests.rs",
+      "original_sha256": "c86c615551514cad8e83541b908624026a92247bc580a96d422b5e55caa186d9",
+      "original_bytes": 20153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c86c615551514cad--object_metadata_tests.rs.in",
+      "maintained_sha256": "c86c615551514cad8e83541b908624026a92247bc580a96d422b5e55caa186d9",
+      "maintained_bytes": 20153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-retrieval/src/model_catalog.rs",
+      "original_sha256": "049a19744412645d1c87d303e970e7436a6fd7f01e84175b87753eb65d5b0f13",
+      "original_bytes": 14747,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/049a19744412645d--model_catalog.rs.in",
+      "maintained_sha256": "049a19744412645d1c87d303e970e7436a6fd7f01e84175b87753eb65d5b0f13",
+      "maintained_bytes": 14747,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-retrieval/src/model_catalog/baseline_emitter.rs",
+      "original_sha256": "501ae63d6bb14d73825f5b97e5bb86802ebd993206fdb4b6f50a97088ea6c33b",
+      "original_bytes": 5718,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/501ae63d6bb14d73--baseline_emitter.rs.in",
+      "maintained_sha256": "501ae63d6bb14d73825f5b97e5bb86802ebd993206fdb4b6f50a97088ea6c33b",
+      "maintained_bytes": 5718,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/coherent-source-r1/crates/airk-retrieval/src/model_catalog/policy_cases.rs",
+      "original_sha256": "88e13fb3678fac80930f782356f82f892aff442ae6e9c571552af39e70efa106",
+      "original_bytes": 3368,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/88e13fb3678fac80--policy_cases.rs.in",
+      "maintained_sha256": "88e13fb3678fac80930f782356f82f892aff442ae6e9c571552af39e70efa106",
+      "maintained_bytes": 3368,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/consumers/crates/airk-cli/tests/model_catalog.rs",
+      "original_sha256": "c5f386b8e54cc823c7f853cad882436362099da20f3494ff7c98ff30604d553a",
+      "original_bytes": 3913,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c5f386b8e54cc823--model_catalog.rs.in",
+      "maintained_sha256": "c5f386b8e54cc823c7f853cad882436362099da20f3494ff7c98ff30604d553a",
+      "maintained_bytes": 3913,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/consumers/crates/airk-host/build.rs",
+      "original_sha256": "78fa51e23694ac68eb7a754c0b9b0b11ec389dfe2245b77619b5b27b2410b60b",
+      "original_bytes": 5431,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/78fa51e23694ac68--build.rs.in",
+      "maintained_sha256": "78fa51e23694ac68eb7a754c0b9b0b11ec389dfe2245b77619b5b27b2410b60b",
+      "maintained_bytes": 5431,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/consumers/crates/airk-retrieval/src/model/object_metadata_tests.rs",
+      "original_sha256": "513fc7f39dd4c00a5e3024f3784145ae0a449552dbc59e7246bad0cea8b58d8e",
+      "original_bytes": 17148,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/513fc7f39dd4c00a--object_metadata_tests.rs.in",
+      "maintained_sha256": "513fc7f39dd4c00a5e3024f3784145ae0a449552dbc59e7246bad0cea8b58d8e",
+      "maintained_bytes": 17148,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/consumers/crates/airk-retrieval/src/model_catalog/policy_cases.rs",
+      "original_sha256": "88e13fb3678fac80930f782356f82f892aff442ae6e9c571552af39e70efa106",
+      "original_bytes": 3368,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/88e13fb3678fac80--policy_cases.rs.in",
+      "maintained_sha256": "88e13fb3678fac80930f782356f82f892aff442ae6e9c571552af39e70efa106",
+      "maintained_bytes": 3368,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/rust/crates/airk-retrieval/src/model_catalog.rs",
+      "original_sha256": "049a19744412645d1c87d303e970e7436a6fd7f01e84175b87753eb65d5b0f13",
+      "original_bytes": 14747,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/049a19744412645d--model_catalog.rs.in",
+      "maintained_sha256": "049a19744412645d1c87d303e970e7436a6fd7f01e84175b87753eb65d5b0f13",
+      "maintained_bytes": 14747,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-original-baseline-r1/rust/crates/airk-retrieval/src/model_catalog/baseline_emitter.rs",
+      "original_sha256": "501ae63d6bb14d73825f5b97e5bb86802ebd993206fdb4b6f50a97088ea6c33b",
+      "original_bytes": 5718,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/501ae63d6bb14d73--baseline_emitter.rs.in",
+      "maintained_sha256": "501ae63d6bb14d73825f5b97e5bb86802ebd993206fdb4b6f50a97088ea6c33b",
+      "maintained_bytes": 5718,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/epoch1-promotion/crates/airk-cli/tests/model_catalog.rs",
+      "original_sha256": "53a41d2ba89ab18b9a9df91afddada180545760ff23c3b0c6363b729df0dad3a",
+      "original_bytes": 4291,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/53a41d2ba89ab18b--model_catalog.rs.in",
+      "maintained_sha256": "53a41d2ba89ab18b9a9df91afddada180545760ff23c3b0c6363b729df0dad3a",
+      "maintained_bytes": 4291,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/epoch1-promotion/crates/airk-host/build.rs",
+      "original_sha256": "4737cd794078aea1b22b0526124ba34a660a3077eba5a0f549352f567618ce5c",
+      "original_bytes": 5450,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/4737cd794078aea1--build.rs.in",
+      "maintained_sha256": "4737cd794078aea1b22b0526124ba34a660a3077eba5a0f549352f567618ce5c",
+      "maintained_bytes": 5450,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/epoch1-promotion/crates/airk-retrieval/src/model/object_metadata_tests.rs",
+      "original_sha256": "c86c615551514cad8e83541b908624026a92247bc580a96d422b5e55caa186d9",
+      "original_bytes": 20153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c86c615551514cad--object_metadata_tests.rs.in",
+      "maintained_sha256": "c86c615551514cad8e83541b908624026a92247bc580a96d422b5e55caa186d9",
+      "maintained_bytes": 20153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/epoch1-promotion/crates/airk-retrieval/src/model_catalog.rs",
+      "original_sha256": "439adbfa9483616ad26763eca67bc2706adbfc0e4975335fe0fe64695202ebec",
+      "original_bytes": 16632,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/439adbfa9483616a--model_catalog.rs.in",
+      "maintained_sha256": "439adbfa9483616ad26763eca67bc2706adbfc0e4975335fe0fe64695202ebec",
+      "maintained_bytes": 16632,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/epoch1-promotion/crates/airk-retrieval/src/model_catalog/promotion.rs",
+      "original_sha256": "f656a7e68c36c5dd062d4f9e3975b6da535fb222b6f581c98bace06eae85c196",
+      "original_bytes": 7113,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f656a7e68c36c5dd--promotion.rs.in",
+      "maintained_sha256": "f656a7e68c36c5dd062d4f9e3975b6da535fb222b6f581c98bace06eae85c196",
+      "maintained_bytes": 7113,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/metadata/crates/airk-kernel/src/shared_models.rs",
+      "original_sha256": "2efd4247d459946b1faedbb66a197068f94d187887eacac61c3bd8fe52e1b0e3",
+      "original_bytes": 14063,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2efd4247d459946b--shared_models.rs.in",
+      "maintained_sha256": "2efd4247d459946b1faedbb66a197068f94d187887eacac61c3bd8fe52e1b0e3",
+      "maintained_bytes": 14063,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/metadata/crates/airk-kernel/src/shared_models/embedded_tests.rs",
+      "original_sha256": "c79e5ee4e3d18ba4bc67a325877a966a76e32ad736082dc74ddfdb31d8fc6bd9",
+      "original_bytes": 12374,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c79e5ee4e3d18ba4--embedded_tests.rs.in",
+      "maintained_sha256": "c79e5ee4e3d18ba4bc67a325877a966a76e32ad736082dc74ddfdb31d8fc6bd9",
+      "maintained_bytes": 12374,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/metadata/crates/airk-retrieval/src/model.rs",
+      "original_sha256": "f52d667ed1d4055cfa25bb2cd33f70a1ab523b5c9c3ea9e046bfa6faa4b4243a",
+      "original_bytes": 59903,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f52d667ed1d4055c--model.rs.in",
+      "maintained_sha256": "f52d667ed1d4055cfa25bb2cd33f70a1ab523b5c9c3ea9e046bfa6faa4b4243a",
+      "maintained_bytes": 59903,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/metadata/crates/airk-retrieval/src/model/object_metadata_tests.rs",
+      "original_sha256": "be77cc6b82914ef17af8f519b450af7dae507d017ee75752b1d9f49e84b7c5df",
+      "original_bytes": 20153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/be77cc6b82914ef1--object_metadata_tests.rs.in",
+      "maintained_sha256": "be77cc6b82914ef17af8f519b450af7dae507d017ee75752b1d9f49e84b7c5df",
+      "maintained_bytes": 20153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-minilm-production-decision-r1/metadata/crates/airk-retrieval/src/model_catalog.rs",
+      "original_sha256": "313d4f3bc4ef1c0b9ff5eefa0efa8ea9590500a74e7b20c1e7cc956527406ef2",
+      "original_bytes": 16602,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/313d4f3bc4ef1c0b--model_catalog.rs.in",
+      "maintained_sha256": "313d4f3bc4ef1c0b9ff5eefa0efa8ea9590500a74e7b20c1e7cc956527406ef2",
+      "maintained_bytes": 16602,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-source-r1/native_parent_bag.rs",
+      "original_sha256": "a06d16a462ec87784e7ea1c014c4501e6f2ba7c2b51f7175df10bbd19be41d98",
+      "original_bytes": 26243,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a06d16a462ec8778--native_parent_bag.rs.in",
+      "maintained_sha256": "a06d16a462ec87784e7ea1c014c4501e6f2ba7c2b51f7175df10bbd19be41d98",
+      "maintained_bytes": 26243,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-proposal-r1/train_units-phase-d821-retained.rs",
+      "original_sha256": "d821fb6614516b1ddd87ae516d3f15434d60aec5190e8ea71c68769882042048",
+      "original_bytes": 20399,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d821fb6614516b1d--train_units-phase-d821-retained.rs.in",
+      "maintained_sha256": "d821fb6614516b1ddd87ae516d3f15434d60aec5190e8ea71c68769882042048",
+      "maintained_bytes": 20399,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-proposal-r1/train_units.rs",
+      "original_sha256": "2cbce4f5a937a6401d6b87dfde3334fd165b5de78d6f289e5dd59231193c66dd",
+      "original_bytes": 17441,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2cbce4f5a937a640--train_units.rs.in",
+      "maintained_sha256": "2cbce4f5a937a6401d6b87dfde3334fd165b5de78d6f289e5dd59231193c66dd",
+      "maintained_bytes": 17441,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/root-mounted-backup-r1/context.rs",
+      "original_sha256": "ea615941d9dac7c9ab6a2d0d8b0f8b1ec11187c170d51b510c94ad59f3a7a2af",
+      "original_bytes": 11816,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ea615941d9dac7c9--context.rs.in",
+      "maintained_sha256": "ea615941d9dac7c9ab6a2d0d8b0f8b1ec11187c170d51b510c94ad59f3a7a2af",
+      "maintained_bytes": 11816,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/native_eval_session.cjs",
+      "original_sha256": "cd6e8937ff58cb20633bbe8b98a8dfd026f2275bd3058060c90c27f95752eceb",
+      "original_bytes": 14015,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/cd6e8937ff58cb20--native_eval_session.cjs",
+      "maintained_sha256": "cd6e8937ff58cb20633bbe8b98a8dfd026f2275bd3058060c90c27f95752eceb",
+      "maintained_bytes": 14015,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/test_native_eval_session.cjs",
+      "original_sha256": "56bb8597be39f4cfaae4f620583d394c6eb974968ebf63676bd6bdc5bd21f890",
+      "original_bytes": 9475,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/56bb8597be39f4cf--test_native_eval_session.cjs",
+      "maintained_sha256": "56bb8597be39f4cfaae4f620583d394c6eb974968ebf63676bd6bdc5bd21f890",
+      "maintained_bytes": 9475,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/mount-backup-r1/crates/airk-kernel/src/inference_owner/context_action_calibration_tests.rs",
+      "original_sha256": "fb91c1a61cc2d36eef9ebe17814f73c21649a987805bb2184dde7b4fd2c4bac1",
+      "original_bytes": 23592,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/fb91c1a61cc2d36e--context_action_calibration_tests.rs.in",
+      "maintained_sha256": "fb91c1a61cc2d36eef9ebe17814f73c21649a987805bb2184dde7b4fd2c4bac1",
+      "maintained_bytes": 23592,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/mount-backup-r1/crates/airk-service/src/service_runtime/arbiter.rs",
+      "original_sha256": "c585a175d38fee1a22346c6f4cde16aeff29a9c9dadbbe2b4923c59655efff37",
+      "original_bytes": 31835,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c585a175d38fee1a--arbiter.rs.in",
+      "maintained_sha256": "c585a175d38fee1a22346c6f4cde16aeff29a9c9dadbbe2b4923c59655efff37",
+      "maintained_bytes": 31835,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/mount-backup-r1/crates/airk-service/src/service_runtime/arbiter/evaluation.rs",
+      "original_sha256": "448f934e5b4d60a902be78eb984a51ba95971aed68ab722ed8cf2e8e842943b5",
+      "original_bytes": 5928,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/448f934e5b4d60a9--evaluation.rs.in",
+      "maintained_sha256": "448f934e5b4d60a902be78eb984a51ba95971aed68ab722ed8cf2e8e842943b5",
+      "maintained_bytes": 5928,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/mount-backup-r1/crates/airk-service/src/service_runtime/arbiter/joint_scoring.rs",
+      "original_sha256": "aa06677f09296d86b946f48da25b35bd33da26f952bdf5508ce958273a6c7367",
+      "original_bytes": 15641,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/aa06677f09296d86--joint_scoring.rs.in",
+      "maintained_sha256": "aa06677f09296d86b946f48da25b35bd33da26f952bdf5508ce958273a6c7367",
+      "maintained_bytes": 15641,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/mount-backup-r1/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs",
+      "original_sha256": "3479381ea87c53d37703ee9655c16b14eccb7e75c583e3a851119014aaad72ed",
+      "original_bytes": 51312,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3479381ea87c53d3--evaluation_fixture_tests.rs.in",
+      "maintained_sha256": "3479381ea87c53d37703ee9655c16b14eccb7e75c583e3a851119014aaad72ed",
+      "maintained_bytes": 51312,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-preparation/historical-focus-off-preparation/kernel-selected-raw.rs",
+      "original_sha256": "629dee19f1deac0fe89573208d78f8d06e0e12286c98408c9c2f17606d1cc5ca",
+      "original_bytes": 7499,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/629dee19f1deac0f--kernel-selected-raw.rs.in",
+      "maintained_sha256": "629dee19f1deac0fe89573208d78f8d06e0e12286c98408c9c2f17606d1cc5ca",
+      "maintained_bytes": 7499,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-preparation/kernel-selected-fit.rs",
+      "original_sha256": "64f594b7db11642d5c6791153219fb6a9b9d61dfbfb6262d94f7c88d8f7c1dfa",
+      "original_bytes": 11418,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/64f594b7db11642d--kernel-selected-fit.rs.in",
+      "maintained_sha256": "64f594b7db11642d5c6791153219fb6a9b9d61dfbfb6262d94f7c88d8f7c1dfa",
+      "maintained_bytes": 11418,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-preparation/kernel-selected-raw.rs",
+      "original_sha256": "629dee19f1deac0fe89573208d78f8d06e0e12286c98408c9c2f17606d1cc5ca",
+      "original_bytes": 7499,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/629dee19f1deac0f--kernel-selected-raw.rs.in",
+      "maintained_sha256": "629dee19f1deac0fe89573208d78f8d06e0e12286c98408c9c2f17606d1cc5ca",
+      "maintained_bytes": 7499,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-preparation/service-cal-recorder.append.rs",
+      "original_sha256": "103274e0b6a55bf0a2844e8f30880c09306a8efe6264de1c0f1c5838e53f9ab8",
+      "original_bytes": 9456,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/103274e0b6a55bf0--service-cal-recorder.append.rs.in",
+      "maintained_sha256": "103274e0b6a55bf0a2844e8f30880c09306a8efe6264de1c0f1c5838e53f9ab8",
+      "maintained_bytes": 9456,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/native_eval_session.cjs",
+      "original_sha256": "3c29528b3116d1126983770ea91cf38b6613f01d6cd71569ae477dbc42638674",
+      "original_bytes": 12397,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3c29528b3116d112--native_eval_session.cjs",
+      "maintained_sha256": "3c29528b3116d1126983770ea91cf38b6613f01d6cd71569ae477dbc42638674",
+      "maintained_bytes": 12397,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/candidate.rs",
+      "original_sha256": "e6caf74bcf70606973c6e2fa1ef290043dd6a52b488e113c8ec11147dc8b3094",
+      "original_bytes": 25037,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e6caf74bcf706069--candidate.rs.in",
+      "maintained_sha256": "e6caf74bcf70606973c6e2fa1ef290043dd6a52b488e113c8ec11147dc8b3094",
+      "maintained_bytes": 25037,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/actual-large-finalize-patch-r1/acquisition.rs",
+      "original_sha256": "a342c7a0823b1468f88b5c949a80fd616e7c6c24029a0f759ca80f0c43bfba0e",
+      "original_bytes": 14171,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a342c7a0823b1468--acquisition.rs.in",
+      "maintained_sha256": "a342c7a0823b1468f88b5c949a80fd616e7c6c24029a0f759ca80f0c43bfba0e",
+      "maintained_bytes": 14171,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/actual-large-finalize-patch-r1/acquisition_fixture.rs",
+      "original_sha256": "a4d6bc19c258a02ffbbb090d85bee2983465b21f9a659ec4b7283144bcddbee8",
+      "original_bytes": 7275,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a4d6bc19c258a02f--acquisition_fixture.rs.in",
+      "maintained_sha256": "a4d6bc19c258a02ffbbb090d85bee2983465b21f9a659ec4b7283144bcddbee8",
+      "maintained_bytes": 7275,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/actual-large-finalize-patch-r1/evaluation.rs",
+      "original_sha256": "e40624d2735c406c3e0ad604c19198414205f8053c0befc7785e3f1115c506b6",
+      "original_bytes": 12502,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e40624d2735c406c--evaluation.rs.in",
+      "maintained_sha256": "e40624d2735c406c3e0ad604c19198414205f8053c0befc7785e3f1115c506b6",
+      "maintained_bytes": 12502,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/actual-large-finalize-patch-r2/evaluation.rs",
+      "original_sha256": "e40624d2735c406c3e0ad604c19198414205f8053c0befc7785e3f1115c506b6",
+      "original_bytes": 12502,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e40624d2735c406c--evaluation.rs.in",
+      "maintained_sha256": "e40624d2735c406c3e0ad604c19198414205f8053c0befc7785e3f1115c506b6",
+      "maintained_bytes": 12502,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/path-correction-r3/literal-fixture/workspace/crates/probe/src/lib.rs",
+      "original_sha256": "b3d2a6de887427c3611a8cc857735d1082dae709a2d258fa7d9144ed0b68676b",
+      "original_bytes": 58,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b3d2a6de887427c3--lib.rs.in",
+      "maintained_sha256": "b3d2a6de887427c3611a8cc857735d1082dae709a2d258fa7d9144ed0b68676b",
+      "maintained_bytes": 58,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/singleton-capture-correction-r1/ann_query.after.rs",
+      "original_sha256": "9d9255e62899246e8b187048ebfbd35e465d50f3de6c8d8955dcf92108eb55ae",
+      "original_bytes": 55028,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9d9255e62899246e--ann_query.after.rs.in",
+      "maintained_sha256": "9d9255e62899246e8b187048ebfbd35e465d50f3de6c8d8955dcf92108eb55ae",
+      "maintained_bytes": 55028,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/singleton-capture-correction-r2/ann_query.after.rs",
+      "original_sha256": "5ecae0779faa36852de20d7196f495ef07210dee54652603979bc2ab22d632f3",
+      "original_bytes": 57136,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/5ecae0779faa3685--ann_query.after.rs.in",
+      "maintained_sha256": "5ecae0779faa36852de20d7196f495ef07210dee54652603979bc2ab22d632f3",
+      "maintained_bytes": 57136,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/singleton-capture-correction-r2/ann_query.before-r2.rs",
+      "original_sha256": "fc1ca705748b8ecda5439b2c327b6ecd5dc4a61a104df2f3ff4868f297ea1707",
+      "original_bytes": 56248,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/fc1ca705748b8ecd--ann_query.before-r2.rs.in",
+      "maintained_sha256": "fc1ca705748b8ecda5439b2c327b6ecd5dc4a61a104df2f3ff4868f297ea1707",
+      "maintained_bytes": 56248,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/singleton-fixture-split-r1/ann_query.before.rs",
+      "original_sha256": "5ecae0779faa36852de20d7196f495ef07210dee54652603979bc2ab22d632f3",
+      "original_bytes": 57136,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/5ecae0779faa3685--ann_query.after.rs.in",
+      "maintained_sha256": "5ecae0779faa36852de20d7196f495ef07210dee54652603979bc2ab22d632f3",
+      "maintained_bytes": 57136,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-final-graph-metadata-proposal-r1/base-c-api.cc",
+      "original_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "original_bytes": 209918,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7acabdbefcd7ee39--base-c-api.cc",
+      "maintained_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "maintained_bytes": 209918,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-final-graph-metadata-proposal-r1/final-graph-metadata.after.cc",
+      "original_sha256": "db00479a06d0a1e8fadf4cc834ffe5a6da0b745ee2820b06a0821fb1dbeca97b",
+      "original_bytes": 223857,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/db00479a06d0a1e8--final-graph-metadata.after.cc",
+      "maintained_sha256": "db00479a06d0a1e8fadf4cc834ffe5a6da0b745ee2820b06a0821fb1dbeca97b",
+      "maintained_bytes": 223857,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-final-graph-metadata-proposal-r1/graph_metadata.rs",
+      "original_sha256": "56a8cd4912e98b53bda94d2462f22cb13cdf927301957f773045c538cefe55d6",
+      "original_bytes": 30161,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/56a8cd4912e98b53--graph_metadata.rs.in",
+      "maintained_sha256": "56a8cd4912e98b53bda94d2462f22cb13cdf927301957f773045c538cefe55d6",
+      "maintained_bytes": 30161,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-final-graph-metadata-proposal-r1/graph_metadata_tests.rs",
+      "original_sha256": "9957501fba303892574c361858c6f3db460180093ea3d4573af93ddc9f40c806",
+      "original_bytes": 10272,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9957501fba303892--graph_metadata_tests.rs.in",
+      "maintained_sha256": "9957501fba303892574c361858c6f3db460180093ea3d4573af93ddc9f40c806",
+      "maintained_bytes": 10272,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-fp16-streaming-proposal-r1/emitter-integration.rs",
+      "original_sha256": "3f7b83766c2e78990e93c13454f7423dec808ed28ef825145312e276b0dd7a81",
+      "original_bytes": 2464,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3f7b83766c2e7899--emitter-integration.rs.in",
+      "maintained_sha256": "3f7b83766c2e78990e93c13454f7423dec808ed28ef825145312e276b0dd7a81",
+      "maintained_bytes": 2464,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-graph-native-emitter-proposal-r1/cuda_qualification.rs",
+      "original_sha256": "5449b2cd7eab578aa4ad7ddc9f69eb998a2a3c66340971c128aa98ddd66c1d54",
+      "original_bytes": 87814,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/5449b2cd7eab578a--cuda_qualification.rs.in",
+      "maintained_sha256": "5449b2cd7eab578aa4ad7ddc9f69eb998a2a3c66340971c128aa98ddd66c1d54",
+      "maintained_bytes": 87814,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs",
+      "original_sha256": "d92b156846cfda60783cad7d555455847116313e199035e1554118b6b8b42855",
+      "original_bytes": 27604,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d92b156846cfda60--cuda_qualification.rs.in",
+      "maintained_sha256": "d92b156846cfda60783cad7d555455847116313e199035e1554118b6b8b42855",
+      "maintained_bytes": 27604,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/cuda.rs",
+      "original_sha256": "a292f95f2432e8730c264dd5f09c972475ba47f92d8a502e8203bbcc7e3e4d0b",
+      "original_bytes": 31580,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a292f95f2432e873--cuda.rs.in",
+      "maintained_sha256": "a292f95f2432e8730c264dd5f09c972475ba47f92d8a502e8203bbcc7e3e4d0b",
+      "maintained_bytes": 31580,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/cuda/context.rs",
+      "original_sha256": "0901dd98710d918999b28080df5f86c89210cceb636ea72c47579d2800a3e95e",
+      "original_bytes": 3604,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/0901dd98710d9189--context.rs.in",
+      "maintained_sha256": "0901dd98710d918999b28080df5f86c89210cceb636ea72c47579d2800a3e95e",
+      "maintained_bytes": 3604,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",
+      "original_sha256": "3c71f023067a0aa2405027176d2dc542b6f5b04f2b28ae29fe70624299e42ed2",
+      "original_bytes": 5124,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3c71f023067a0aa2--run.rs.in",
+      "maintained_sha256": "3c71f023067a0aa2405027176d2dc542b6f5b04f2b28ae29fe70624299e42ed2",
+      "maintained_bytes": 5124,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs",
+      "original_sha256": "21d557f0969eed51c8052090cbd9f9fa845203a296d7d36b4c89fcbc8f6a2069",
+      "original_bytes": 13485,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/21d557f0969eed51--tests.rs.in",
+      "maintained_sha256": "21d557f0969eed51c8052090cbd9f9fa845203a296d7d36b4c89fcbc8f6a2069",
+      "maintained_bytes": 13485,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs",
+      "original_sha256": "60639e38fd4ecac12b7c70142b358d648b959e93db54c0ca2c4163d9f3ec306e",
+      "original_bytes": 30367,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/60639e38fd4ecac1--windows.rs.in",
+      "maintained_sha256": "60639e38fd4ecac12b7c70142b358d648b959e93db54c0ca2c4163d9f3ec306e",
+      "maintained_bytes": 30367,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-retrieval/src/arbiter/runtime/qualification.rs",
+      "original_sha256": "ff5b8f726c0f434a66f15509c223d109e9fc51c1af06a5568b9b75584424e13b",
+      "original_bytes": 18302,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ff5b8f726c0f434a--qualification.rs.in",
+      "maintained_sha256": "ff5b8f726c0f434a66f15509c223d109e9fc51c1af06a5568b9b75584424e13b",
+      "maintained_bytes": 18302,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-service/src/service_runtime/arbiter.rs",
+      "original_sha256": "551bd36d6fab694a2b772eac175d8517263e519674930440f3e5647c105a9105",
+      "original_bytes": 38065,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/551bd36d6fab694a--arbiter.rs.in",
+      "maintained_sha256": "551bd36d6fab694a2b772eac175d8517263e519674930440f3e5647c105a9105",
+      "maintained_bytes": 38065,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-service/src/service_runtime/arbiter/device_management.rs",
+      "original_sha256": "ca0ccc1c9e10fd8f86b5b281aa7090db8793d96dd5da45d5f1a3be861d1e708c",
+      "original_bytes": 91426,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ca0ccc1c9e10fd8f--device_management.rs.in",
+      "maintained_sha256": "ca0ccc1c9e10fd8f86b5b281aa7090db8793d96dd5da45d5f1a3be861d1e708c",
+      "maintained_bytes": 91426,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-service/src/service_runtime/arbiter/lifecycle.rs",
+      "original_sha256": "9b8532df222220349ca1f108ae4e3fb59c625bb02d924f96b6041accede1c59f",
+      "original_bytes": 108342,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9b8532df22222034--lifecycle.rs.in",
+      "maintained_sha256": "9b8532df222220349ca1f108ae4e3fb59c625bb02d924f96b6041accede1c59f",
+      "maintained_bytes": 108342,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-higher-consumers-application-r1/payload/crates/airk-service/src/service_runtime/arbiter/policy_delivery/tests.rs",
+      "original_sha256": "3bc8f68faa3638a29a6e142d684f2815f6fdd6c5a454b8eaad499caa946d7300",
+      "original_bytes": 9626,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3bc8f68faa3638a2--tests.rs.in",
+      "maintained_sha256": "3bc8f68faa3638a29a6e142d684f2815f6fdd6c5a454b8eaad499caa946d7300",
+      "maintained_bytes": 9626,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-incremental-provenance-proposal-r1/incremental-tests.rs",
+      "original_sha256": "9b844c55a291cf3703b27983a49e981546402515f3f7576552749a6872adb4aa",
+      "original_bytes": 8786,
+      "destination": "crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/incremental/tests.rs",
+      "maintained_sha256": "9b844c55a291cf3703b27983a49e981546402515f3f7576552749a6872adb4aa",
+      "maintained_bytes": 8786,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-incremental-provenance-proposal-r1/incremental.rs",
+      "original_sha256": "446dd7de5445270d43de8196545819f5c89ab867d70664bc9f3d71a9e7d32f14",
+      "original_bytes": 27258,
+      "destination": "crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/incremental.rs",
+      "maintained_sha256": "446dd7de5445270d43de8196545819f5c89ab867d70664bc9f3d71a9e7d32f14",
+      "maintained_bytes": 27258,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r10/onnxruntime_c_api.cc",
+      "original_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "original_bytes": 209918,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7acabdbefcd7ee39--base-c-api.cc",
+      "maintained_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "maintained_bytes": 209918,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r11/onnxruntime_c_api.cc",
+      "original_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "original_bytes": 209918,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7acabdbefcd7ee39--base-c-api.cc",
+      "maintained_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "maintained_bytes": 209918,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r12/onnxruntime_c_api.cc",
+      "original_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "original_bytes": 209918,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7acabdbefcd7ee39--base-c-api.cc",
+      "maintained_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "maintained_bytes": 209918,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r6/airk_ort_final_placement_v1.h",
+      "original_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "original_bytes": 1153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/362ad1828bfc33a0--airk_ort_final_placement_v1.h",
+      "maintained_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "maintained_bytes": 1153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r6/final-placement.after.cc",
+      "original_sha256": "c7d3d18d4546ae9895c5b60dfb18fc275702df9e5e13e6f99a54ef49393f14bb",
+      "original_bytes": 209482,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/c7d3d18d4546ae98--final-placement.after.cc",
+      "maintained_sha256": "c7d3d18d4546ae9895c5b60dfb18fc275702df9e5e13e6f99a54ef49393f14bb",
+      "maintained_bytes": 209482,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r7/airk_ort_final_placement_v1.h",
+      "original_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "original_bytes": 1153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/362ad1828bfc33a0--airk_ort_final_placement_v1.h",
+      "maintained_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "maintained_bytes": 1153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r7/final-placement.after.cc",
+      "original_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
+      "original_bytes": 209504,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b8fb1b76bfb49b9d--final-placement.after.cc",
+      "maintained_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
+      "maintained_bytes": 209504,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r8/airk_ort_final_placement_v1.h",
+      "original_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "original_bytes": 1153,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/362ad1828bfc33a0--airk_ort_final_placement_v1.h",
+      "maintained_sha256": "362ad1828bfc33a0d3c8c11d041a2d956bbf4e0152933df86c2c39547ed5e062",
+      "maintained_bytes": 1153,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r8/final-placement.after.cc",
+      "original_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
+      "original_bytes": 209504,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b8fb1b76bfb49b9d--final-placement.after.cc",
+      "maintained_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
+      "maintained_bytes": 209504,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r9/onnxruntime_c_api.cc",
+      "original_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "original_bytes": 209918,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7acabdbefcd7ee39--base-c-api.cc",
+      "maintained_sha256": "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8",
+      "maintained_bytes": 209918,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/proposed-r2/onnxruntime/core/platform/windows/env.cc",
+      "original_sha256": "2d3249b4ab640616375dbaff45f513f94d1e426e84f27a708dd645a5f2a0db4f",
+      "original_bytes": 49482,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2d3249b4ab640616--env.cc",
+      "maintained_sha256": "2d3249b4ab640616375dbaff45f513f94d1e426e84f27a708dd645a5f2a0db4f",
+      "maintained_bytes": 49482,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/proposed/onnxruntime/core/platform/windows/env.cc",
+      "original_sha256": "09fe9de162d6c1859f25a6369d48bc27003dc0d019557228aeb51267d840fe11",
+      "original_bytes": 49394,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/09fe9de162d6c185--env.cc",
+      "maintained_sha256": "09fe9de162d6c1859f25a6369d48bc27003dc0d019557228aeb51267d840fe11",
+      "maintained_bytes": 49394,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/proposed/onnxruntime/core/providers/cuda/cudnn_loader.cc",
+      "original_sha256": "663582043d68c6a3cb2ce5e841f111dd6b06832c8f02392cdaa097151f1f206f",
+      "original_bytes": 5407,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/663582043d68c6a3--cudnn_loader.cc",
+      "maintained_sha256": "663582043d68c6a3cb2ce5e841f111dd6b06832c8f02392cdaa097151f1f206f",
+      "maintained_bytes": 5407,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/proposed/onnxruntime/core/providers/cuda/cufft_loader.cc",
+      "original_sha256": "9d139928cf9a5256e9c4654ec2f7a35dae1a94638004574f8551126ae0682a0d",
+      "original_bytes": 5034,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9d139928cf9a5256--cufft_loader.cc",
+      "maintained_sha256": "9d139928cf9a5256e9c4654ec2f7a35dae1a94638004574f8551126ae0682a0d",
+      "maintained_bytes": 5034,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/native-failure/stub.cs",
+      "original_sha256": "76e8a69e3585a349382dcf62f5399316dabe03190e1e430bf720fa3a689f0c87",
+      "original_bytes": 4789,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/76e8a69e3585a349--stub.cs",
+      "maintained_sha256": "76e8a69e3585a349382dcf62f5399316dabe03190e1e430bf720fa3a689f0c87",
+      "maintained_bytes": 4789,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/path-failure/stub.cs",
+      "original_sha256": "18bdea3568e628cb6172efe690b5c79646ce9530730a35fe3fe45b706726619f",
+      "original_bytes": 4787,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/18bdea3568e628cb--stub.cs",
+      "maintained_sha256": "18bdea3568e628cb6172efe690b5c79646ce9530730a35fe3fe45b706726619f",
+      "maintained_bytes": 4787,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/resume-finalization/stub.cs",
+      "original_sha256": "189d6f6dc44215490c2063249a5279be0d1b82afbd69f0e0c907d1d1cb814e55",
+      "original_bytes": 4794,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/189d6f6dc4421549--stub.cs",
+      "maintained_sha256": "189d6f6dc44215490c2063249a5279be0d1b82afbd69f0e0c907d1d1cb814e55",
+      "maintained_bytes": 4794,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/resume-native-completion/stub.cs",
+      "original_sha256": "d9737b8b8cf6b25714abba72c1bea89b5aadddb1b108998bc18a5b513b67c5b8",
+      "original_bytes": 4798,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d9737b8b8cf6b257--stub.cs",
+      "maintained_sha256": "d9737b8b8cf6b25714abba72c1bea89b5aadddb1b108998bc18a5b513b67c5b8",
+      "maintained_bytes": 4798,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/resume-placement/stub.cs",
+      "original_sha256": "d0427f96f87ebe8474f56c3cf863a00ba69bd8db469d0ed465a76ff62a7b8098",
+      "original_bytes": 4791,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/d0427f96f87ebe84--stub.cs",
+      "maintained_sha256": "d0427f96f87ebe8474f56c3cf863a00ba69bd8db469d0ed465a76ff62a7b8098",
+      "maintained_bytes": 4791,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/seal-failure/stub.cs",
+      "original_sha256": "cdb8f5755e3a34a24483bef36bb8f79b94159d171d8807312931818387b9b144",
+      "original_bytes": 4787,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/cdb8f5755e3a34a2--stub.cs",
+      "maintained_sha256": "cdb8f5755e3a34a24483bef36bb8f79b94159d171d8807312931818387b9b144",
+      "maintained_bytes": 4787,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/unicode-emission/stub.cs",
+      "original_sha256": "db6fdf32035a37f4b0659281b3db730024feaf5fc62e56ab452c0192d608b715",
+      "original_bytes": 4791,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/db6fdf32035a37f4--stub.cs",
+      "maintained_sha256": "db6fdf32035a37f4b0659281b3db730024feaf5fc62e56ab452c0192d608b715",
+      "maintained_bytes": 4791,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/unicode-success/stub.cs",
+      "original_sha256": "8f28da4473ced64231deeae3329c643afd4173f4e25025cdca66e3a6e6d96c05",
+      "original_bytes": 4790,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/8f28da4473ced642--stub.cs",
+      "maintained_sha256": "8f28da4473ced64231deeae3329c643afd4173f4e25025cdca66e3a6e6d96c05",
+      "maintained_bytes": 4790,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/uninstall-handoff/stub.cs",
+      "original_sha256": "f2579da48bee86f24731312a37011e5c1d1033675ddbad10eb29069adcb41d03",
+      "original_bytes": 4792,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f2579da48bee86f2--stub.cs",
+      "maintained_sha256": "f2579da48bee86f24731312a37011e5c1d1033675ddbad10eb29069adcb41d03",
+      "maintained_bytes": 4792,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/inno-wrapper-current-r1/uninstall-resume/stub.cs",
+      "original_sha256": "721f6dbedcf22af81d9134c187628de71f22002e1dbf5617a7f1479decd95f4f",
+      "original_bytes": 4791,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/721f6dbedcf22af8--stub.cs",
+      "maintained_sha256": "721f6dbedcf22af81d9134c187628de71f22002e1dbf5617a7f1479decd95f4f",
+      "maintained_bytes": 4791,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/linux-installer-macos-observation-proposal-r1/candidate/crates/airk-installer/src/runtime_macos_login.rs",
+      "original_sha256": "3db7629ceb7619d85bcd6bf28e16a2cdf1ffa32013c7af7e16a4a5d9f0fbec6d",
+      "original_bytes": 21793,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/3db7629ceb7619d8--runtime_macos_login.rs.in",
+      "maintained_sha256": "3db7629ceb7619d85bcd6bf28e16a2cdf1ffa32013c7af7e16a4a5d9f0fbec6d",
+      "maintained_bytes": 21793,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/metadata-regeneration-proposal-r1/regeneration.rs",
+      "original_sha256": "f099a2701d261bcdc90720a825a916d72babc86bc6cc3c5c8455a2e89b2c5f58",
+      "original_bytes": 17228,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f099a2701d261bcd--regeneration.rs.in",
+      "maintained_sha256": "f099a2701d261bcdc90720a825a916d72babc86bc6cc3c5c8455a2e89b2c5f58",
+      "maintained_bytes": 17228,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/neo-process-observer-proposal-r1/legacy_processes.rs",
+      "original_sha256": "324f6dc8d07348367b70cb811602c9c0d86c0346244131b1cd8d1eaef76f866e",
+      "original_bytes": 21130,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/324f6dc8d0734836--legacy_processes.rs.in",
+      "maintained_sha256": "324f6dc8d07348367b70cb811602c9c0d86c0346244131b1cd8d1eaef76f866e",
+      "maintained_bytes": 21130,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ort-link-probe-r1/main.rs",
+      "original_sha256": "a3cd9605fbebe6c3fe4cf766175c7212aded9043dae95f346c7fd0d4571f9bf5",
+      "original_bytes": 62,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a3cd9605fbebe6c3--main.rs.in",
+      "maintained_sha256": "a3cd9605fbebe6c3fe4cf766175c7212aded9043dae95f346c7fd0d4571f9bf5",
+      "maintained_bytes": 62,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-core/src/arbiter/context_action/calibration/terminal.rs",
+      "original_sha256": "05909a37798d5013822549e83a4a2d3130b8c5093d9a9b15fd3277c8733f25a1",
+      "original_bytes": 25512,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/05909a37798d5013--terminal.rs.in",
+      "maintained_sha256": "05909a37798d5013822549e83a4a2d3130b8c5093d9a9b15fd3277c8733f25a1",
+      "maintained_bytes": 25512,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-core/src/arbiter/context_action/calibration/terminal/tests.rs",
+      "original_sha256": "75d746ed53df33df196c9307f26ba719d7beaeed8083e0b3bd4629a3ba22e4b0",
+      "original_bytes": 16527,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/75d746ed53df33df--tests.rs.in",
+      "maintained_sha256": "75d746ed53df33df196c9307f26ba719d7beaeed8083e0b3bd4629a3ba22e4b0",
+      "maintained_bytes": 16527,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-core/src/arbiter/context_action/tests.rs",
+      "original_sha256": "2c72021f16ed2a0dc4e7dfe80882e2ba25eb4dedc979721ac274905d9349071e",
+      "original_bytes": 34198,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/2c72021f16ed2a0d--tests.rs.in",
+      "maintained_sha256": "2c72021f16ed2a0dc4e7dfe80882e2ba25eb4dedc979721ac274905d9349071e",
+      "maintained_bytes": 34198,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-core/src/arbiter/schema.rs",
+      "original_sha256": "9a5fa1e251f6850350b9cd0b5e80185ed66b4f259984b0180a991c5bdd17cf39",
+      "original_bytes": 4043,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/9a5fa1e251f68503--schema.rs.in",
+      "maintained_sha256": "9a5fa1e251f6850350b9cd0b5e80185ed66b4f259984b0180a991c5bdd17cf39",
+      "maintained_bytes": 4043,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-retrieval/src/arbiter/runtime/qualification.rs",
+      "original_sha256": "ce4649e4e3a9136cb21c6f6c70f1fd469d9af560b3288dc343129996f6d170f4",
+      "original_bytes": 15366,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/ce4649e4e3a9136c--qualification.rs.in",
+      "maintained_sha256": "ce4649e4e3a9136cb21c6f6c70f1fd469d9af560b3288dc343129996f6d170f4",
+      "maintained_bytes": 15366,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/terminal-proposal/new/crates/airk-service/src/service_runtime/arbiter/final_distribution.rs",
+      "original_sha256": "7fb813a5833200363d4b3ffd397c08be73a14117a25c279718f4fbe1ff985a95",
+      "original_bytes": 92114,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7fb813a583320036--final_distribution.rs.in",
+      "maintained_sha256": "7fb813a5833200363d4b3ffd397c08be73a14117a25c279718f4fbe1ff985a95",
+      "maintained_bytes": 92114,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-admin-clipboard-control-r1/run.mjs",
+      "original_sha256": "a6608d1ef1bab94f2b786fcf98fb3d71104636b4f0bb79b9640e8577ceed7007",
+      "original_bytes": 3015,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a6608d1ef1bab94f--run.mjs.in",
+      "maintained_sha256": "a6608d1ef1bab94f2b786fcf98fb3d71104636b4f0bb79b9640e8577ceed7007",
+      "maintained_bytes": 3015,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-admin-clipboard-control-r2/run.mjs",
+      "original_sha256": "a5ddebafbe97d21fc0b460ce315064a82324134060470ca5f3a8c95787fb7ede",
+      "original_bytes": 3126,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/a5ddebafbe97d21f--run.mjs.in",
+      "maintained_sha256": "a5ddebafbe97d21fc0b460ce315064a82324134060470ca5f3a8c95787fb7ede",
+      "maintained_bytes": 3126,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-admin-clipboard-control-r3/run.mjs",
+      "original_sha256": "e36b6f82e9f847e8cbc567c53c78df8f28e76fd80e1c945f253217799a6409c7",
+      "original_bytes": 2885,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e36b6f82e9f847e8--run.mjs.in",
+      "maintained_sha256": "e36b6f82e9f847e8cbc567c53c78df8f28e76fd80e1c945f253217799a6409c7",
+      "maintained_bytes": 2885,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r1/admin-live.mjs",
+      "original_sha256": "7be4928fb409ff53eb59588a4b93985e5ffd53725bb5bb31751616629659905c",
+      "original_bytes": 13454,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/7be4928fb409ff53--admin-live.mjs.in",
+      "maintained_sha256": "7be4928fb409ff53eb59588a4b93985e5ffd53725bb5bb31751616629659905c",
+      "maintained_bytes": 13454,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r1/browser-harness.mjs",
+      "original_sha256": "763997a3c4e586a70f30fa2243a7ef475d033e28662c9349872a45a2f120a64b",
+      "original_bytes": 5514,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/763997a3c4e586a7--browser-harness.mjs",
+      "maintained_sha256": "763997a3c4e586a70f30fa2243a7ef475d033e28662c9349872a45a2f120a64b",
+      "maintained_bytes": 5514,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r2/admin-live.mjs",
+      "original_sha256": "4ff2dd74bc607eccb3a6037e1e6a1403a314771019f3ca818f16f14262528ce7",
+      "original_bytes": 15374,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/4ff2dd74bc607ecc--admin-live.mjs.in",
+      "maintained_sha256": "4ff2dd74bc607eccb3a6037e1e6a1403a314771019f3ca818f16f14262528ce7",
+      "maintained_bytes": 15374,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r2/browser-harness.mjs",
+      "original_sha256": "763997a3c4e586a70f30fa2243a7ef475d033e28662c9349872a45a2f120a64b",
+      "original_bytes": 5514,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/763997a3c4e586a7--browser-harness.mjs",
+      "maintained_sha256": "763997a3c4e586a70f30fa2243a7ef475d033e28662c9349872a45a2f120a64b",
+      "maintained_bytes": 5514,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r3/admin-live.mjs",
+      "original_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "original_bytes": 17602,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/bb70278fba09acf1--admin-live.mjs.in",
+      "maintained_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "maintained_bytes": 17602,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-admin-r3/browser-harness.mjs",
+      "original_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "original_bytes": 5906,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/8463cce9a7ca886d--browser-harness.mjs",
+      "maintained_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "maintained_bytes": 5906,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r2-cards/admin-r3/admin-live.mjs",
+      "original_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "original_bytes": 17602,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/bb70278fba09acf1--admin-live.mjs.in",
+      "maintained_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "maintained_bytes": 17602,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r2-cards/admin-r3/browser-harness.mjs",
+      "original_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "original_bytes": 5906,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/8463cce9a7ca886d--browser-harness.mjs",
+      "maintained_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "maintained_bytes": 5906,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r3-cards/admin-r4/admin-live.mjs",
+      "original_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "original_bytes": 17602,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/bb70278fba09acf1--admin-live.mjs.in",
+      "maintained_sha256": "bb70278fba09acf1a5293c41dba403a5f01680fbeb68e7d4430ab0ac542100bf",
+      "maintained_bytes": 17602,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r3-cards/admin-r4/browser-harness.mjs",
+      "original_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "original_bytes": 5906,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/8463cce9a7ca886d--browser-harness.mjs",
+      "maintained_sha256": "8463cce9a7ca886d8946a85ac21f31ecdb927a521337acc739655f1450ca2dbc",
+      "maintained_bytes": 5906,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/composer-test-initial-failed.mjs",
+      "original_sha256": "b8cb31a311c21b9d6be3db2435ac19dcedff30396698386882311d6493781875",
+      "original_bytes": 13291,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/b8cb31a311c21b9d--composer-test-initial-failed.mjs",
+      "maintained_sha256": "b8cb31a311c21b9d6be3db2435ac19dcedff30396698386882311d6493781875",
+      "maintained_bytes": 13291,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/composer-test-r2-failed.mjs",
+      "original_sha256": "de2fc3b504f55de96f22e851840c9b35046a789ed627d3d3eda053303cb362cb",
+      "original_bytes": 13385,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/de2fc3b504f55de9--composer-test-r2-failed.mjs",
+      "maintained_sha256": "de2fc3b504f55de96f22e851840c9b35046a789ed627d3d3eda053303cb362cb",
+      "maintained_bytes": 13385,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/overflow-diagnostic/run.mjs",
+      "original_sha256": "f358653c699e4ff6a7e2b71e502704aad205aaa32a096f09f931708ef18d4317",
+      "original_bytes": 5579,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f358653c699e4ff6--run.mjs.in",
+      "maintained_sha256": "f358653c699e4ff6a7e2b71e502704aad205aaa32a096f09f931708ef18d4317",
+      "maintained_bytes": 5579,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/pre-overflow-fix-workbenchComposer.dom.test.mjs",
+      "original_sha256": "5afa4ed5abfc02e0a2e5a4111766b32bd734a98400b4983bb71483df3fe3d3be",
+      "original_bytes": 13461,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/5afa4ed5abfc02e0--pre-overflow-fix-workbenchComposer.dom.test.mjs",
+      "maintained_sha256": "5afa4ed5abfc02e0a2e5a4111766b32bd734a98400b4983bb71483df3fe3d3be",
+      "maintained_bytes": 13461,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/preview-final/run.mjs",
+      "original_sha256": "f358653c699e4ff6a7e2b71e502704aad205aaa32a096f09f931708ef18d4317",
+      "original_bytes": 5579,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f358653c699e4ff6--run.mjs.in",
+      "maintained_sha256": "f358653c699e4ff6a7e2b71e502704aad205aaa32a096f09f931708ef18d4317",
+      "maintained_bytes": 5579,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/preview/run.mjs",
+      "original_sha256": "e8850a1f8173410b6680e5d65518c232d6e06a1abe8a359f0bc8e795286887c3",
+      "original_bytes": 5006,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e8850a1f8173410b--run.mjs.in",
+      "maintained_sha256": "e8850a1f8173410b6680e5d65518c232d6e06a1abe8a359f0bc8e795286887c3",
+      "maintained_bytes": 5006,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-composer-r1/main-after.tsx",
+      "original_sha256": "e3dd89dd2507df1282f7a0d999a1f1f8739ead004ece0d855295a102c748421f",
+      "original_bytes": 55929,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/e3dd89dd2507df12--main-after.tsx",
+      "maintained_sha256": "e3dd89dd2507df1282f7a0d999a1f1f8739ead004ece0d855295a102c748421f",
+      "maintained_bytes": 55929,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-enter-diagnostic-r1/run.mjs",
+      "original_sha256": "f1b9bc365e63263536cb1f8dead76241b23a7225b03fe456cddc39214fb06671",
+      "original_bytes": 3841,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f1b9bc365e632635--run.mjs.in",
+      "maintained_sha256": "f1b9bc365e63263536cb1f8dead76241b23a7225b03fe456cddc39214fb06671",
+      "maintained_bytes": 3841,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-pointer-diagnostic-r1/run.mjs",
+      "original_sha256": "f83d9565e29051ee93856004e216f205c89c68c31ca9351f64c82069e79a82ab",
+      "original_bytes": 4578,
+      "destination": "scripts/arbiter/research/proposals/native-client-r1/sources/f83d9565e29051ee--run.mjs.in",
+      "maintained_sha256": "f83d9565e29051ee93856004e216f205c89c68c31ca9351f64c82069e79a82ab",
+      "maintained_bytes": 4578,
+      "changes": [
+        "exact raw bytes; preservation path only"
+      ]
+    }
+  ]
+}

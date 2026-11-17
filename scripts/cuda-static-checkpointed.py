@@ -11,6 +11,9 @@ SUCCESSOR_INPUT='c118835f41e95820fed5645c7de59606f583ff403a32f13422d5bb6120168c5
 def module(name):
  p=Path(__file__).with_name(name+'.py');s=importlib.util.spec_from_file_location(name.replace('-','_'),p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 
+def verification(name):
+ p=Path(__file__).parent/'cuda-static-runtime/verification'/(name+'.py');spec=importlib.util.spec_from_file_location('cuda_checkpoint_'+name,p);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner);return owner
+
 def require_header(v):
  if v.get('schema')!='airk.private.cuda-checkpointed-build/1' or v.get('status')!='PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED' or v.get('mode')!='checkpointed-warm' or v.get('qualification') is not False or v.get('cold_build_qualified') is not False or v.get('producer_source',{}).get('sha256')!=COMPOSER or v.get('input_contract',{}).get('sha256')!=INPUT or v.get('plan',{}).get('sha256')!=PLAN or v.get('original_failed_build',{}).get('sha256')!=R12:raise ValueError('exact successful checkpointed composite authority required')
 
@@ -35,7 +38,7 @@ def verify_checkpointed(destination,composite_root,proposal,expected_receipt_sha
  value=core.read_json(raw);require_header(value);inputs=core.read_json(ip)
  for row in inputs['pins']:core.verify_file(core.plain(row['path'],regular=True),row)
  if value['producer_source']!=runtime._pin(core,script) or value['input_contract']!=runtime._pin(core,ip) or value['plan']!=inputs['approved_plan']:raise ValueError('actual composite reviewed source/input identities differ')
- composer=runtime.load(script,'reviewed_checkpoint_composer_helpers');helper=runtime.load(inputs['successor_runner']['path'],'reviewed_checkpoint_successor_helpers');plan=core.read_json(inputs['approved_plan']['path'])
+ composer=verification('checkpoint_sections');helper=composer;materialized=verification('materialized');plan=core.read_json(inputs['approved_plan']['path'])
  if inputs['successor_runner']['sha256']!=SUCCESSOR or inputs['successor_input']['sha256']!=SUCCESSOR_INPUT or destination!=Path(plan['actual_build_root']) or composite_root!=destination.parent/'cu8-checkpointed-final-r1' or value['actual_build_root']!=str(destination):raise ValueError('exact checkpoint roots/successor bridge differ')
  if [row['section_index'] for row in value['sections']]!=[0,1,2]:raise ValueError('exact ordered three sections required')
  receipts=[row['receipt'] for row in value['sections']];bodies=composer.validate_sections(core,helper,receipts,SUCCESSOR,SUCCESSOR_INPUT,PLAN)
@@ -43,7 +46,7 @@ def verify_checkpointed(destination,composite_root,proposal,expected_receipt_sha
  for index,body in enumerate(bodies):
   expected=plan['sections'][index];custody=composer.normalized_custody(core,index,body,bodies);normalized.append({'section_id':expected['id'],'section_index':index,'receipt':receipts[index],'ninja_state_custody':custody})
   if body['native_argv']!=expected['argv']:raise ValueError('exact checkpoint target command differs')
-  tree.verify_tree_command(core,None,r12,Path(receipts[index]['path']).parent,destination,['flash-section','llm-section','final-section'][index],expected['argv'],tools,body['command'],{'observed_utc':body['started_utc']},datetime.datetime.fromisoformat(body['absolute_cutoff_utc']))
+  tree.verify_tree_command(core,materialized,r12,Path(receipts[index]['path']).parent,destination,['flash-section','llm-section','final-section'][index],expected['argv'],tools,body['command'],{'observed_utc':body['started_utc']},datetime.datetime.fromisoformat(body['absolute_cutoff_utc']))
  if normalized!=value['sections']:raise ValueError('exact immutable section state custody differs')
  for index in range(1,3):
   for kind in ['log','deps']:
@@ -52,7 +55,7 @@ def verify_checkpointed(destination,composite_root,proposal,expected_receipt_sha
  if value['original_failed_build']!=plan['previous_failed_R12'] or value['failed_ancestry']!=failed or value['warm_baseline']!=inputs['warm_checkpoint'] or value['warm_final']!=bodies[-1]['warm_checkpoint_after']:raise ValueError('warm/original failed ancestry changed')
  for row in failed:core.verify_file(core.plain(row['path'],regular=True),row)
  if prior['status']!='FAILED_PRESERVED_NO_RETRY' or prior['commands'][-1].get('owned_job_final_active_processes')!=0 or not prior['commands'][-1].get('owned_descendants_settled'):raise ValueError('original failed R12 settlement changed')
- source=helper.verify_materialized(inputs,plan)
+ source=materialized.verify_materialized(inputs,plan,core,repo_root)
  if source!=core.read_json(bodies[-1]['source_manifest_after']['path']) or value['source_manifest']!=bodies[-1]['source_manifest_after']:raise ValueError('actual final source/tool/config closure differs')
  for key in ['source_inventory_sha256','frontend_inventory_sha256','cuda_inventory_sha256','frozen_original_inputs_sha256','configure_argv','configured_preflight','policy']:
   if value[key]!=source[key]:raise ValueError('composite materialized closure field differs: '+key)

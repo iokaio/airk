@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Proposed pure native draft emitter. No model execution or product activation.
+use super::*;
+use sha2::{Digest, Sha256};
+use std::{fs, io::Read, path::{Path,PathBuf}};
+
+const CHECKPOINT: &str = "e4d2c66590e830cc9fedde5061e86a5195891db490a7eb967e3ec9c52c566d29";
+
+fn hash_asset(path: &Path, maximum: u64) -> Result<(u64,String)> {
+    for parent in path.parent().context("asset parent missing")?.ancestors() {
+        let metadata=fs::symlink_metadata(parent)?;
+        ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(),"linked draft asset ancestor");
+        #[cfg(windows)] {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(metadata.file_attributes() & 0x400 == 0,"reparse draft asset ancestor");
+        }
+    }
+    let metadata=fs::symlink_metadata(path)?;
+    ensure!(metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len()<=maximum,"draft asset shape/size refused");
+    let mut file=fs::File::open(path)?;let mut digest=Sha256::new();let mut count=0u64;
+    let mut block=[0u8;65536];
+    loop {
+        let read=file.read(&mut block)?;if read==0 {break;}
+        count=count.checked_add(read as u64).context("draft byte count overflow")?;
+        ensure!(count<=maximum,"draft asset grew beyond limit");digest.update(&block[..read]);
+    }
+    ensure!(count==metadata.len() && file.metadata()?.len()==count,"draft asset length changed");
+    Ok((count,format!("{:x}",digest.finalize())))
+}
+
+fn write_new(path: &Path,value: &impl Serialize) -> Result<()> {
+    use std::io::Write;
+    let mut file=fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut bytes=serde_json::to_vec_pretty(value)?;bytes.push(b'\n');file.write_all(&bytes)?;file.sync_all()?;Ok(())
+}
+
+#[test]
+#[ignore = "Root-reviewed epoch1 production-catalog draft only; real Rust-emitted model.json/assets required; no NN"]
+fn emit_epoch1_production_catalog_draft_from_actual_native_assets() -> Result<()> {
+    // Compile this emitter with the proposed v3 validator, before mounting any
+    // emitted catalog. Parse the existing catalog as a typed template; its old
+    // qualification is NEVER copied into a qualification claim.
+    let mut catalog: ModelCatalog=serde_json::from_str(include_str!("../model_catalog.json"))?;
+    ensure!(catalog.profiles.len()==2,"exact two-profile template required");
+    let root=PathBuf::from(std::env::var_os("AIRK_MINILM_PROMOTION_ASSETS").context("actual epoch1 asset root missing")?);
+    ensure!(root.is_absolute(),"absolute epoch1 asset root required");
+    let output=PathBuf::from(std::env::var_os("AIRK_MINILM_PROMOTION_DRAFT_OUTPUT").context("fresh native draft output missing")?);
+    ensure!(output.is_absolute() && !output.try_exists()?,"fresh absolute native draft output required");
+    let artifacts=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../artifacts").canonicalize()?;
+    ensure!(output.parent().context("draft output parent missing")?.canonicalize()?.starts_with(&artifacts),"draft output leaves private artifacts");
+    catalog.default_profile="minilm-l6-v2-u8-v3".into();
+    let mut source_pins=std::collections::BTreeMap::new();
+    let mut seen=std::collections::BTreeSet::new();
+    for profile in &mut catalog.profiles {
+        let (short,id)=match profile.precision.as_str() {
+            "mixed-u8"=>("u8","minilm-l6-v2-u8-v3"),
+            "mixed-s8"=>("s8","minilm-l6-v2-s8-v3"),
+            _=>anyhow::bail!("unsupported epoch1 precision"),
+        };
+        ensure!(seen.insert(short),"duplicate epoch1 precision");
+        let directory=root.join(short);let definition=directory.join("model.json");
+        let (_,manifest_pin)=hash_asset(&definition,16384)?;
+        let mut manifest_bytes=Vec::new();
+        fs::File::open(&definition)?.take(16385).read_to_end(&mut manifest_bytes)?;
+        ensure!(manifest_bytes.len()<=16384 && format!("{:x}",Sha256::digest(&manifest_bytes))==manifest_pin,"actual model.json changed during bounded read");
+        let manifest: OnnxManifest=serde_json::from_slice(&manifest_bytes)?;
+        profile.id=id.into();profile.runtime=ONNX_RUNTIME.into();profile.manifest=manifest;
+        profile.qualification=Qualification {
+            verified_platforms:Vec::new(),evidence:"docs/split/codex-plan.md#9-arbiter-and-local-models".into(),
+            scope:"Epoch1 weak parent-bag candidate; independent task, general-document/language, resource, regeneration, installed-platform and release gates remain separate. DEV is not qualification.".into(),
+        };
+        profile.quantization.as_mut().context("native quantization policy missing")?.trained_checkpoint_sha256=CHECKPOINT.into();
+        profile.assets.clear();
+        for name in ["model.onnx","tokenizer.json","LICENSE"] {
+            let maximum=match name {"model.onnx"=>MAX_MODEL_BYTES,"tokenizer.json"=>MAX_TOKENIZER_BYTES,_=>65536};
+            let file=directory.join(name);let (bytes,sha256)=hash_asset(&file,maximum)?;
+            source_pins.insert(file,sha256.clone());profile.assets.push(ModelAsset {name:name.into(),url:None,bytes,sha256});
+        }
+        source_pins.insert(definition,manifest_pin);
+    }
+    catalog.validate()?; // Owning strict v3 constants bind all actual bytes/ABI/policy.
+    ensure!(catalog.profiles.iter().all(|profile|profile.qualification.verified_platforms.is_empty()),"draft cannot invent platform qualification");
+    // Independent unsupported replacements must still refuse under this owner.
+    for pointer in ["/profiles/0/manifest/model_sha256","/profiles/0/quantization/trained_checkpoint_sha256"] {
+        let mut changed=serde_json::to_value(&catalog)?;
+        *changed.pointer_mut(pointer).context("independent draft mutation missing")?=serde_json::json!("00".repeat(32));
+        ensure!(serde_json::from_value::<ModelCatalog>(changed)?.validate().is_err(),"draft validator admitted unrelated graph/checkpoint");
+    }
+    for (path,pin) in &source_pins {
+        ensure!(hash_asset(path,MAX_MODEL_BYTES.max(MAX_TOKENIZER_BYTES))?.1==*pin,"actual source drift before draft publication");
+    }
+    fs::create_dir(&output)?;
+    write_new(&output.join("model_catalog.json"),&catalog)?;
+    let policy=serde_json::json!({"schema":"airk.minilm.native-policy/2","catalog":catalog,"scope":"candidate build policy; human quality and installed platform qualification are not inferred"});
+    write_new(&output.join("model-policy.json"),&policy)?;
+    write_new(&output.join("draft-receipt.json"),&serde_json::json!({
+        "schema":"airk.private-native-minilm-catalog-draft/1","trained_checkpoint_sha256":CHECKPOINT,
+        "source_pins":source_pins,"profile_generation":3,"runtime":ONNX_RUNTIME,
+        "native_catalog_sha256":hash_asset(&output.join("model_catalog.json"),262144)?.1,
+        "native_policy_sha256":hash_asset(&output.join("model-policy.json"),524288)?.1,
+        "NN_invocations":0,"product_activated":false,"release_qualified":false
+    }))?;
+    Ok(())
+}

@@ -1,0 +1,43 @@
+{
+  "schema": "airk.source-relocation/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/native-onnx-storage-normalization-r1/storage_normalizer.py",
+      "destination": "scripts/arbiter/export/onnx_storage/storage_normalizer.py",
+      "original_sha256": "67df2aea347438c5872fd7e98c7f4c8833ca0ff4783b5ed3ff9e061ce2051e12",
+      "maintained_sha256": "7d6b024315dc68f6286cc1563ea5fbe5e69efb727de70d1c820b89127b8e77f4",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-onnx-storage-normalization-r1/normalize_focus_artifact.py",
+      "destination": "scripts/arbiter/export/onnx_storage/normalize_focus_artifact.py",
+      "original_sha256": "69efbaf2e129e8c9b231fe8cd45c8bb9886fa0bc113b06c1a1f7955afe352eff",
+      "maintained_sha256": "273e9b152e63a935ca8258c9814591cec287d6b8317f61686417929a1eb8cdff",
+      "changes": [
+        "SPDX header",
+        "explicit private source/output and maintained normalizer pin"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-onnx-storage-normalization-r1/owned_normalization.py",
+      "destination": "scripts/arbiter/export/onnx_storage/owned_normalization.py",
+      "original_sha256": "9bfb783a1181aa048406d953ff80598734f5ca82b037b6813d94c857342d1d32",
+      "maintained_sha256": "86464e7c0b4f438e0b7c129887b19456f835b981919653b8ef970525b385bbc6",
+      "changes": [
+        "SPDX header",
+        "fresh seal must supply explicit normalization_source"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-onnx-storage-normalization-r1/test_storage_normalizer.py",
+      "destination": "scripts/arbiter/export/onnx_storage/test_storage_normalizer.py",
+      "original_sha256": "318d8a97ddccc84815d441970d434c0e77230f0d0c840a1b9834ec09e14ccd95",
+      "maintained_sha256": "7520a7712b751cdb01c70b70373f155b6414902dfac3478cc1603a77d5d070d7",
+      "changes": [
+        "SPDX header"
+      ]
+    }
+  ]
+}

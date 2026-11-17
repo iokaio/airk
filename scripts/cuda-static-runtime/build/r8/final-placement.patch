@@ -1,0 +1,83 @@
+--- a/onnxruntime/core/session/onnxruntime_c_api.cc
++++ b/onnxruntime/core/session/onnxruntime_c_api.cc
+@@ -5168,3 +5168,80 @@
+ void ORT_API_CALL OrtApis::ReleaseDeviceEpIncompatibilityDetails(OrtDeviceEpIncompatibilityDetails* details) noexcept {
+   delete details;
+ }
++
++// AIRK D08 application-private final execution-placement observation.
++// This symbol belongs to this static core; it is not an OrtApi table extension.
++#if defined(_WIN32)
++using AirkOrtPlacementCallbackV1 = int32_t(__cdecl*)(
++    void*, uint64_t, const char*, size_t, const char*, size_t,
++    const char*, size_t, const char*, size_t);
++extern "C" __declspec(dllexport) int32_t __cdecl airk_ort_collect_final_placement_v1(
++    const OrtApiBase* base, const OrtSession* session,
++    AirkOrtPlacementCallbackV1 callback, void* user,
++    uint64_t max_nodes, uint64_t max_string_bytes,
++    uint64_t* out_nodes, uint64_t* out_string_bytes, int32_t* out_ort_error_code) noexcept {
++  if (out_nodes) *out_nodes = 0;
++  if (out_string_bytes) *out_string_bytes = 0;
++  if (out_ort_error_code) *out_ort_error_code = ORT_INVALID_ARGUMENT;
++  if (!base || !session || !callback || !out_nodes || !out_string_bytes || !out_ort_error_code ||
++      max_nodes == 0 || max_nodes > 65536 || max_string_bytes == 0 || max_string_bytes > 16777216) return 1;
++  if (base != OrtGetApiBase() || std::strcmp(base->GetVersionString(), "1.30.0") != 0) return 2;
++  *out_ort_error_code = ORT_FAIL;
++  try {
++    // Same conversion used by owning public session C APIs in this translation unit.
++    const auto* owner = reinterpret_cast<const onnxruntime::InferenceSession*>(session);
++    if (!owner->IsInitialized()) return 1;
++    uint64_t graphs = 0, nodes = 0, string_bytes = 0;
++    struct Child { onnxruntime::NodeIndex index; std::string attribute; const onnxruntime::SessionState* state; };
++    std::function<int32_t(const onnxruntime::SessionState&, uint32_t)> visit;
++    visit = [&](const onnxruntime::SessionState& state, uint32_t depth) -> int32_t {
++      if (depth > 32 || graphs >= 4096) return 4;
++      const uint64_t graph_id = graphs++;
++      const auto& viewer = state.GetGraphViewer();
++      std::vector<Child> children;
++      for (const auto& node : viewer.Nodes()) {
++        if (nodes >= max_nodes) return 4;
++        const auto provider = node.GetExecutionProviderType();
++        const std::string* values[] = {&node.Name(), &node.Domain(), &node.OpType(), &provider};
++        if (node.OpType().empty() || provider.empty()) return 3;
++        uint64_t bytes = 0;
++        for (const auto* value : values) {
++          if (value->size() > 4096 || value->size() > max_string_bytes - string_bytes - bytes) return 4;
++          bytes += value->size();
++        }
++        if (callback(user, graph_id, values[0]->data(), values[0]->size(), values[1]->data(), values[1]->size(),
++                     values[2]->data(), values[2]->size(), values[3]->data(), values[3]->size()) != 0) return 5;
++        *out_nodes = ++nodes;
++        *out_string_bytes = (string_bytes += bytes);
++        for (const auto& attribute : node.GetAttributeNameToSubgraphMap()) {
++          const auto* child = state.GetSubgraphSessionState(node.Index(), attribute.first);
++          if (!child) return 3;
++          if (children.size() >= 4096) return 4;
++          children.push_back({node.Index(), attribute.first, child});
++        }
++      }
++      size_t owned_children = 0;
++      for (const auto& node : state.GetSubgraphSessionStateMap()) {
++        if (node.second.size() > 4096 - owned_children) return 4;
++        owned_children += node.second.size();
++        for (const auto& attribute : node.second) if (!attribute.second) return 3;
++      }
++      if (owned_children != children.size()) return 3;
++      std::sort(children.begin(), children.end(), [](const Child& a, const Child& b) {
++        return a.index < b.index || (a.index == b.index && a.attribute < b.attribute);
++      });
++      for (const auto& child : children) {
++        const auto result = visit(*child.state, depth + 1);
++        if (result != 0) return result;
++      }
++      return 0;
++    };
++    const auto result = visit(owner->GetSessionState(), 0);
++    if (result == 0 && nodes == 0) return 3;
++    if (result == 0) *out_ort_error_code = ORT_OK;
++    return result;
++  } catch (...) {
++    return 6;
++  }
++}
++#endif  // defined(_WIN32)

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Tiny boundary-position arithmetic controls, not a model RoPE implementation."""
+import math,sys,unittest
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from test_attention_semantics import fixture,dense_reference,grouped_online,error
+
+def rotate_boundary(values,positions):
+    # A nontrivial independent orthogonal transform witnesses that position-
+    # dependent Q/K values must be preserved, not dropped or applied twice.
+    result=[]
+    for head in values:
+        rows=[]
+        for row,position in zip(head,positions):
+            c,s=math.cos(position*.3),math.sin(position*.3)
+            rows.append([c*row[0]-s*row[1],s*row[0]+c*row[1],row[2],row[3]])
+        result.append(rows)
+    return result
+class Positions(unittest.TestCase):
+    def test_grouped_kernel_consumes_exact_already_positioned_boundary_values(self):
+        q,k,v=fixture()
+        for positions in [[0,1,2],[0,0,2],[2,1,0]]:
+            qr,kr=rotate_boundary(q,positions),rotate_boundary(k,positions)
+            self.assertLess(error(dense_reference(qr,kr,v,[1,1,1],.5),grouped_online(qr,kr,v,[1,1,1],.5)),1e-12)
+        # Invalid native positions above remain native-refused; this merely
+        # checks that fusion itself never gives positions a new interpretation.
+    def test_dropped_or_duplicate_position_transform_is_detected(self):
+        q,k,v=fixture();positions=[0,1,2];qr,kr=rotate_boundary(q,positions),rotate_boundary(k,positions)
+        reference=dense_reference(qr,kr,v,[1,1,1],.5)
+        self.assertGreater(error(reference,grouped_online(q,k,v,[1,1,1],.5)),.01)
+        self.assertGreater(error(reference,grouped_online(rotate_boundary(qr,positions),rotate_boundary(kr,positions),v,[1,1,1],.5)),.01)
+if __name__=='__main__':unittest.main()

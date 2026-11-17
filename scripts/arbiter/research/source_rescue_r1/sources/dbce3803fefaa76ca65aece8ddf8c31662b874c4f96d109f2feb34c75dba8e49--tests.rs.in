@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn fixture() -> Vec<Row> {
+    vec![
+        Row::Graph {
+            graph: 0,
+            parent_graph: None,
+            parent_node: None,
+            attribute: "".into(),
+            outer_bindings: "not_applicable".into(),
+        },
+        Row::Value {
+            graph: 0,
+            value: 0,
+            name: "input".into(),
+            element_type: Some(1),
+            rank: Some(2),
+            type_state: "tensor".into(),
+            provenance: "graph_input".into(),
+            producer: None,
+        },
+        Row::Dimension {
+            graph: 0,
+            value: 0,
+            index: 0,
+            number: Some(1),
+            symbol: None,
+        },
+        Row::Dimension {
+            graph: 0,
+            value: 0,
+            index: 1,
+            number: None,
+            symbol: Some("tokens".into()),
+        },
+        Row::Value {
+            graph: 0,
+            value: 1,
+            name: "shape".into(),
+            element_type: Some(7),
+            rank: Some(1),
+            type_state: "tensor".into(),
+            provenance: "node_output".into(),
+            producer: Some(4),
+        },
+        Row::Dimension {
+            graph: 0,
+            value: 1,
+            index: 0,
+            number: Some(2),
+            symbol: None,
+        },
+        Row::Edge {
+            graph: 0,
+            node: None,
+            value: Some(0),
+            role: 3,
+            slot: 0,
+        },
+        Row::Edge {
+            graph: 0,
+            node: None,
+            value: Some(1),
+            role: 4,
+            slot: 0,
+        },
+        Row::Edge {
+            graph: 0,
+            node: None,
+            value: Some(0),
+            role: 5,
+            slot: 0,
+        },
+        Row::Node {
+            graph: 0,
+            node: 4,
+            name: "shape_node".into(),
+            domain: "".into(),
+            op: "Shape".into(),
+            ep: "CPUExecutionProvider".into(),
+            version: 15,
+        },
+        Row::Edge {
+            graph: 0,
+            node: Some(4),
+            value: Some(0),
+            role: 0,
+            slot: 0,
+        },
+        Row::Edge {
+            graph: 0,
+            node: Some(4),
+            value: Some(1),
+            role: 2,
+            slot: 0,
+        },
+        Row::End { graph: 0 },
+    ]
+}
+fn consume(rows: Vec<Row>) -> Result<Sink> {
+    let mut s = Sink::default();
+    for row in rows {
+        s.accept(row)?;
+    }
+    s.closure()?;
+    Ok(s)
+}
+fn placement() -> PlacementObservation {
+    PlacementObservation {
+        scope: "onnxruntime-final-session-state-ep-placement",
+        complete: true,
+        shim_status: 0,
+        ort_error_code: 0,
+        reported_nodes: 1,
+        reported_string_bytes: 35,
+        nodes: vec![PlacedNode {
+            subgraph_index: 0,
+            name: "shape_node".into(),
+            domain: "".into(),
+            op: "Shape".into(),
+            ep: "CPUExecutionProvider".into(),
+        }],
+    }
+}
+#[test]
+fn complete_fixture_derives_consumers_and_matches_full_placement() -> Result<()> {
+    let sink = consume(fixture())?;
+    assert_eq!(sink.counts, [1, 2, 5, 73, 0, 13]);
+    let counts = sink.counts;
+    let value = sink.finish(0, 0, counts);
+    assert!(value.complete);
+    value.validate_against(&placement())?;
+    assert_eq!(value.consumers(0, 0), vec![(4, 0, 0)]);
+    assert!(value.encoded_bytes <= 8 << 20);
+    assert!(placement().validate_strict().is_err());
+    Ok(())
+}
+#[test]
+fn same_count_changed_provider_or_name_is_not_equivalent() -> Result<()> {
+    let sink = consume(fixture())?;
+    let counts = sink.counts;
+    let value = sink.finish(0, 0, counts);
+    for mutate in 0..3 {
+        let mut p = placement();
+        match mutate {
+            0 => p.nodes[0].ep = "CUDAExecutionProvider".into(),
+            1 => p.nodes[0].name = "different".into(),
+            _ => p.nodes[0].subgraph_index = 1,
+        };
+        assert!(value.validate_against(&p).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn missing_dimension_end_or_producer_refuses() {
+    for remove in [3, 12] {
+        let mut rows = fixture();
+        rows.remove(remove);
+        assert!(consume(rows).is_err());
+    }
+    let mut rows = fixture();
+    if let Row::Value {
+        producer,
+        provenance,
+        ..
+    } = &mut rows[4]
+    {
+        *producer = None;
+        *provenance = "unresolved_outer_or_internal".into();
+    }
+    assert!(
+        consume(rows).is_err(),
+        "output edge requires producer metadata in both directions"
+    );
+}
+#[test]
+fn duplicate_unknown_value_and_repeated_edge_slots_refuse() {
+    let mut rows = fixture();
+    rows.insert(2, rows[1].clone());
+    assert!(consume(rows).is_err());
+    let mut rows = fixture();
+    if let Row::Edge { value, .. } = &mut rows[10] {
+        *value = Some(999);
+    }
+    assert!(consume(rows).is_err());
+    let mut rows = fixture();
+    if let Row::Edge { slot, .. } = &mut rows[10] {
+        *slot = 1;
+    }
+    assert!(consume(rows).is_err());
+}
+fn constant_rows(readable: bool, device: &str, count: u64) -> Vec<Row> {
+    vec![
+        Row::Value {
+            graph: 0,
+            value: 2,
+            name: "axis".into(),
+            element_type: Some(7),
+            rank: Some(0),
+            type_state: "tensor".into(),
+            provenance: "immutable_session_initializer".into(),
+            producer: None,
+        },
+        Row::Constant {
+            graph: 0,
+            value: 2,
+            element_type: 7,
+            count,
+            readable,
+            reason: if readable { "read" } else { "non_CPU_unread" }.into(),
+            device: device.into(),
+        },
+    ]
+}
+#[test]
+fn only_bounded_cpu_constants_are_readable() {
+    for (device, count) in [("non_CPU", 1), ("CPU", 65)] {
+        let mut rows = fixture();
+        rows.splice(6..6, constant_rows(true, device, count));
+        assert!(consume(rows).is_err());
+    }
+    let mut rows = fixture();
+    let mut constants = constant_rows(true, "CPU", 1);
+    constants.push(Row::ConstantElement {
+        graph: 0,
+        value: 2,
+        index: 0,
+        element_bytes: 8,
+        integer: 0,
+    });
+    rows.splice(6..6, constants);
+    assert!(consume(rows).is_ok());
+}
+#[test]
+fn unread_gpu_constant_is_explicit_and_cannot_have_payload() {
+    let mut rows = fixture();
+    rows.splice(6..6, constant_rows(false, "non_CPU", 1));
+    assert!(consume(rows.clone()).is_ok());
+    rows.insert(
+        8,
+        Row::ConstantElement {
+            graph: 0,
+            value: 2,
+            index: 0,
+            element_bytes: 8,
+            integer: 0,
+        },
+    );
+    assert!(consume(rows).is_err());
+}
+#[test]
+fn constant_missing_payload_and_width_drift_refuse() {
+    let mut rows = fixture();
+    rows.splice(6..6, constant_rows(true, "CPU", 1));
+    assert!(consume(rows.clone()).is_err());
+    rows.insert(
+        8,
+        Row::ConstantElement {
+            graph: 0,
+            value: 2,
+            index: 0,
+            element_bytes: 4,
+            integer: 0,
+        },
+    );
+    assert!(consume(rows).is_err());
+}
+#[test]
+fn attribute_declared_count_type_and_payload_are_checked() {
+    let attr = Row::Attribute {
+        graph: 0,
+        node: 4,
+        index: 0,
+        name: "start".into(),
+        attribute_type: 2,
+        count: 1,
+        readable: true,
+        reason: "read".into(),
+    };
+    let mut rows = fixture();
+    rows.insert(10, attr);
+    assert!(consume(rows.clone()).is_err());
+    rows.insert(
+        11,
+        Row::AttributeElement {
+            graph: 0,
+            node: 4,
+            attribute: 0,
+            index: 0,
+            element_kind: 1,
+            value: Value::from(0),
+        },
+    );
+    assert!(consume(rows.clone()).is_ok());
+    if let Row::AttributeElement { element_kind, .. } = &mut rows[11] {
+        *element_kind = 3;
+    }
+    assert!(consume(rows).is_err());
+}
+#[test]
+fn original_deadline_and_encoded_budget_cancel_before_append() {
+    let mut sink = Sink {
+        deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+        ..Default::default()
+    };
+    assert!(sink.accept(fixture().remove(0)).is_err());
+    assert!(sink.rows.is_empty());
+    let mut sink = Sink {
+        json_bytes: MAX_JSON - 4096,
+        ..Default::default()
+    };
+    assert!(sink.accept(fixture().remove(0)).is_err());
+    assert!(sink.rows.is_empty());
+}
+#[test]
+fn collector_error_cancel_and_counter_drift_never_complete() -> Result<()> {
+    for (status, error, drift) in [(5, 1, false), (6, 1, false), (0, 0, true)] {
+        let sink = consume(fixture())?;
+        let mut counts = sink.counts;
+        if drift {
+            counts[0] += 1;
+        }
+        assert!(!sink.finish(status, error, counts).complete);
+    }
+    Ok(())
+}
+#[test]
+fn child_graph_outer_binding_stays_explicitly_unresolved() {
+    let mut rows = fixture();
+    rows.insert(
+        12,
+        Row::Graph {
+            graph: 1,
+            parent_graph: Some(0),
+            parent_node: Some(4),
+            attribute: "body".into(),
+            outer_bindings: "unresolved".into(),
+        },
+    );
+    rows.insert(13, Row::End { graph: 1 });
+    assert!(consume(rows.clone()).is_ok());
+    if let Row::Graph { outer_bindings, .. } = &mut rows[12] {
+        *outer_bindings = "proven".into();
+    }
+    assert!(consume(rows).is_err());
+}
+#[test]
+fn raw_utf8_null_span_and_unknown_record_refuse() {
+    let invalid = [255u8];
+    let mut raw = Raw {
+        kind: 2,
+        flags: 0,
+        graph: 0,
+        node: 0,
+        value: 0,
+        slot: 0,
+        integer: 1,
+        real: 0.0,
+        text: [std::ptr::null(); 4],
+        text_bytes: [0; 4],
+    };
+    raw.text[0] = invalid.as_ptr();
+    raw.text_bytes[0] = 1;
+    assert!(unsafe { decode(&raw) }.is_err());
+    raw.text[0] = std::ptr::null();
+    assert!(unsafe { decode(&raw) }.is_err());
+    raw.text_bytes[0] = 0;
+    raw.kind = 99;
+    assert!(unsafe { decode(&raw) }.is_err());
+    raw.kind = 7;
+    raw.flags = 2;
+    raw.real = f64::NAN;
+    assert!(unsafe { decode(&raw) }.is_err());
+}
+
+#[test]
+fn same_core_record_abi_has_independent_x64_layout() {
+    assert_eq!(std::mem::size_of::<Raw>(), 120);
+    assert_eq!(std::mem::align_of::<Raw>(), 8);
+    assert_eq!(std::mem::offset_of!(Raw, text), 56);
+    assert_eq!(std::mem::offset_of!(Raw, text_bytes), 88);
+}
+
+#[test]
+fn metadata_attribute_population_refuses_sixty_fifth_entry() {
+    for count in [64, 65] {
+        let mut rows = fixture();
+        let attributes = (0..count).map(|index| Row::Attribute {
+            graph: 0,
+            node: 4,
+            index,
+            name: format!("attr{index}"),
+            attribute_type: 7,
+            count: 0,
+            readable: true,
+            reason: "read".into(),
+        });
+        rows.splice(10..10, attributes);
+        assert_eq!(consume(rows).is_ok(), count == 64);
+    }
+}
+#[test]
+fn scalar_attributes_require_one_value_but_lists_can_be_empty() {
+    for attribute_type in [1, 2, 3] {
+        for count in [0, 1, 2] {
+            let mut rows = fixture();
+            let mut attributes = vec![Row::Attribute {
+                graph: 0,
+                node: 4,
+                index: 0,
+                name: "scalar".into(),
+                attribute_type,
+                count,
+                readable: true,
+                reason: "read".into(),
+            }];
+            for index in 0..count {
+                let (element_kind, value) = match attribute_type {
+                    1 => (2, serde_json::json!(1.0)),
+                    2 => (1, serde_json::json!(1)),
+                    _ => (3, serde_json::json!("x")),
+                };
+                attributes.push(Row::AttributeElement {
+                    graph: 0,
+                    node: 4,
+                    attribute: 0,
+                    index,
+                    element_kind,
+                    value,
+                });
+            }
+            rows.splice(10..10, attributes);
+            assert_eq!(consume(rows).is_ok(), count == 1);
+        }
+    }
+    for attribute_type in [6, 7, 8] {
+        let mut rows = fixture();
+        rows.insert(
+            10,
+            Row::Attribute {
+                graph: 0,
+                node: 4,
+                index: 0,
+                name: "list".into(),
+                attribute_type,
+                count: 0,
+                readable: true,
+                reason: "read".into(),
+            },
+        );
+        assert!(consume(rows).is_ok());
+    }
+}

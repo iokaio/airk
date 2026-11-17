@@ -15,8 +15,8 @@ sign-native.prepare_pair/finish_pair/read_verified_pair receive the same optiona
 
 Maintained integration correction: the exact existing helper is
 reference_parent_no_site_r2.py (SHAfe4cc990649d92e041b79cccb3fd7ef1129979a26432b7f02b2d8d28b586ed8d),
-with unchanged reference_owned.py2d7a and reference_worker.py9c04. No retained
-helper is renamed, copied, edited or replaced.
+with unchanged reference_owned.py2d7a and reference_worker.py9c04. Historical helper copies remain unchanged. Byte-identical maintained
+copies now live under helpers/; the loader executes those tracked sources.
 
 All three mandatory final proofs (projection, native emission and stdout) must
 invoke their actual hash callback and return an exact path/bytes/SHA row. Missing,
@@ -42,3 +42,12 @@ remain mandatory. Nested notices/cuda-runtime names, bare cuda-license.txt,
 renamed/omitted/extra rows and case collisions are refused. Builder, signing and
 installer consumers forward that exact roster; notices remain beside the service
 image. Private provider-only staging remains incomplete and unapproved.
+
+Current helper loading authenticates the three exact historical source hashes,
+then loads only the maintained helper directory. The sibling reference_worker
+module is explicitly bound during parent import and prior sys.modules state is
+restored afterward; a shadowed worker object/path/hash refuses before execution.
+Fresh plans seal maintained helper paths. Old artifact copies and receipt paths
+remain evidence and are never rewritten or treated as new qualification.
+The copied standalone legacy CLIs are not supported relocated entry points;
+see helpers/README.md for the reused callable APIs and contract.

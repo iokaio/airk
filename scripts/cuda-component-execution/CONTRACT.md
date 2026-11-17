@@ -246,3 +246,60 @@ compiler policy digests, whose owners remain unchanged. runtime.rs is outside
 those policy inputs; the separate CPU Focus source supplement is not Compact's
 admission path. The new build/source introductions remain freshly pinned and
 no old profile qualification is transferred or relabeled by this diagnostic.
+
+## Separate final graph metadata diagnostic
+
+This mode uses distinct plan airk.private.cuda-graph-metadata-diagnostic-plan/1,
+native result airk.private.cuda-graph-metadata-diagnostic/1, and parent receipt
+airk.private.owned-cuda-graph-metadata-diagnostic/1. Its ignored selector is
+inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_load_only_graph_metadata_diagnostic.
+The scope is disposable session creation and final graph metadata observation;
+no Scorer, forward, hybrid policy or qualification is returned. All existing
+source/image/asset/PID/user/default-owner/Job/memory/deadline/teardown checks and
+16MiB native-result/64MiB stdout caps remain. It requires complete final placement
+and complete bounded graph metadata with matching full node identities.
+
+Selected logs retain their original64KiB cap, counters and omitted records.
+This separate mode may complete graph capture with selected_logs_complete=false;
+it never claims complete logs or changes the old placement mode's truncation
+failure. It cannot qualify a component/model or authorize CPU fallback policy.
+
+Native graph metadata schema airk.private.ort-final-graph-metadata/1 owns typed
+ordered records and six counters: accepted nodes, values, edges, raw UTF8 span
+bytes, constant source-element payload bytes, and accepted records. Checkpoint
+callbacks are cancellation-only, not records. Native exact encoded_bytes remains
+native-owned; the parent also bounds its independent compact UTF8 JSON encoding
+at8MiB without claiming serializers have identical floating-point formatting.
+The parent validates graph nesting, identities, references, dimensions, slots,
+producer links, attribute and immutable-constant payloads, counters, and the full
+placement cross-map. Partial graphs, inconsistent logs or failed teardown refuse.
+
+Graph preparation and execution require a freshly authenticated static_graph_binding
+in the preserved image packet. The maintained preserver revalidates the dedicated
+/5 environment -> /3 producer chain, actual aggregate/Cargo link, native manifest
+producer identity and both collector exports in the actual image. Missing or
+old static provenance refuses before dispatch. The verifier source roster, all
+binding FilePins and complete runtime census are sealed and reopened afterward;
+producer proof is revalidated in final observation under the original deadline.
+No graph plan may reuse old metadata that pins the historical static producer.
+
+Fresh plans select the maintained tracked ownership-helper root. Historical
+metadata retains its original plan and source pins; the loader authenticates
+those old bytes separately and executes byte-identical tracked helper copies.
+Both the consumed historical evidence and new tracked helper inputs remain sealed.
+New graph_metadata.rs and graph_metadata/tests.rs have explicit authenticated
+source-introduction rows; old owner rows never receive fictional historical hashes.
+
+Graph execution passes its one original monotonic120s cutoff through preflight,
+final provenance observation, the preserver, environment/5 and incremental/3
+verifier. No graph call may substitute a new300s/600s verifier operation. Input
+hashing and PE export-table reads check the same cutoff during streaming reads;
+expired deep verification refuses before dispatch or final diagnostic completion.
+A full parent recensus that cannot fit this bound is a readiness blocker, not
+permission to widen it or claim that the graph operation passed.
+
+The parent mirrors the native metadata bounds: fewer than64 attributes per node,
+and exactly one element for readable scalar attribute types1,2,3. The exact
+maintained provenance roster also includes verification/checkpoint_sections.py
+and verification/materialized.py. Historical raw producer/metadata identities
+remain unchanged; source introductions and current verifier pins are explicit.

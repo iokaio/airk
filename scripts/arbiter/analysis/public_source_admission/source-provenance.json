@@ -1,0 +1,192 @@
+{
+  "files": [
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/contextbench-current-blind-train-r1/audit450_sources.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "e12df1dbf2f0813dc68f0cb6d54e28ffde9fe31f85197a42b8723780c1376e8d",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/contextbench-current-blind-train-r1/audit450_sources.py",
+      "original_sha256": "eec458507424ab686f36d52a2a570eefc6158bef10f44e2542fe9d6b9f208539"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/contextbench-owning-gold.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "4afdf98afccdbbf897ea6a33a8c58189ed936142ee456ae5ea6f03650b41bcfa",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/contextbench-owning-gold.py",
+      "original_sha256": "3eee61cfe239590d069f03fdbf38a70a74efc6d170b37ca17e39ba7f9742e1a7"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/contextbench_source_join.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "1b53745b39e8496356345cdc6efecb31e09ff7cb5b1e29fa9a0087ff3861d066",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/contextbench_source_join.py",
+      "original_sha256": "bf74a7b3b35a67fd05b469b747b2f0aab029eb88bd238f822d8fa5400e698e1b"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/contextbench_source_join_r2.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "39b09495bda235031275a1c53eef7cea3c3dfe4f4f6659bedd5d786bcf2275a5",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/contextbench_source_join_r2.py",
+      "original_sha256": "26d6fa02ef687a7cd98cf0461eeebc4ca1a7e8306428811b53f8e32216f6e022"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/collect_repository_rights.py",
+      "changes": [],
+      "maintained_sha256": "cd39cab55cc34d0e423f9550e7b6da3087e699c7167a03ed01f90eeb5c444f48",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/collect_repository_rights.py",
+      "original_sha256": "cd39cab55cc34d0e423f9550e7b6da3087e699c7167a03ed01f90eeb5c444f48"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/download_python_train.py",
+      "changes": [],
+      "maintained_sha256": "8121fbff569b69266a6a770c69ec87f4c5cf63a5d2ab455788b598e2d2fdf6e8",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/download_python_train.py",
+      "original_sha256": "8121fbff569b69266a6a770c69ec87f4c5cf63a5d2ab455788b598e2d2fdf6e8"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/join_python_train.py",
+      "changes": [],
+      "maintained_sha256": "7e8e9a23bafc3fbbfb48c49ec360174b41578e05fc0abad01ce262b3dd5d5fca",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/join_python_train.py",
+      "original_sha256": "7e8e9a23bafc3fbbfb48c49ec360174b41578e05fc0abad01ce262b3dd5d5fca"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/launch_native_visibility.py",
+      "changes": [],
+      "maintained_sha256": "21cb67ddd4418ce73d5c95be816e1254959051cb6e953191bbcbc0b5867a4362",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/launch_native_visibility.py",
+      "original_sha256": "21cb67ddd4418ce73d5c95be816e1254959051cb6e953191bbcbc0b5867a4362"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/launch_native_visibility_r2.py",
+      "changes": [],
+      "maintained_sha256": "307d249868767c3c22bc6938c2024b93aada9c590a5b13c2a21165b042a30a66",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/launch_native_visibility_r2.py",
+      "original_sha256": "307d249868767c3c22bc6938c2024b93aada9c590a5b13c2a21165b042a30a66"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/qasper-train-focus512-proposal-r1/prepare_data.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "9eb587358ea8516acb1aa71e3cbb1f32378c3c571df0d2b42d31a4f3a6061268",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/qasper-train-focus512-proposal-r1/prepare_data.py",
+      "original_sha256": "95cf5a346a75c92a05811d65478a48d7dd65981a30939407462d11c7bca567d6"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/source-rights-applicability-review-r1/seal_review.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "c0bf81028d1917d22d54351c817d729bcb3f389a2e2b6b02e982768bb1a34212",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/source-rights-applicability-review-r1/seal_review.py",
+      "original_sha256": "2c8d5496d787ac9af27cfce95db3989809e483d54bc662a6088efb1f30f49f66"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/stage_public_sources.py",
+      "changes": [],
+      "maintained_sha256": "905760906ee4fbd865cbdd533f212d1688715519653acf8432bfb0dc9a7b09e2",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/stage_public_sources.py",
+      "original_sha256": "905760906ee4fbd865cbdd533f212d1688715519653acf8432bfb0dc9a7b09e2"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/stage_public_sources_r2.py",
+      "changes": [],
+      "maintained_sha256": "7247861330800f8e41a3cc718f5fcc34973f7c5a69d9f9dbf7a1f29c369e1acb",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/stage_public_sources_r2.py",
+      "original_sha256": "7247861330800f8e41a3cc718f5fcc34973f7c5a69d9f9dbf7a1f29c369e1acb"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/test_launch_native_visibility.py",
+      "changes": [],
+      "maintained_sha256": "f2c0de7ea3d48245321476b376bc3cc0ac18dcc05bac408d857509408a0ca31e",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/test_launch_native_visibility.py",
+      "original_sha256": "f2c0de7ea3d48245321476b376bc3cc0ac18dcc05bac408d857509408a0ca31e"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/test_launch_native_visibility_r2.py",
+      "changes": [],
+      "maintained_sha256": "bd02c89d21dcdf8b1c7aaef60d510e4dc07057d0ab1f820358b73a9869966a21",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/test_launch_native_visibility_r2.py",
+      "original_sha256": "bd02c89d21dcdf8b1c7aaef60d510e4dc07057d0ab1f820358b73a9869966a21"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/verify_original_sources.py",
+      "changes": [],
+      "maintained_sha256": "815fb722aad885fc7400de3ebf3667f8934b89acb15b50da2382fe704aa16622",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/verify_original_sources.py",
+      "original_sha256": "815fb722aad885fc7400de3ebf3667f8934b89acb15b50da2382fe704aa16622"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/f2-code-pilot-applicability-r1/prepare_proposed_cohort.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "645b20fb7dfde368ca7cee5dba84c609fbc74932a2a89eb33fde2613a0e0b8e4",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/f2-code-pilot-applicability-r1/prepare_proposed_cohort.py",
+      "original_sha256": "12e9070779b49c8dce777521c9615b2ca440f2a1aa9dd4486d2d9d838c316242"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/f2-code-pilot-applicability-r1/project_csn_metadata.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "a21a097d836e535eeeccaed207363b322ff6c71b7136f67d0ff48ee190b6c4f4",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/f2-code-pilot-applicability-r1/project_csn_metadata.py",
+      "original_sha256": "19c1ca0ade3a3a96256f290c91460d7ef23e70cfac59ab004b6a3c3d5298abc9"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/split-clone-chronology-r1/audit.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "45f7b4b1e5521bc260de10bbb4d95b24c9e5cc008c53b224633bf9a962ccbf22",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/split-clone-chronology-r1/audit.py",
+      "original_sha256": "7a172c531919fc9e74dae582fc13db04be72a90c06837eab0d4270b72ce9f121"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/audit_dev_docids_r4.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "5607bd33c32a39276477c4e06075c9f3bfbca0167da097697e5a421a09f9d4a3",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/audit_dev_docids_r4.py",
+      "original_sha256": "8f962403c06819f74a33db3eb296b74586804ce4d45ff12e136c1e16938b3212"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/audit_dev_docids_r5.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "3372f3830d226d5be80c32a27e28417fa8f93c955e602aebdd5a9c8981daa316",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/audit_dev_docids_r5.py",
+      "original_sha256": "cdabfc9ff51d2d4fae853aca1be6038625863ed656d49b1d265e1b24c8c7f73d"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/audit_original_archive.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "fdd6ee271be390dc9d376e5aea632110861be0faf1910c0f505cd7bde4bbb534",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/audit_original_archive.py",
+      "original_sha256": "925b9e2a6fd64c9b3b3ae391f0a84db93881d9c19a239ac2c3112f4e317b81ae"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/audit_original_archive_r3.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "453c7182225b4791ef3ebf9754897ffe438f399b87e69f013a3ac24d83e2b0b6",
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/audit_original_archive_r3.py",
+      "original_sha256": "c0d956f364f068402bf99cc75116585fb4718c5629ecf77ecbe83f963a0cae1c"
+    }
+  ],
+  "schema": "airk.source-relocation/1"
+}

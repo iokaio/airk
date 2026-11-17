@@ -1,0 +1,848 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Private positive-span diagnostics; source rights, whole menus and terminals remain separate.
+use super::*;
+const TECHQA: &str = "3e9506f1e6c3b5223d1d77f9289c941402b5a41ab385cbc0cefdc9a02f770642";
+const CONTEXT: &str = "f94d5d0cc68b20b4d9b86ad0ea7ff3c48d29ed867e47fb67d31b4de6f52c5035";
+const CONTEXT_AUDIT: &str = "363c5a8bebd4fe179c498d1c557e7be49b71b4388ae7c84bff630db7af8c6499";
+const CONTEXT_TRAIN: &str = "dd8a9ebacbd44653e9532527faafb43a05d6f26abc27fbec5fc121c8d9d6fabb";
+#[derive(serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpanInput {
+    schema: String,
+    dataset: String,
+    manifest: ResourceFilePin,
+    rights_evidence: Vec<ResourceFilePin>,
+    source_audit: Option<ResourceFilePin>,
+    original_train: Option<ResourceFilePin>,
+    stage_root: PathBuf,
+    encoder_array: ResourceFilePin,
+    encoder_family: String,
+    focus_input: ResourceFilePin,
+    data_root: PathBuf,
+    output: PathBuf,
+}
+struct FileSource {
+    relative: String,
+    original: ResourceFilePin,
+}
+struct Gold {
+    file: String,
+    original: Value,
+    span: Option<LocalSpan>,
+    refusal: Option<String>,
+}
+struct Task {
+    id: String,
+    question: String,
+    group: String,
+    gold: Vec<Gold>,
+    provenance: Value,
+}
+struct Group {
+    suffix: PathBuf,
+    files: BTreeMap<String, FileSource>,
+}
+struct Cohort {
+    tasks: Vec<Task>,
+    groups: BTreeMap<String, Group>,
+    span_count: usize,
+}
+fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    value[key]
+        .as_str()
+        .context(format!("missing original {key}"))
+}
+fn integer(value: &Value, key: &str) -> Result<usize> {
+    value[key]
+        .as_u64()
+        .context(format!("missing original {key}"))?
+        .try_into()
+        .context("offset exceeds host")
+}
+fn hash_text(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+fn source_pin(value: &Value) -> Result<ResourceFilePin> {
+    Ok(ResourceFilePin {
+        path: text(value, "path")?.into(),
+        sha256: text(value, "sha256")?.parse()?,
+    })
+}
+fn char_span(source: &str, start: usize, end: usize, answer: &str) -> Result<LocalSpan> {
+    ensure!(start < end, "empty original human answer");
+    let offsets: Vec<_> = source
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(source.len()))
+        .collect();
+    ensure!(
+        end < offsets.len(),
+        "original human character offset outside source"
+    );
+    let span = LocalSpan {
+        start: offsets[start],
+        end: offsets[end],
+    };
+    ensure!(
+        &source[span.start..span.end] == answer,
+        "human answer/source UTF8 differs"
+    );
+    Ok(span)
+}
+fn lf_span(source: &str, start: usize, end: usize) -> Result<LocalSpan> {
+    ensure!(1 <= start && start <= end, "invalid declared LF range");
+    let mut starts = vec![0];
+    for (at, byte) in source.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(at + 1);
+        }
+    }
+    let lines = starts.len() - usize::from(source.ends_with('\n'));
+    ensure!(end <= lines, "declared LF range outside original source");
+    Ok(LocalSpan {
+        start: starts[start - 1],
+        end: starts.get(end).copied().unwrap_or(source.len()),
+    })
+}
+fn equivalent_lines(value: &str) -> String {
+    value.replace("\r\n", "\n").trim_matches('\n').to_owned()
+}
+fn annotation_text(value: &str, start: usize, end: usize) -> Result<String> {
+    let normalized = value.replace("\r\n", "\n");
+    let lines: Vec<_> = normalized.trim_matches('\n').split('\n').collect();
+    let numbered: Option<Vec<(usize, &str)>> = lines
+        .iter()
+        .map(|line| {
+            let (n, body) = line.split_once('\t')?;
+            Some((n.parse().ok()?, body))
+        })
+        .collect();
+    if let Some(numbered) = numbered {
+        ensure!(
+            numbered.len() == end - start + 1
+                && numbered
+                    .iter()
+                    .enumerate()
+                    .all(|(index, (n, _))| *n == start + index),
+            "line formatter counters differ from declared original range"
+        );
+        Ok(numbered
+            .iter()
+            .map(|(_, body)| *body)
+            .collect::<Vec<_>>()
+            .join("\n"))
+    } else {
+        Ok(value.to_owned())
+    }
+}
+fn context_span(source: &str, annotation: &Value) -> Result<LocalSpan> {
+    let start = integer(annotation, "start_line")?;
+    let end = integer(annotation, "end_line")?;
+    ensure!(start >= 1 && start <= end, "invalid original range");
+    let raw = text(annotation, "content")?;
+    ensure!(!raw.trim().is_empty(), "empty human gold content refused");
+    let decoded = annotation_text(raw, start, end)?;
+    if let Ok(span) = lf_span(source, start, end) {
+        if equivalent_lines(&source[span.start..span.end]) == equivalent_lines(&decoded) {
+            return Ok(span);
+        }
+    }
+    ensure!(
+        decoded == raw && !raw.is_empty(),
+        "formatted annotation cannot relocate or empty gold"
+    );
+    let occurrences: Vec<_> = source
+        .as_bytes()
+        .windows(raw.len())
+        .enumerate()
+        .filter_map(|(at, window)| (window == raw.as_bytes()).then_some(at))
+        .take(2)
+        .collect();
+    ensure!(
+        occurrences.len() == 1,
+        "entire raw gold is absent/nonunique"
+    );
+    let at = occurrences[0];
+    let end = at + raw.len();
+    ensure!(
+        source.is_char_boundary(at) && source.is_char_boundary(end),
+        "gold UTF8 boundary differs"
+    );
+    ensure!(
+        (at == 0 || source.as_bytes()[at - 1] == b'\n')
+            && (end == source.len()
+                || raw.ends_with('\n')
+                || source.as_bytes().get(end) == Some(&b'\n')
+                || source[end..].starts_with("\r\n")),
+        "entire raw gold not at source LF boundaries"
+    );
+    ensure!(
+        !(raw.ends_with('\r') && source.as_bytes().get(end) == Some(&b'\n')),
+        "gold cannot split a source CRLF pair"
+    );
+
+    Ok(LocalSpan { start: at, end })
+}
+fn relative_annotation(file: &str, repo: &str) -> Result<String> {
+    let path = if file.starts_with("/workspace/") {
+        file.strip_prefix(&format!("/workspace/{}__0.1/", repo.replace('/', "__")))
+            .context("foreign declared checkout")?
+    } else {
+        file.strip_prefix("/testbed/").unwrap_or(file)
+    };
+    airk_core::index_catalog::relative_path(path, false)?;
+    Ok(path.into())
+}
+fn add_file(group: &mut Group, relative: &str, pin: ResourceFilePin) -> Result<()> {
+    airk_core::index_catalog::relative_path(relative, false)?;
+    if let Some(old) = group.files.get(relative) {
+        ensure!(
+            old.original.sha256 == pin.sha256,
+            "same revision/path has different original source"
+        );
+    } else {
+        group.files.insert(
+            relative.into(),
+            FileSource {
+                relative: relative.into(),
+                original: pin,
+            },
+        );
+    }
+    Ok(())
+}
+fn gold(file: String, annotation: Value, result: Result<LocalSpan>) -> Gold {
+    match result {
+        Ok(span) => Gold {
+            file,
+            original: annotation,
+            span: Some(span),
+            refusal: None,
+        },
+        Err(error) => Gold {
+            file,
+            original: annotation,
+            span: None,
+            refusal: Some(error.to_string()),
+        },
+    }
+}
+fn techqa(input: &SpanInput, manifest: &Value) -> Result<Cohort> {
+    ensure!(
+        input.manifest.sha256.to_string() == TECHQA
+            && text(manifest, "schema")?
+                == "airk.private.techqa-source-disjoint-positive-research-pairs/1",
+        "exact reviewed TechQA source cohort required"
+    );
+    let fence_pin = source_pin(&manifest["fence_pin"])?;
+    let fence: Value = serde_json::from_slice(&pin_bytes(&fence_pin, 16 << 20)?)?;
+    let excluded: BTreeSet<_> = fence["entire_DEV_source_id_closure"]
+        .as_array()
+        .context("source-only heldout fence absent")?
+        .iter()
+        .map(|v| v.as_str().context("source ID invalid"))
+        .collect::<Result<_>>()?;
+    ensure!(
+        excluded.len() == 12355,
+        "full original DEV-source ID fence required"
+    );
+    let original_pin = source_pin(&manifest["original_600_TRAIN_pin"])?;
+    let original: Value = serde_json::from_slice(&pin_bytes(&original_pin, 4 << 20)?)?;
+    let originals = original.as_array().context("original TRAIN array absent")?;
+    ensure!(
+        originals.len() == 600,
+        "all original TRAIN records required"
+    );
+    let qa: BTreeMap<_, _> = originals
+        .iter()
+        .map(|v| Ok((text(v, "QUESTION_ID")?, v)))
+        .collect::<Result<_>>()?;
+    ensure!(qa.len() == 600, "ambiguous original TRAIN IDs");
+    let documents = manifest["documents"]
+        .as_array()
+        .context("original documents absent")?;
+    ensure!(
+        documents.len() == 254,
+        "original254 document denominator required"
+    );
+    let mut group = Group {
+        suffix: PathBuf::new(),
+        files: BTreeMap::new(),
+    };
+    let mut docs = BTreeMap::new();
+    for document in documents {
+        let id = text(document, "original_document_id")?;
+        ensure!(!excluded.contains(id), "heldout source document refused");
+        let relative = format!("{id}.txt");
+        let original_doc = source_pin(&document["original_document_json_pin"])?;
+        let doc: Value = serde_json::from_slice(&pin_bytes(&original_doc, 8 << 20)?)?;
+        ensure!(text(&doc, "id")? == id, "original document ID substituted");
+        let body = text(&doc, "text")?;
+        let source = ResourceFilePin {
+            path: text(document, "source_path")?.into(),
+            sha256: text(document, "source_sha256")?.parse()?,
+        };
+        let bytes = pin_bytes(&source, 8 << 20)?;
+        ensure!(
+            bytes == body.as_bytes(),
+            "original full document TEXT differs"
+        );
+        add_file(&mut group, &relative, source)?;
+        ensure!(
+            docs.insert(id, (relative, body.to_owned())).is_none(),
+            "duplicate original source ID"
+        );
+    }
+    let raw_tasks = manifest["tasks"]
+        .as_array()
+        .context("original positive tasks absent")?;
+    ensure!(
+        raw_tasks.len() == 290,
+        "original290 task denominator required"
+    );
+    let mut tasks = Vec::new();
+    let mut ids = BTreeSet::new();
+    for row in raw_tasks {
+        let id = text(row, "original_TRAIN_id")?;
+        ensure!(ids.insert(id), "duplicate original task");
+        let original = qa.get(id).context("original TRAIN record missing")?;
+        let source_id = text(row, "source_document_id")?;
+        ensure!(!excluded.contains(source_id), "heldout source pair refused");
+        let (relative, body) = docs
+            .get(source_id)
+            .context("positive source outside254 roster")?;
+        ensure!(
+            text(original, "ANSWERABLE")? == "Y"
+                && text(original, "DOCUMENT")? == source_id
+                && text(original, "QUESTION_TITLE")? == text(row, "original_question_title")?
+                && text(original, "QUESTION_TEXT")? == text(row, "original_question_text")?
+                && text(original, "ANSWER")? == text(row, "original_human_answer")?,
+            "original human positive evidence differs"
+        );
+        let question = format!(
+            "{}\n\n{}",
+            text(original, "QUESTION_TITLE")?,
+            text(original, "QUESTION_TEXT")?
+        );
+        ensure!(
+            question == text(row, "question")?,
+            "whole original question differs"
+        );
+        let start: usize = text(original, "START_OFFSET")?.parse()?;
+        let end: usize = text(original, "END_OFFSET")?.parse()?;
+        let result = char_span(body, start, end, text(original, "ANSWER")?).and_then(|span| {
+            ensure!(
+                span.start == integer(row, "derived_utf8_start")?
+                    && span.end == integer(row, "derived_utf8_end")?,
+                "UTF8 span derivation differs"
+            );
+            Ok(span)
+        });
+        tasks.push(Task{id:id.into(),question,group:"techqa".into(),gold:vec![gold(relative.clone(),row.clone(),result)],provenance:json!({"source_document_id":source_id,"original_TRAIN_id":id,"scope":"positive source pair only; original candidate DOC_IDS metadata does not grant menu labels"})});
+    }
+    Ok(Cohort {
+        tasks,
+        groups: BTreeMap::from([("techqa".into(), group)]),
+        span_count: 290,
+    })
+}
+fn context(input: &SpanInput, manifest: &Value) -> Result<Cohort> {
+    ensure!(
+        input.manifest.sha256.to_string() == CONTEXT,
+        "exact reviewed150 case selection required"
+    );
+    let audit_pin = input
+        .source_audit
+        .as_ref()
+        .context("source audit pin absent")?;
+    let train_pin = input
+        .original_train
+        .as_ref()
+        .context("original TRAIN pin absent")?;
+    ensure!(
+        audit_pin.sha256.to_string() == CONTEXT_AUDIT
+            && train_pin.sha256.to_string() == CONTEXT_TRAIN,
+        "exact original source/whole TRAIN pins required"
+    );
+    let audit: Value = serde_json::from_slice(&pin_bytes(audit_pin, 64 << 20)?)?;
+    let train: Value = serde_json::from_slice(&pin_bytes(train_pin, 64 << 20)?)?;
+    ensure!(
+        train
+            .as_array()
+            .context("original TRAIN array absent")?
+            .len()
+            == 450
+            && audit["results"]
+                .as_array()
+                .context("source audit cases absent")?
+                .len()
+                == 450,
+        "exact original450 case arrays required"
+    );
+    ensure!(
+        text(&audit, "source_input_sha256")? == train_pin.sha256.to_string(),
+        "source audit/whole TRAIN closure differs"
+    );
+    let originals: BTreeMap<_, _> = train
+        .as_array()
+        .context("original TRAIN array absent")?
+        .iter()
+        .map(|v| Ok((text(v, "instance_id")?, v)))
+        .collect::<Result<_>>()?;
+    ensure!(
+        originals.len() == 450,
+        "complete original450 TRAIN IDs required"
+    );
+    let observations: BTreeMap<_, _> = audit["results"]
+        .as_array()
+        .context("source audit cases absent")?
+        .iter()
+        .map(|v| Ok((text(v, "instance_id")?, v)))
+        .collect::<Result<_>>()?;
+    ensure!(observations.len() == 450, "source audit450 IDs required");
+    let selected = manifest["rows"]
+        .as_array()
+        .context("selected case roster absent")?;
+    ensure!(
+        selected.len() == 150,
+        "original150 case denominator required"
+    );
+    let mut tasks = Vec::new();
+    let mut groups = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    let mut span_count = 0;
+    for row in selected {
+        let id = text(row, "instance_id")?;
+        ensure!(ids.insert(id), "duplicate selected case");
+        let original = originals.get(id).context("selected case outside TRAIN")?;
+        let observation = observations
+            .get(id)
+            .context("selected source case missing")?;
+        let repo = text(row, "repo")?;
+        let commit = text(row, "base_commit")?;
+        ensure!(
+            repo.split('/').count() == 2
+                && commit.len() == 40
+                && commit.bytes().all(|x| x.is_ascii_hexdigit()),
+            "invalid original repository/revision"
+        );
+        airk_core::index_catalog::relative_path(repo, false)?;
+        ensure!(
+            text(row, "original_inst_id")? == text(original, "original_inst_id")?
+                && text(observation, "original_inst_id")? == text(original, "original_inst_id")?,
+            "original publisher case identity differs"
+        );
+        let question = text(original, "problem_statement")?;
+        ensure!(
+            repo == text(original, "repo")?
+                && commit == text(original, "base_commit")?
+                && text(row, "question_sha256")? == hash_text(question)
+                && text(observation, "question_sha256")? == hash_text(question)
+                && text(observation, "repo")? == repo
+                && text(observation, "base_commit")? == commit,
+            "original question/repository/revision differs"
+        );
+        let group_id = format!("{repo}@{commit}");
+        let group = groups.entry(group_id.clone()).or_insert_with(|| Group {
+            suffix: PathBuf::from(repo).join(commit),
+            files: BTreeMap::new(),
+        });
+        let annotations: Vec<Value> = serde_json::from_str(text(original, "gold_context")?)?;
+        let spans = observation["spans"]
+            .as_array()
+            .context("full original gold bag absent")?;
+        ensure!(
+            !annotations.is_empty() && annotations.len() == spans.len(),
+            "whole human gold bag differs"
+        );
+        let mut golds = Vec::new();
+        let mut files = BTreeSet::new();
+        for (annotation, source) in annotations.into_iter().zip(spans) {
+            for key in ["file", "start_line", "end_line", "content"] {
+                ensure!(
+                    annotation[key] == source["original_annotation"][key],
+                    "original annotation substituted"
+                );
+            }
+            let relative = relative_annotation(text(&annotation, "file")?, repo)?;
+            ensure!(
+                relative == text(&source["source_pin"], "upstream_path")?,
+                "source path substitution"
+            );
+            ensure!(
+                text(&source["source_pin"], "url")?.starts_with(&format!(
+                    "https://raw.githubusercontent.com/{repo}/{commit}/"
+                )),
+                "source revision URL substituted"
+            );
+            let pin = source_pin(&source["source_pin"])?;
+            let raw = pin_bytes(&pin, 8 << 20)?;
+            let result = std::str::from_utf8(&raw)
+                .context("original source is not UTF8")
+                .and_then(|body| context_span(body, &annotation));
+            add_file(group, &relative, pin)?;
+            files.insert(relative.clone());
+            golds.push(gold(relative, annotation, result));
+            span_count += 1;
+        }
+        ensure!(
+            files.len() >= 2,
+            "selected multifile case lost original files"
+        );
+        tasks.push(Task{id:id.into(),question:question.into(),group:group_id,gold:golds,provenance:json!({"instance_id":id,"original_inst_id":row["original_inst_id"],"repository":repo,"base_commit":commit,"rights_disposition":row,"scope":"complete publisher positive gold spans only; no whole menu/card/terminal judgment"})});
+    }
+    ensure!(span_count == 2069, "original2069 span denominator required");
+    Ok(Cohort {
+        tasks,
+        groups,
+        span_count,
+    })
+}
+const TECHQA_README: &str = "c5a58ed7f2780fb2c4f2e06f8933ec4afbd06b5f29f6797c7857f3812f824060";
+const TECHQA_LICENSE: &str = "e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f";
+fn rights_map(pins: &[ResourceFilePin]) -> Result<BTreeMap<String, String>> {
+    ensure!(
+        !pins.is_empty() && pins.len() <= 1024,
+        "bounded actual rights evidence required"
+    );
+    let mut result = BTreeMap::new();
+    for pin in pins {
+        pin.validate()?;
+        ensure!(
+            result
+                .insert(pin.path.clone(), pin.sha256.to_string())
+                .is_none(),
+            "duplicate/ambiguous rights file"
+        );
+    }
+    Ok(result)
+}
+fn context_rights(manifest: &Value) -> Result<Vec<ResourceFilePin>> {
+    let mut result = BTreeMap::new();
+    for row in manifest["rows"]
+        .as_array()
+        .context("selected case roster absent")?
+    {
+        let pins = row["rights_pins"]
+            .as_array()
+            .context("original source-rights pins absent")?;
+        ensure!(!pins.is_empty(), "case rights evidence missing");
+        for value in pins {
+            let pin = source_pin(value)?;
+            if let Some(old) = result.insert(pin.path.clone(), pin.clone()) {
+                ensure!(old == pin, "ambiguous same-path rights evidence");
+            }
+        }
+    }
+    Ok(result.into_values().collect())
+}
+fn verify_rights(input: &SpanInput, manifest: &Value) -> Result<()> {
+    let actual = rights_map(&input.rights_evidence)?;
+    match input.dataset.as_str() {
+        "techqa" => {
+            let hashes: BTreeSet<_> = actual.values().map(String::as_str).collect();
+            ensure!(
+                actual.len() == 2 && hashes == BTreeSet::from([TECHQA_README, TECHQA_LICENSE]),
+                "authoritative original archive README and CDLA1 PDF pins required"
+            );
+        }
+        "contextbench" => ensure!(
+            actual == rights_map(&context_rights(manifest)?)?,
+            "complete selected-case original rights evidence differs"
+        ),
+        _ => anyhow::bail!("unsupported source-rights dataset"),
+    }
+    for pin in &input.rights_evidence {
+        pin_bytes(pin, 2 << 20)?;
+    }
+    Ok(())
+}
+fn parse_cohort(input: &SpanInput) -> Result<Cohort> {
+    ensure!(
+        input.schema == "airk.private.public-human-source-span-input/1",
+        "unknown private census input"
+    );
+    let manifest: Value = serde_json::from_slice(&pin_bytes(&input.manifest, 64 << 20)?)?;
+    verify_rights(input, &manifest)?;
+    match input.dataset.as_str() {
+        "techqa" => {
+            ensure!(
+                input.source_audit.is_none() && input.original_train.is_none(),
+                "unexpected alternate TechQA source inputs"
+            );
+            techqa(input, &manifest)
+        }
+        "contextbench" => context(input, &manifest),
+        _ => anyhow::bail!("unsupported public TRAIN dataset"),
+    }
+}
+fn compiler(input: &SpanInput) -> Result<Compiler> {
+    let request: ResourceRunInput =
+        serde_json::from_slice(&pin_bytes(&input.focus_input, 1 << 20)?)?;
+    request.validate()?;
+    let profile: airk_core::arbiter::Profile =
+        serde_json::from_slice(&pin_bytes(&request.profile, 1 << 20)?)?;
+    profile.validate()?;
+    ensure!(
+        profile.model == airk_core::arbiter::ModelChoice::FocusQwenReranker06B
+            && profile.max_tokens == 512,
+        "original Focus512 required"
+    );
+    let asset = |role| -> Result<Vec<u8>> {
+        let a = profile
+            .assets
+            .iter()
+            .find(|a| a.role == role)
+            .context("native compiler asset absent")?;
+        pin_bytes(
+            &ResourceFilePin {
+                path: request
+                    .files
+                    .get(&a.name)
+                    .context("actual asset path absent")?
+                    .clone(),
+                sha256: a.sha256,
+            },
+            16 << 20,
+        )
+    };
+    verified_focus_compiler(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)
+}
+fn verified_focus_compiler(profile_bytes: &[u8], tokenizer_bytes: &[u8]) -> Result<Compiler> {
+    let profile: airk_core::arbiter::CompilerProfile = serde_json::from_slice(profile_bytes)?;
+    ensure!(
+        profile.max_tokens == 512,
+        "actual Focus compiler must have512token width"
+    );
+    let compiler = Compiler::from_verified(profile_bytes, tokenizer_bytes)?;
+    ensure!(
+        compiler.recipe() == airk_core::arbiter::CompilerRecipe::QwenRerankYesNoV1,
+        "actual Focus compiler recipe differs"
+    );
+    Ok(compiler)
+}
+fn complete_bag(states: &[Option<bool>]) -> Option<bool> {
+    if states.is_empty() || states.iter().any(Option::is_none) {
+        None
+    } else {
+        Some(states.iter().all(|state| *state == Some(true)))
+    }
+}
+fn fresh_write(output: &std::path::Path, value: &impl serde::Serialize) -> Result<()> {
+    let bytes = phase("public_spans_serialization", || {
+        Ok(serde_json::to_vec(value)?)
+    })?;
+    ensure!(bytes.len() <= 512 << 20, "native output cap exceeded");
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    f.write_all(&bytes)?;
+    f.sync_all()?;
+    Ok(())
+}
+#[test]
+#[ignore = "reviewed pinned public TRAIN source manifests; no model dispatch or admission"]
+fn emit_public_human_source_span_visibility() -> Result<()> {
+    let input_pin = ResourceFilePin {
+        path: std::env::var("AIRK_PUBLIC_HUMAN_SPAN_INPUT")?,
+        sha256: std::env::var("AIRK_PUBLIC_HUMAN_SPAN_INPUT_SHA256")?.parse()?,
+    };
+    let input: SpanInput = serde_json::from_slice(&pin_bytes(&input_pin, 4 << 20)?)?;
+    let cohort = phase("public_spans_original_source_binding", || {
+        parse_cohort(&input)
+    })?;
+    ensure!(
+        input.stage_root.is_absolute()
+            && input.data_root.is_absolute()
+            && !input.data_root.exists()
+            && input.output.is_absolute()
+            && !input.output.exists(),
+        "fresh private metadata outputs and absolute staged sources required"
+    );
+    let stage = input.stage_root.canonicalize()?;
+    for p in [&input.data_root, &input.output] {
+        ensure!(
+            !p.parent()
+                .context("output parent absent")?
+                .canonicalize()?
+                .starts_with(&stage),
+            "metadata writes within source refused"
+        );
+    }
+    let encoders: Vec<EncoderInput> =
+        serde_json::from_slice(&pin_bytes(&input.encoder_array, 4 << 20)?)?;
+    let mut selected = encoders
+        .into_iter()
+        .filter(|e| e.family == input.encoder_family);
+    let encoder = selected
+        .next()
+        .context("genuine encoder descriptor absent")?;
+    ensure!(selected.next().is_none(), "ambiguous genuine descriptor");
+    let manifest: airk_retrieval::model::OnnxManifest = serde_json::from_slice(&sealed(
+        &encoder.directory.join("model.json"),
+        encoder.model_json_sha256,
+    )?)?;
+    validate_encoder_manifest(&encoder, &manifest)?;
+    let compiler = phase("public_spans_focus_compiler", || compiler(&input))?;
+    let control = tempfile::tempdir()?;
+    let lease = phase("public_spans_service_lease", || {
+        Ok(Arc::new(airk_store::service::ServiceLease::acquire(
+            control.path(),
+        )?))
+    })?;
+    let owner = phase("public_spans_native_owner", || {
+        NativeInferenceOwner::admit(lease)
+    })?;
+    std::fs::create_dir(&input.data_root)?;
+    let mut extractions = BTreeMap::new();
+    let mut group_reports = BTreeMap::new();
+    for (index, (id, group)) in cohort.groups.iter().enumerate() {
+        let source = stage.join(&group.suffix);
+        let attempt = (|| -> Result<_> {
+            let root = source.canonicalize()?;
+            ensure!(
+                root == source && root.starts_with(&stage),
+                "staged source alias/outside root"
+            );
+            let expected: BTreeSet<_> = group.files.keys().cloned().collect();
+            let mut actual = BTreeSet::new();
+            source_census(&root, &root, &mut actual)?;
+            ensure!(expected == actual, "staged full-source census differs");
+            for file in group.files.values() {
+                pin_bytes(
+                    &ResourceFilePin {
+                        path: root.join(&file.relative).to_string_lossy().into(),
+                        sha256: file.original.sha256,
+                    },
+                    8 << 20,
+                )?;
+            }
+            let kernel = phase("public_spans_kernel_open", || {
+                crate::Kernel::open(
+                    &root,
+                    Some(input.data_root.join(format!("group-{index:04}"))),
+                )
+            })?;
+            let (retained, report) = phase("public_spans_native_extraction", || {
+                unpublished_extractions(&kernel)
+            })?;
+            ensure!(
+                report.embedding_actual_forwards == 0 && report.embedding_inferences == 0,
+                "extraction unexpectedly dispatched embedding inference"
+            );
+            ensure!(
+                retained.iter().all(|r| expected.contains(&r.artifact.path)),
+                "extraction invented original source path"
+            );
+            Ok((root, retained, report))
+        })();
+        match attempt {
+            Ok((root, retained, report)) => {
+                group_reports.insert(id.clone(),json!({"scope":"unpublished original full-source capture","extraction_report":report,"expected_source_file_count":group.files.len(),"refusal":null}));
+                extractions.insert(id.clone(), (root, retained));
+            }
+            Err(error) => {
+                group_reports.insert(id.clone(),json!({"refusal":error.to_string(),"extraction_report":null,"expected_source_file_count":group.files.len()}));
+            }
+        }
+    }
+    let (records, units, descriptor) = phase("public_spans_evaluation_owner", || {
+        owner.run_encoder_evaluation(encoder.model_json_sha256,||->Result<_>{
+        let model=phase("public_spans_encoder_open",||EmbeddingModel::open(&encoder.directory))?;let descriptor=model.cache_descriptor()?;let mut units=BTreeMap::new();let mut total=0;let mut mapped_files=BTreeSet::new();
+        for (id,(root,extracted)) in &extractions {for retained in extracted {if retained.payload.chunks.iter().all(|c|c.region.is_none()) && hash_text(&retained.payload.text)==retained.artifact.content_hash {mapped_files.insert((id.clone(),retained.artifact.path.clone()));}}let records=planned_unit_records(&model,root,extracted)?;total+=records.len();ensure!(total<=100000,"whole census unit bound exceeded");units.insert(id.clone(),records);}
+        let mapping_started=Instant::now();let mut records=Vec::new();
+        for (ordinal,task) in cohort.tasks.iter().enumerate() {
+            let query=model.planning_tokens(&task.question);let query_fit=!task.question.trim().is_empty() && query.as_ref().is_ok_and(|q|q.len()<=256);let mut span_records=Vec::new();
+            for gold in &task.gold {let projection_observed=mapped_files.contains(&(task.group.clone(),gold.file.clone()));let mut alternatives=Vec::new();let mut union=Vec::new();let mut complete=false;
+                for unit in units.get(&task.group).into_iter().flatten().filter(|u|u["file"]==gold.file) {let members:Vec<airk_core::vector_evidence::VectorMemberSpan>=serde_json::from_value(unit["members"].clone())?;let spans:Vec<_>=members.into_iter().map(|m|m.span).collect();if let Some(parent)=&gold.span {if !spans.iter().any(|p|p.start<parent.end && p.end>parent.start){continue;}let visible=covered(parent,&spans);complete|=visible;union.extend(spans.clone());alternatives.push(json!({"unit_id":unit["id"],"complete_human_positive_span_visible":visible,"whole_unit_label_transfer":false,"focus":focus_compile(&compiler,&task.id,&task.question,text(unit,"input")?)}));}}
+                span_records.push(json!({"file":gold.file,"original_annotation":gold.original,"native_span":gold.span,"source_alignment_refusal":gold.refusal,"native_source_projection_observed":projection_observed,"complete_positive_span_in_one_unit":gold.span.as_ref().filter(|_|projection_observed).map(|_|complete),"union_span_visible":gold.span.as_ref().filter(|_|projection_observed).map(|p|covered(p,&union)),"all_alternative_units":alternatives,"fragment_positive_labels":false,"whole_unit_label_transfer":false}));
+            }
+            let states:Vec<_>=span_records.iter().map(|s|s["complete_positive_span_in_one_unit"].as_bool()).collect();let whole_bag=complete_bag(&states);
+            records.push(json!({"id":task.id,"question":task.question,"provenance":task.provenance,"group":task.group,"query_fit":query_fit,"query_tokens":query.as_ref().ok().map(|q|q.len()),"query_refusal":query.as_ref().err().map(ToString::to_string),"query_input_tensors":if query_fit{unit_tensors(&model,&task.question)?}else{None},"gold_span_denominator":task.gold.len(),"spans":span_records,"complete_positive_span_bag_in_individual_units":whole_bag,"negative_labels_generated":0,"whole_menu_card_or_terminal_gold":false,"gold_admission":false}));
+            if (ordinal+1)%32==0 || ordinal+1==cohort.tasks.len(){visibility_progress("row_mapping",ordinal+1,cohort.tasks.len(),records.len(),mapping_started)?;}
+        }Ok((records,units,descriptor))})
+    })??;
+    ensure!(
+        records.len() == cohort.tasks.len(),
+        "original case denominator changed"
+    );
+    parse_cohort(&input)?;
+    for (id, (root, _)) in &extractions {
+        let group = cohort.groups.get(id).context("original group absent")?;
+        let mut actual = BTreeSet::new();
+        source_census(root, root, &mut actual)?;
+        ensure!(
+            actual == group.files.keys().cloned().collect(),
+            "post-use staged source census changed"
+        );
+        for file in group.files.values() {
+            pin_bytes(
+                &ResourceFilePin {
+                    path: root.join(&file.relative).to_string_lossy().into(),
+                    sha256: file.original.sha256,
+                },
+                8 << 20,
+            )?;
+        }
+    }
+    let report = json!({"schema":"airk.private.public-human-source-span-visibility-result/1","input":input_pin,"dataset":input.dataset,"source_rights_evidence":input.rights_evidence,"rights_scope":"Pinned original terms only; Context local-research dispositions remain pending unless separately recorded by Root. No approval inferred from metadata.","complete":true,"original_case_denominator":cohort.tasks.len(),"original_span_denominator":cohort.span_count,"cases":records,"groups":group_reports,"actual_units":units,"planning_descriptor":descriptor,"native_binary_sha256":asset_digest()?,"embedding_forwards":null,"focus_forwards":null,"forward_count_observation":"unobserved; original extraction counters retained independently","nonblank_embedding_request_dispatched":false,"focus_scorer_request_dispatched":false,"negative_labels_generated":0,"rights_admission":false,"gold_admission":false,"published":false,"training_gradients":false,"whole_menu_card_terminal_or_context8192_admission":false});
+    fresh_write(&input.output, &report)
+}
+fn env_pin(name: &str) -> Result<ResourceFilePin> {
+    Ok(ResourceFilePin {
+        path: std::env::var(name)?,
+        sha256: std::env::var(format!("{name}_SHA256"))?.parse()?,
+    })
+}
+#[test]
+#[ignore = "native-owned private input emitter; source manifests only, no Kernel/model open"]
+fn emit_public_human_source_span_input() -> Result<()> {
+    let dataset = std::env::var("AIRK_PUBLIC_SPAN_DATASET")?;
+    let context = dataset == "contextbench";
+    let manifest = env_pin("AIRK_PUBLIC_SPAN_MANIFEST")?;
+    let rights_evidence = if context {
+        let value: Value = serde_json::from_slice(&pin_bytes(&manifest, 64 << 20)?)?;
+        context_rights(&value)?
+    } else {
+        vec![
+            env_pin("AIRK_PUBLIC_SPAN_TECHQA_README")?,
+            env_pin("AIRK_PUBLIC_SPAN_TECHQA_LICENSE")?,
+        ]
+    };
+    let input = SpanInput {
+        schema: "airk.private.public-human-source-span-input/1".into(),
+        dataset,
+        manifest,
+        rights_evidence,
+        source_audit: context
+            .then(|| env_pin("AIRK_PUBLIC_SPAN_SOURCE_AUDIT"))
+            .transpose()?,
+        original_train: context
+            .then(|| env_pin("AIRK_PUBLIC_SPAN_TRAIN"))
+            .transpose()?,
+        stage_root: std::env::var("AIRK_PUBLIC_SPAN_STAGE_ROOT")?.into(),
+        encoder_array: env_pin("AIRK_PUBLIC_SPAN_ENCODER_ARRAY")?,
+        encoder_family: std::env::var("AIRK_PUBLIC_SPAN_ENCODER_FAMILY")?,
+        focus_input: env_pin("AIRK_PUBLIC_SPAN_FOCUS_INPUT")?,
+        data_root: std::env::var("AIRK_PUBLIC_SPAN_DATA_ROOT")?.into(),
+        output: std::env::var("AIRK_PUBLIC_SPAN_OUTPUT")?.into(),
+    };
+    parse_cohort(&input)?;
+    let output = PathBuf::from(std::env::var("AIRK_PUBLIC_SPAN_INPUT_OUTPUT")?);
+    ensure!(
+        output.is_absolute() && !output.exists(),
+        "fresh absolute native-input output required"
+    );
+    ensure!(
+        !output
+            .parent()
+            .context("input output parent absent")?
+            .canonicalize()?
+            .starts_with(input.stage_root.canonicalize()?),
+        "input metadata inside source refused"
+    );
+    fresh_write(&output, &input)
+}
+#[cfg(test)]
+mod tests;

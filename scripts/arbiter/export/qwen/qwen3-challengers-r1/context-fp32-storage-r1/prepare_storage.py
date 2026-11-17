@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Additive derivative from actual same-model FP32 export; no NN/process launch."""
+import argparse,copy,hashlib,json,os,sys
+from pathlib import Path
+HERE=Path(__file__).resolve().parent
+R4=HERE.parent/'full-stages-r4'
+sys.path.insert(0,str(R4))
+from prepare_full_r4 import natural,append_rows
+from launch_full_r4 import LIMITS
+SOURCES=['pack_onnx.py','storage_worker.py','prepare_storage.py','test_storage.py','graph_closure.py']
+EXPECTED={'Qwen/Qwen3-1.7B':{'proof':'ab7eb82a84050a5ceaad8f8fc6c7d2efbcd158288a0022bbbc482b92973fb759','owned':'93b7b9f1abf823ccc6d4c02a430f1fe3273bb240713994e4e5f6f0d81f94ebf7'},'Qwen/Qwen3-4B':{'proof':'64f3b825a7c831bd263a6d3475d21cc41013fbb7a5a05b00ab663abd074bcb19','owned':'d3560c382e6846fb849fdc1b05c9edb58ef719eb2275c437e604425ddbf7a93b'}}
+NUMERIC={'storage_only':True,'no_math_or_precision_change':True,'exact_tensor_bytes_and_graph_restoration':True,'no_NN':True,'maximum_external_asset_bytes':16*1024**3,'maximum_graph_bytes':64*1024**2}
+
+def sha(p):
+ with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+
+def source_pins():return {str(path.resolve()):sha(path) for path in [*[HERE/n for n in SOURCES]]}
+
+def main():
+ p=argparse.ArgumentParser();p.add_argument('--release',type=Path,required=True);p.add_argument('--release-sha256',required=True);a=p.parse_args()
+ if sha(a.release)!=a.release_sha256:raise ValueError('Root quant release changed')
+ review=json.loads(a.release.read_bytes());model=review['model_id'];label='17' if model=='Qwen/Qwen3-1.7B' else '4'
+ if model not in EXPECTED or review.get('execution_authorized') is not True or review.get('authorized_stage')!='qwen3-context-fp32-storage' or review.get('source_sha256')!=source_pins() or review.get('limits')!=LIMITS[model] or review.get('numeric_limits')!=NUMERIC :raise ValueError('exact reviewed separate quantization protocol required')
+ source=R4/(label+'-export-r4-result');base_path=R4/('execution-seal-'+label+'-export-r4.json');owned_path=R4/('owned-'+label+'-export-r4/execution-receipt.json');outer_path=R4/('owned-'+label+'-export-r4/outer-closure.json');proof_path=source/'receipt.json'
+ if review.get('source_export')!=str(source) or review.get('source_export_receipt_sha256')!=EXPECTED[model]['proof'] or sha(proof_path)!=EXPECTED[model]['proof'] or sha(owned_path)!=EXPECTED[model]['owned']:raise ValueError('exact actual own-model FP32 producer required')
+ basepin=sha(base_path);base=json.loads(base_path.read_bytes());owned=json.loads(owned_path.read_bytes());outer=json.loads(outer_path.read_bytes());proof=json.loads(proof_path.read_bytes())
+ if not natural(owned) or owned.get('seal_sha256')!=basepin or owned.get('command')!=[x.replace('<SEAL_SHA256>',basepin) for x in base['command']] or outer.get('seal_sha256')!=basepin or outer.get('owned_receipt_sha256')!=sha(owned_path) or outer.get('pilot_receipt_sha256')!=sha(proof_path):raise ValueError('actual source owner/outer command closure differs')
+ if proof.get('complete') is not True or proof.get('model_id')!=model or proof.get('stage')!='qwen3-scores-only-export' or [(x['tokens'],x['options']) for x in proof['rows']]!=[(17,3),(128,8),(2048,8)] or any(x['maximum_absolute_error']>0.001 for x in proof['rows']):raise ValueError('actual original strict FP32 numerical proof required')
+ target=HERE/('execution-seal-'+label+'-fp32-storage.json');logs=HERE/('owned-'+label+'-fp32-storage');output=HERE/(label+'-fp32-storage-result');cache=HERE/('disabled-pycache-'+label+'-fp32-storage')
+ if a.release.resolve()!=HERE/('release-'+label+'-fp32-storage.json') or review['fresh_output']!=str(output) or any(p.exists() for p in [target,logs,output,cache]):raise ValueError('fresh exact model-specific weight8 paths required')
+ extras=[a.release,base_path,owned_path,outer_path,proof_path,*[HERE/n for n in SOURCES]]
+ inherited={os.path.normcase(row['path']):row['sha256'] for row in base['files']}
+ # No neural readout is executed in the exact storage stage.
+ rows=[{'path':str(path.resolve()),'sha256':sha(path),'bytes':path.stat().st_size} for path in extras]
+ for name,pin in proof['artifact_sha256'].items():
+  path=source/name
+  if Path(name).name!=name or path.is_symlink() or not path.is_file():raise ValueError('invalid produced model/array artifact')
+  rows.append({'path':str(path.resolve()),'sha256':pin,'bytes':path.stat().st_size})
+ result=append_rows(base,rows);worker=HERE/'storage_worker.py';result['file_roles']['trainer']={'path':str(worker),'sha256':sha(worker),'bytes':worker.stat().st_size};result['environment']['PYTHONPYCACHEPREFIX']=str(cache);result['environment']['OMP_NUM_THREADS']='1';result['environment']['MKL_NUM_THREADS']='1';result['launch_log_dir']=str(logs)
+ result['command']=[base['file_roles']['venv_launcher']['path'],'-B','-X','pycache_prefix='+str(cache),str(worker),'--seal',str(target),'--seal-sha256','<SEAL_SHA256>'];result['status']='ROOT_RELEASED_SELECTED_CONTEXT_FP32_STORAGE_ONLY'
+ result['qwen_full_stage']={'model_id':model,'release_path':str(a.release.resolve()),'release_sha256':a.release_sha256,'source_fp32_seal_sha256':basepin,'source_fp32_owned_sha256':sha(owned_path),'source_fp32_proof_sha256':sha(proof_path),'source_fp32_outer_sha256':sha(outer_path),'numeric_limits':NUMERIC,'all_inherited_runtime_and_source_pins_preserved':True}
+ result['candidate']={'stage':'selected Context exact FP32 byte relocation','no_training':True,'no_task_text':True,'qualified':False,'no_NN':True,'fp32_original_tolerance_unchanged':True}
+ target.write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8');print(json.dumps({'seal':str(target),'sha256':sha(target),'inherited_files':len(base['files']),'appended_files':len(result['files'])-len(base['files']),'launch_command':[base['file_roles']['venv_launcher']['path'],'-B',str(R4/'launch_full_r4.py'),'--seal',str(target),'--seal-sha256',sha(target),'--log-dir',str(logs)],'NN_executed':False}))
+if __name__=='__main__':main()

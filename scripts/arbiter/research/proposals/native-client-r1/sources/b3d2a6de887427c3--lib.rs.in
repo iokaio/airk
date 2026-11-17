@@ -1,0 +1,1 @@
+const A: &str = include_str!("../../../../outside.txt");

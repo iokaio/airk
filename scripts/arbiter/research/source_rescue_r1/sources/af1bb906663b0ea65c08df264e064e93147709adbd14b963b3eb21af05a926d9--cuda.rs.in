@@ -1,0 +1,656 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Opaque native CUDA witnesses. No serialized value grants execution.
+use airk_core::{
+    arbiter::{Profile, device::*},
+    identity::Sha256Digest,
+};
+use anyhow::{Context, Result, ensure};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Instant,
+};
+mod manifest;
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+mod pe;
+mod placement;
+pub use manifest::{compatibility_policy_digest, math_policy_digest, provider_options_digest};
+pub use placement::{PlacedNode, PlacementObservation, PlacementRefusal};
+#[cfg(test)]
+mod tests;
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod windows;
+static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+fn in_time(deadline: Instant) -> Result<()> {
+    ensure!(
+        Instant::now() < deadline,
+        "original GPU operation deadline expired"
+    );
+    Ok(())
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct AdapterObservation {
+    pub uuid: [u8; 16],
+    pub ordinal: i32,
+    pub compute_major: i32,
+    pub compute_minor: i32,
+    pub driver_api_version: i32,
+    pub driver_image_sha256: Sha256Digest,
+    pub physical_total_bytes: u64,
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+    pub epoch: u64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceCapacityPlan {
+    cold_peak_bytes: u64,
+    warm_extra_bytes: u64,
+    headroom_bytes: u64,
+}
+impl DeviceCapacityPlan {
+    fn new(cold: u64, warm: u64, headroom: u64) -> Result<Self> {
+        ensure!(
+            cold > 0 && headroom > 0 && warm <= cold,
+            "invalid GPU phase capacity requirements"
+        );
+        cold.checked_add(headroom)
+            .context("GPU cold capacity overflow")?;
+        Ok(Self {
+            cold_peak_bytes: cold,
+            warm_extra_bytes: warm,
+            headroom_bytes: headroom,
+        })
+    }
+    pub fn cold_peak_bytes(&self) -> u64 {
+        self.cold_peak_bytes
+    }
+    pub fn warm_extra_bytes(&self) -> u64 {
+        self.warm_extra_bytes
+    }
+    pub fn headroom_bytes(&self) -> u64 {
+        self.headroom_bytes
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn probe(cold: u64, warm: u64, headroom: u64) -> Result<Self> {
+        Self::new(cold, warm, headroom)
+    }
+}
+#[derive(Default)]
+struct Claims {
+    next: u64,
+    unspent: BTreeMap<u64, (u64, u64)>,
+}
+impl Claims {
+    fn reserve(&mut self, free: u64, bytes: u64, headroom: u64) -> Result<u64> {
+        ensure!(headroom > 0, "GPU claim must have explicit bounds");
+        let pending = self.unspent.values().try_fold(0u64, |a, b| {
+            a.checked_add(b.0).context("GPU claims overflow")
+        })?;
+        let required = pending
+            .checked_add(bytes)
+            .and_then(|v| {
+                v.checked_add(
+                    self.unspent
+                        .values()
+                        .map(|v| v.1)
+                        .max()
+                        .unwrap_or(0)
+                        .max(headroom),
+                )
+            })
+            .context("GPU capacity overflow")?;
+        if free < required {
+            return Err(native_fault(format!(
+                "actual free VRAM {free} cannot cover pending work+headroom {required}"
+            )));
+        }
+        self.next = self
+            .next
+            .checked_add(1)
+            .context("GPU claim generation overflow")?;
+        self.unspent.insert(self.next, (bytes, headroom));
+        Ok(self.next)
+    }
+}
+/// No Deserialize, no public field constructor. Host retains the actual service lease.
+pub struct CudaRuntime {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    loaded: &'static windows::LoadedRuntime,
+    manifest: manifest::RuntimeManifest,
+    identity: Sha256Digest,
+    _native_lease: Arc<dyn Send + Sync>,
+    devices: Mutex<BTreeMap<[u8; 16], Weak<CudaDevice>>>,
+}
+impl CudaRuntime {
+    /// # Safety
+    /// Host must pass its actual exclusive native ServiceLease and retain the
+    /// ordinary ServiceComputeScope. No caller metadata/flags can replace it.
+    pub unsafe fn from_native_lease(
+        lease: Arc<dyn Send + Sync>,
+        root: &Path,
+        manifest_path: &Path,
+        deadline: Instant,
+    ) -> Result<Arc<Self>> {
+        crate::native_inference::require_service_compute()?;
+        in_time(deadline)?;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            let (loaded, manifest, identity) = windows::admit(root, manifest_path, deadline)?;
+            in_time(deadline)?;
+            Ok(Arc::new(Self {
+                loaded,
+                manifest,
+                identity,
+                _native_lease: lease,
+                devices: Mutex::new(BTreeMap::new()),
+            }))
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            let _ = (lease, root, manifest_path);
+            anyhow::bail!(RuntimeUnavailable::new("unsupported platform"))
+        }
+    }
+    pub fn runtime_build(&self) -> Sha256Digest {
+        self.manifest.static_core_build
+    }
+    pub fn manifest_identity(&self) -> Sha256Digest {
+        self.identity
+    }
+    pub fn adapters(&self, deadline: Instant) -> Result<Vec<AdapterObservation>> {
+        crate::native_inference::require_service_compute()?;
+        in_time(deadline)?;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            self.loaded.adapters(deadline, self._native_lease.clone())
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            anyhow::bail!("CUDA unavailable")
+        }
+    }
+    pub fn device(self: &Arc<Self>, uuid: [u8; 16], deadline: Instant) -> Result<Arc<CudaDevice>> {
+        let mut devices = self
+            .devices
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GPU adapter owner poisoned"))?;
+        if let Some(device) = devices.get(&uuid).and_then(Weak::upgrade) {
+            device.observation(deadline)?;
+            return Ok(device);
+        }
+        let observed = self
+            .adapters(deadline)?
+            .into_iter()
+            .find(|v| v.uuid == uuid)
+            .context("native adapter UUID unavailable")?;
+        ensure!(
+            observed.compute_major == 8 && observed.compute_minor == 6,
+            "CUDA compute capability differs from compiled SM86 native policy"
+        );
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let context = self
+            .loaded
+            .retain_primary(observed.ordinal, self._native_lease.clone())?;
+        let epoch = NEXT_EPOCH
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1))
+            .map_err(|_| anyhow::anyhow!("GPU capability epoch exhausted"))?;
+        let device = Arc::new(CudaDevice {
+            runtime: self.clone(),
+            observed,
+            epoch: AtomicU64::new(epoch),
+            poisoned: AtomicBool::new(false),
+            claims: Mutex::new(Claims::default()),
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            context,
+        });
+        devices.insert(uuid, Arc::downgrade(&device));
+        Ok(device)
+    }
+}
+pub struct CudaDevice {
+    runtime: Arc<CudaRuntime>,
+    observed: AdapterObservation,
+    epoch: AtomicU64,
+    poisoned: AtomicBool,
+    claims: Mutex<Claims>,
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    context: windows::PrimaryContext,
+}
+impl CudaDevice {
+    pub fn uuid(&self) -> [u8; 16] {
+        self.observed.uuid
+    }
+    pub fn pending_claims(&self) -> Option<usize> {
+        self.claims.lock().ok().map(|c| c.unspent.len())
+    }
+    pub fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Acquire)
+    }
+    pub fn poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::Acquire) || {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                windows::runtime_poisoned()
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            {
+                false
+            }
+        }
+    }
+    fn poison(&self) {
+        self.poisoned.store(true, Ordering::Release);
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+    pub fn observation(&self, deadline: Instant) -> Result<AdapterObservation> {
+        crate::native_inference::require_service_compute()?;
+        in_time(deadline)?;
+        ensure!(!self.poisoned(), "CUDA adapter is poisoned");
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            let result =
+                self.runtime
+                    .loaded
+                    .observe(self.observed.ordinal, &self.context, deadline);
+            match result {
+                Ok(mut value) => {
+                    if value.uuid != self.observed.uuid
+                        || value.driver_api_version != self.observed.driver_api_version
+                        || value.driver_image_sha256 != self.observed.driver_image_sha256
+                        || value.compute_major != self.observed.compute_major
+                        || value.compute_minor != self.observed.compute_minor
+                        || value.physical_total_bytes != self.observed.physical_total_bytes
+                    {
+                        self.poison();
+                        anyhow::bail!("CUDA adapter/driver epoch changed");
+                    }
+                    value.epoch = self.epoch();
+                    Ok(value)
+                }
+                Err(error) => {
+                    self.poison();
+                    Err(error)
+                }
+            }
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            anyhow::bail!("CUDA unavailable")
+        }
+    }
+    pub fn synchronize(&self, deadline: Instant) -> Result<()> {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            // Cleanup is never skipped merely because the original deadline expired.
+            if let Err(error) = self.runtime.loaded.synchronize(&self.context) {
+                self.poison();
+                return Err(error);
+            }
+            in_time(deadline)
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            let _ = deadline;
+            anyhow::bail!("CUDA unavailable")
+        }
+    }
+    fn reserve(
+        self: &Arc<Self>,
+        bytes: u64,
+        headroom: u64,
+        deadline: Instant,
+    ) -> Result<DeviceReservation> {
+        let mut claims = self
+            .claims
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))?;
+        let observed = self.observation(deadline)?;
+        let id = claims.reserve(observed.free_bytes, bytes, headroom)?;
+        Ok(DeviceReservation {
+            device: self.clone(),
+            id: Some(id),
+            deadline,
+            attempted: false,
+            _thread: std::marker::PhantomData,
+        })
+    }
+    pub fn reserve_cold_load(
+        self: &Arc<Self>,
+        bytes: u64,
+        headroom: u64,
+        deadline: Instant,
+    ) -> Result<DeviceReservation> {
+        self.reserve(bytes, headroom, deadline)
+    }
+    pub fn reserve_warm_work(
+        self: &Arc<Self>,
+        extra_bytes: u64,
+        headroom: u64,
+        deadline: Instant,
+    ) -> Result<DeviceReservation> {
+        self.reserve(extra_bytes, headroom, deadline)
+    }
+    pub(super) fn validate_profile(&self, profile: &Profile) -> Result<()> {
+        ensure!(!self.poisoned(), "CUDA adapter is poisoned");
+        let policy = profile
+            .device_execution
+            .as_ref()
+            .context("CPU profile cannot acquire CUDA execution")?;
+        policy.validate(profile)?;
+        ensure!(
+            policy.backend == GpuBackend::Cuda
+                && policy.precision == DevicePrecision::Float32
+                && !policy.tf32
+                && policy.placement == PlacementPolicy::StrictGpu
+                && policy.runtime_build == self.runtime.runtime_build()
+                && policy.compatibility_policy == compatibility_policy_digest()
+                && policy.provider_options == provider_options_digest()
+                && policy.math_policy == math_policy_digest(),
+            "GPU model/runtime/policy/precision is not the native FP32 strict variant"
+        );
+        Ok(())
+    }
+    pub(super) fn qualified_plan(&self, profile: &Profile) -> Result<DeviceCapacityPlan> {
+        self.validate_profile(profile)?;
+        let identity = profile.device_execution_identity()?;
+        let fit = self
+            .runtime
+            .manifest
+            .fits
+            .iter()
+            .find(|v| v.manifest == profile.manifest && v.execution_identity == identity)
+            .context("exact native variant has no compiled measured phase capacity")?;
+        ensure!(
+            matches!(&profile.device_execution.as_ref().unwrap().memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==fit.cold_peak_bytes&&*headroom_bytes==fit.headroom_bytes),
+            "native measured phase fit differs from immutable device requirements"
+        );
+        ensure!(
+            fit.adapter_uuid == self.observed.uuid
+                && fit.driver_api_version == self.observed.driver_api_version
+                && fit.driver_image_sha256 == self.observed.driver_image_sha256,
+            "GPU fit is not qualified for the actual adapter/driver"
+        );
+        DeviceCapacityPlan::new(
+            fit.cold_peak_bytes,
+            fit.warm_extra_bytes,
+            fit.headroom_bytes,
+        )
+    }
+    pub(super) fn placement(
+        &self,
+        session: &ort::session::Session,
+    ) -> Result<PlacementObservation> {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            self.runtime.loaded.placement(session)
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            let _ = session;
+            anyhow::bail!("CUDA placement unavailable")
+        }
+    }
+    pub(super) fn ordinal(&self) -> i32 {
+        self.observed.ordinal
+    }
+}
+/// A pending future-work charge, not a resident allocation or model permit.
+pub struct DeviceReservation {
+    device: Arc<CudaDevice>,
+    id: Option<u64>,
+    deadline: Instant,
+    attempted: bool,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl DeviceReservation {
+    fn finish(&mut self) -> Result<()> {
+        self.attempted = true;
+        let result = self.device.synchronize(self.deadline);
+        if !self.device.poisoned() {
+            if let Some(id) = self.id.take() {
+                self.device
+                    .claims
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))?
+                    .unspent
+                    .remove(&id);
+            }
+        }
+        result
+    }
+    pub fn settle(mut self) -> Result<()> {
+        self.finish()
+    }
+}
+impl Drop for DeviceReservation {
+    fn drop(&mut self) {
+        if self.id.is_some() {
+            if !self.attempted {
+                let _ = self.finish();
+            }
+            if self.device.poisoned() {
+                std::mem::forget(self.device.clone());
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Binding {
+    pub device: Arc<CudaDevice>,
+    pub plan: DeviceCapacityPlan,
+    pub load_deadline: Instant,
+    pub evidence: Option<DeviceEvidence>,
+    pub host_warm_extra_bytes: Option<u64>,
+    log: Arc<Mutex<(Vec<String>, usize, bool)>>,
+}
+impl Binding {
+    pub fn qualified(
+        device: Arc<CudaDevice>,
+        profile: &Profile,
+        deadline: Instant,
+    ) -> Result<Self> {
+        in_time(deadline)?;
+        let plan = device.qualified_plan(profile)?;
+        let fit = device
+            .runtime
+            .manifest
+            .fits
+            .iter()
+            .find(|v| {
+                v.manifest == profile.manifest
+                    && v.execution_identity
+                        == profile.device_execution_identity().unwrap_or_default()
+            })
+            .context("GPU variant fit missing")?;
+        ensure!(
+            fit.host_warm_extra_bytes <= profile.memory_reservation_bytes,
+            "native GPU host extra exceeds admitted profile peak"
+        );
+        let evidence = fit.evidence.clone();
+        let host = fit.host_warm_extra_bytes;
+        Ok(Self {
+            device,
+            plan,
+            load_deadline: deadline,
+            evidence: Some(evidence),
+            host_warm_extra_bytes: Some(host),
+            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
+        })
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn probe(
+        device: Arc<CudaDevice>,
+        profile: &Profile,
+        plan: DeviceCapacityPlan,
+        deadline: Instant,
+    ) -> Result<Self> {
+        in_time(deadline)?;
+        device.validate_profile(profile)?;
+        ensure!(
+            profile.qualification.is_none(),
+            "probe cannot relabel release qualification"
+        );
+        Ok(Self {
+            device,
+            plan,
+            load_deadline: deadline,
+            evidence: None,
+            host_warm_extra_bytes: None,
+            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
+        })
+    }
+    pub fn configure(
+        &self,
+        builder: ort::session::builder::SessionBuilder,
+    ) -> Result<ort::session::builder::SessionBuilder> {
+        in_time(self.load_deadline)?;
+        let log = self.log.clone();
+        let builder = builder
+            .with_execution_providers([ort::execution_providers::CUDAExecutionProvider::default()
+                .with_device_id(self.device.ordinal())
+                .with_tf32(false)
+                .with_cuda_graph(false)
+                .with_memory_limit(usize::try_from(self.plan.cold_peak_bytes)?)
+                .build()
+                .error_on_failure()])
+            .map_err(run_failure)?;
+        Ok(builder
+            .with_config_entry("session.disable_cpu_ep_fallback", "1")?
+            .with_log_level(ort::logging::LogLevel::Verbose)?
+            .with_log_verbosity(1)?
+            .with_logger(Box::new(
+                move |_level, _category, _id, location, message| {
+                    // Native bounded observations only, never a placement permit.
+                    if let Ok(mut sink) = log.lock() {
+                        let entry = format!("{location}: {message}");
+                        if entry.len() > 4096 || sink.1.saturating_add(entry.len()) > 65536 {
+                            sink.2 = true;
+                        } else {
+                            sink.1 += entry.len();
+                            sink.0.push(entry);
+                        }
+                    }
+                },
+            ))?)
+    }
+}
+
+/// Metadata-only native factory input. Its output is unapproved until the
+/// genuine receipt/PE closure is reviewed and its exact SHA is compiled.
+#[cfg(feature = "test-support")]
+pub struct RuntimeAssemblyInput {
+    pub directory: std::path::PathBuf,
+    pub producer_name: String,
+    pub producer_sha256: Sha256Digest,
+    pub module_names: Vec<String>,
+    pub load_order: Vec<String>,
+    pub system_imports: BTreeSet<String>,
+}
+#[cfg(feature = "test-support")]
+/// # Safety
+/// The caller retains its actual ServiceLease/ServiceComputeScope while observing
+/// this private build closure. This creates no runtime, device or execution permit.
+pub unsafe fn observe_runtime_assembly(
+    _native_lease: Arc<dyn Send + Sync>,
+    input: RuntimeAssemblyInput,
+    deadline: Instant,
+) -> Result<Vec<u8>> {
+    crate::native_inference::require_service_compute()?;
+    in_time(deadline)?;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::observe_assembly(input, deadline)
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = input;
+        anyhow::bail!("CUDA assembly factory requires Windows x64")
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeDeviceFailure {
+    message: String,
+    source: Option<ort::Error>,
+}
+impl std::fmt::Display for NativeDeviceFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+impl std::error::Error for NativeDeviceFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|v| v as _)
+    }
+}
+pub(super) fn native_fault(message: String) -> anyhow::Error {
+    NativeDeviceFailure {
+        message,
+        source: None,
+    }
+    .into()
+}
+pub(super) fn run_failure(error: ort::Error) -> anyhow::Error {
+    use ort::ErrorCode;
+    if matches!(
+        error.code(),
+        ErrorCode::GenericFailure
+            | ErrorCode::EngineError
+            | ErrorCode::RuntimeException
+            | ErrorCode::NotImplemented
+            | ErrorCode::ExecutionProviderFailure
+    ) {
+        NativeDeviceFailure {
+            message: "native CUDA/ORT execution failed".into(),
+            source: Some(error),
+        }
+        .into()
+    } else {
+        error.into()
+    }
+}
+impl CudaDevice {
+    pub fn driver_api_version(&self) -> i32 {
+        self.observed.driver_api_version
+    }
+    pub fn driver_image_sha256(&self) -> Sha256Digest {
+        self.observed.driver_image_sha256
+    }
+}
+impl CudaRuntime {
+    pub fn poisoned(&self) -> bool {
+        self.devices.is_poisoned() || {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                windows::runtime_poisoned()
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            {
+                false
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RuntimeUnavailable {
+    reason: &'static str,
+}
+impl RuntimeUnavailable {
+    pub(super) fn new(reason: &'static str) -> Self {
+        Self { reason }
+    }
+}
+impl std::fmt::Display for RuntimeUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GPU runtime unavailable: {}", self.reason)
+    }
+}
+impl std::error::Error for RuntimeUnavailable {}

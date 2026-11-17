@@ -1012,6 +1012,7 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
     );
     ensure!(
         input.checkpointed_proof.is_some()
+            || input.incremental_proof.is_some()
             || (input.custody_copies.is_empty() && input.historical_tool_copies.is_empty()),
         "custody mappings require explicit checkpoint branch"
     );
@@ -1024,6 +1025,30 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         files: std::cell::RefCell::new(BTreeMap::new()),
         custody: super::custody::Custody::new(&input.custody_copies)?,
         historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
+    };
+    ensure!(
+        !(input.checkpointed_proof.is_some() && input.incremental_proof.is_some()),
+        "conflicting producer proof modes"
+    );
+    let incremental = if let Some(proof) = &input.incremental_proof {
+        let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
+            path: input
+                .directory
+                .join(&input.producer_name)
+                .to_str()
+                .context("producer path is not UTF8")?
+                .into(),
+            sha256: input.producer_sha256,
+        };
+        Some(
+            super::provenance::projection::validate_incremental_producer(
+                &checkpoint_source,
+                &raw,
+                proof,
+            )?,
+        )
+    } else {
+        None
     };
     let checkpointed = if let Some(proof) = &input.checkpointed_proof {
         let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
@@ -1049,7 +1074,7 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         None
     };
     // Historical schema/status remains exact and is never an alias for checkpointed success.
-    let receipt = if checkpointed.is_none() {
+    let receipt = if checkpointed.is_none() && incremental.is_none() {
         Some(serde_json::from_slice::<serde_json::Value>(&read(
             &producer.file,
             16 << 20,
@@ -1081,7 +1106,16 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
         if name.starts_with("onnxruntime_providers_") {
             ensure!(
-                if let Some(verified) = &checkpointed {
+                if let Some(verified) = &incremental {
+                    verified
+                        .provider_dlls
+                        .iter()
+                        .filter(|v| {
+                            v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
+                        })
+                        .count()
+                        == 1
+                } else if let Some(verified) = &checkpointed {
                     verified
                         .provider_dlls
                         .iter()
@@ -1145,6 +1179,21 @@ pub(super) fn runtime_poisoned() -> bool {
 }
 
 impl LoadedRuntime {
+    #[cfg(feature = "test-support")]
+    pub fn graph_metadata(
+        &self,
+        session: &ort::session::Session,
+        deadline: Instant,
+        placement: &PlacementObservation,
+    ) -> Result<super::GraphMetadataObservation> {
+        reconcile(&self.files, &self.baseline, "before-graph-metadata")?;
+        let collector = final_graph_collector()?;
+        // SAFETY: owning static-core export, held live Session, bounded synchronous callbacks.
+        let observed =
+            unsafe { super::graph_metadata::observe(collector, session, deadline, placement) };
+        reconcile(&self.files, &self.baseline, "after-graph-metadata")?;
+        Ok(observed)
+    }
     pub fn placement(&self, session: &ort::session::Session) -> Result<PlacementObservation> {
         reconcile(&self.files, &self.baseline, "before-placement")?;
         // SAFETY: exact same statically linked ORT owner; live Session is held
@@ -1172,6 +1221,29 @@ fn final_collector() -> Result<super::placement::Collector> {
     // Missing/old core refuses GPU; no second core or API offset is attempted.
     unsafe { symbol(module as usize, c"airk_ort_collect_final_placement_v1") }
         .context(RuntimeUnavailable::new("final-placement capability absent"))
+}
+
+#[cfg(feature = "test-support")]
+fn final_graph_collector() -> Result<super::graph_metadata::Collector> {
+    let mut module = std::ptr::null_mut();
+    // FROM_ADDRESS interprets this parameter as a code address, not UTF16 text.
+    // No reference count is changed; the native main image has process lifetime.
+    win(unsafe {
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            ort::sys::OrtGetApiBase as *const () as *const u16,
+            &mut module,
+        )
+    })?;
+    ensure!(
+        module == unsafe { GetModuleHandleW(std::ptr::null()) },
+        "ORT API base is not in the authenticated single static-core native image"
+    );
+    // Optional export: CPU --all-features builds still link without this symbol.
+    // Missing/old core refuses GPU; no second core or API offset is attempted.
+    unsafe { symbol(module as usize, c"airk_ort_collect_final_graph_metadata_v1") }.context(
+        RuntimeUnavailable::new("final-graph-metadata capability absent"),
+    )
 }
 
 #[cfg(feature = "test-support")]

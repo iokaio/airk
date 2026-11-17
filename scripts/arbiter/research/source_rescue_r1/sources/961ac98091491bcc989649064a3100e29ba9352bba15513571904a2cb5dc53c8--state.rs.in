@@ -1,0 +1,466 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Current configuration/status views. Descriptive data is never source/compute authority.
+use super::*;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceCatalogBinding {
+    pub catalog: Sha256Digest,
+    pub source: Sha256Digest,
+}
+impl DeviceCatalog {
+    pub fn binding<'a>(
+        &self,
+        source: Sha256Digest,
+        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+    ) -> Result<DeviceCatalogBinding> {
+        self.validate(resolve)?;
+        let bytes = serde_json::to_vec(self)?;
+        Ok(DeviceCatalogBinding {
+            catalog: framed_digest(b"airk.arbiter.device-catalog/1", &[&bytes]),
+            source,
+        })
+    }
+}
+impl DeviceConfiguration {
+    /// Data-only transition: caller must authenticate old/new compiled snapshots.
+    /// This cannot admit execution or change source namespace/model/consent/policy.
+    pub fn rebind_catalog<'old, 'new>(
+        &self,
+        expected_old: &DeviceCatalogBinding,
+        new_binding: DeviceCatalogBinding,
+        old_catalog: &DeviceCatalog,
+        new_catalog: &DeviceCatalog,
+        resolve_old: impl Fn(Sha256Digest) -> Option<&'old Profile>,
+        resolve_new: impl Fn(Sha256Digest) -> Option<&'new Profile>,
+    ) -> Result<Self> {
+        self.validate()?;
+        ensure!(
+            &self.device_catalog == expected_old,
+            "current catalog is not expected old binding"
+        );
+        ensure!(
+            old_catalog.binding(expected_old.source, resolve_old)? == *expected_old,
+            "old compiled catalog/source proof differs"
+        );
+        ensure!(
+            new_catalog.binding(new_binding.source, resolve_new)? == new_binding,
+            "new compiled catalog/source proof differs"
+        );
+        ensure!(
+            new_binding != *expected_old,
+            "catalog rebind must change exact binding"
+        );
+        let mut value = self.clone();
+        value.device_catalog = new_binding;
+        value.revision = value
+            .revision
+            .checked_add(1)
+            .context("configuration revision exhausted")?;
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn disabled(
+        installation: Sha256Digest,
+        catalog: Incarnation,
+        device_catalog: DeviceCatalogBinding,
+    ) -> Self {
+        Self {
+            schema: DEVICE_CONFIGURATION_SCHEMA.into(),
+            installation,
+            catalog,
+            revision: 1,
+            device_catalog,
+            focus: DeviceStageConfiguration::disabled(),
+            context: DeviceStageConfiguration::disabled(),
+        }
+    }
+    pub fn stage(&self, stage: Stage) -> &DeviceStageConfiguration {
+        match stage {
+            Stage::Focus => &self.focus,
+            Stage::Context => &self.context,
+        }
+    }
+    pub fn stage_mut(&mut self, stage: Stage) -> &mut DeviceStageConfiguration {
+        match stage {
+            Stage::Focus => &mut self.focus,
+            Stage::Context => &mut self.context,
+        }
+    }
+    pub fn decode(
+        bytes: &[u8],
+        installation: Sha256Digest,
+        catalog: Incarnation,
+        binding: &DeviceCatalogBinding,
+    ) -> Result<Self> {
+        ensure!(
+            bytes.len() <= MAX_CONFIGURATION_BYTES,
+            "device configuration byte limit"
+        );
+        let value: Self = serde_json::from_slice(bytes)?;
+        value.validate()?;
+        ensure!(
+            value.installation == installation
+                && value.catalog == catalog
+                && &value.device_catalog == binding,
+            "device configuration installation/source-catalog/device-catalog binding differs"
+        );
+        ensure!(
+            value.canonical_bytes()? == bytes,
+            "noncanonical device configuration"
+        );
+        Ok(value)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelAdmissionStatus {
+    Qualified,
+    LocalCandidate,
+    Unavailable,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceEvidence {
+    pub target: String,
+    pub execution_identity: String,
+    pub numerical: Sha256Digest,
+    pub resources: Sha256Digest,
+    pub placement: Sha256Digest,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceVariantStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_fit: Option<CpuFit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qualified_targets: Vec<QualifiedTarget>,
+    pub tasks: BTreeSet<Task>,
+    pub download_bytes: Option<u64>,
+    pub memory_reservation_bytes: Option<u64>,
+    pub manifest: Sha256Digest,
+    pub execution_identity: String,
+    pub backend: Option<GpuBackend>,
+    pub precision: Option<DevicePrecision>,
+    pub availability: Availability,
+    pub reason: String,
+    pub model_admission: ModelAdmissionStatus,
+    pub device_evidence: Option<DeviceEvidence>,
+}
+impl DeviceVariantStatus {
+    /// Read-only descriptive copy from the actual immutable native profile.
+    /// Admission/evidence labels come from native owners; this never derives a
+    /// permission or qualification from a digest/metadata flag.
+    pub fn from_description(
+        profile: &Profile,
+        availability: Availability,
+        reason: String,
+        model_admission: ModelAdmissionStatus,
+        device_evidence: Option<DeviceEvidence>,
+    ) -> Result<Self> {
+        profile.validate()?;
+        SelectedModel::from_model(profile.model)?;
+        let download_bytes = profile.assets.iter().try_fold(0u64, |total, asset| {
+            total
+                .checked_add(asset.bytes)
+                .context("Arbiter asset total overflow")
+        })?;
+        Ok(Self {
+            cpu_fit: profile.cpu_fit.clone(),
+            qualified_targets: profile.qualified_targets.clone(),
+            tasks: profile.tasks.clone(),
+            download_bytes: Some(download_bytes),
+            memory_reservation_bytes: Some(profile.memory_reservation_bytes),
+            manifest: profile.manifest,
+            execution_identity: profile.device_execution_identity()?,
+            backend: profile
+                .device_execution
+                .as_ref()
+                .map(|device| device.backend),
+            precision: profile
+                .device_execution
+                .as_ref()
+                .map(|device| device.precision),
+            availability,
+            reason,
+            model_admission,
+            device_evidence,
+        })
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceModelStatus {
+    pub availability: Availability,
+    pub reason: String,
+    pub tasks: BTreeSet<Task>,
+    pub model: SelectedModel,
+    pub variants: Vec<DeviceVariantStatus>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceStageStatus {
+    pub selected_model: Option<SelectedModel>,
+    pub device_policy: DevicePolicy,
+    pub gpu_precision: GpuPrecisionPreference,
+    pub active_profile: Option<Sha256Digest>,
+    pub availability: Availability,
+    pub reason: String,
+    pub queued: usize,
+    pub running: usize,
+    pub selection: Option<DeviceSelection>,
+    pub models: Vec<DeviceModelStatus>,
+}
+impl DeviceStageStatus {
+    pub fn validate(&self, stage: Stage, configuration: &DeviceStageConfiguration) -> Result<()> {
+        configuration.validate(stage)?;
+        ensure!(
+            self.selected_model == configuration.selected_model
+                && self.device_policy == configuration.device_policy
+                && self.gpu_precision == configuration.gpu_precision
+                && !self.reason.is_empty()
+                && self.reason.len() <= 1024,
+            "device stage requested identity/reason differs"
+        );
+        self.validate_observation(stage)?;
+        ensure!(
+            self.availability != Availability::Ready || configuration.enabled,
+            "ready device stage lacks enabled configuration"
+        );
+        Ok(())
+    }
+    /// Descriptive validation only; does not grant enrollment or execution authority.
+    pub(crate) fn validate_observation(&self, stage: Stage) -> Result<()> {
+        ensure!(
+            !self.reason.is_empty()
+                && self.reason.len() <= 1024
+                && self
+                    .selected_model
+                    .is_none_or(|model| model.stage() == stage),
+            "invalid device stage reason/model"
+        );
+        let expected = match stage {
+            Stage::Focus => BTreeSet::from([SelectedModel::Focus]),
+            Stage::Context => {
+                BTreeSet::from([SelectedModel::ContextCompact, SelectedModel::ContextLarge])
+            }
+        };
+        let mut models = BTreeSet::new();
+        let mut manifests = BTreeSet::new();
+        let mut active = None;
+        for model in &self.models {
+            ensure!(
+                model.model.stage() == stage
+                    && models.insert(model.model)
+                    && !model.reason.is_empty()
+                    && model.reason.len() <= 1024
+                    && model.tasks.iter().all(|task| stage.permits(*task)),
+                "foreign/duplicate device model slot"
+            );
+            if !model.variants.is_empty() {
+                let tasks = model
+                    .variants
+                    .iter()
+                    .flat_map(|variant| variant.tasks.iter().copied())
+                    .collect::<BTreeSet<_>>();
+                ensure!(
+                    tasks == model.tasks,
+                    "model task summary differs from native variant tasks"
+                );
+            }
+            ensure!(
+                model.availability != Availability::Ready
+                    || model
+                        .variants
+                        .iter()
+                        .any(|variant| variant.availability == Availability::Ready),
+                "ready model summary lacks an actual ready variant"
+            );
+            for variant in &model.variants {
+                ensure!(
+                    !variant.tasks.is_empty()
+                        && variant.tasks.iter().all(|task| stage.permits(*task))
+                        && variant.download_bytes.is_none_or(|bytes| bytes > 0)
+                        && variant
+                            .memory_reservation_bytes
+                            .is_none_or(|bytes| bytes > 0),
+                    "invalid native variant task/resource metadata"
+                );
+                if let Some(fit) = &variant.cpu_fit {
+                    fit.validate()?;
+                }
+                let mut targets = BTreeSet::new();
+                for target in &variant.qualified_targets {
+                    ensure!(
+                        targets.insert(&target.target)
+                            && target.execution_identity == variant.execution_identity
+                            && matches!(
+                                target.target.as_str(),
+                                "x86_64-pc-windows-msvc"
+                                    | "aarch64-apple-darwin"
+                                    | "x86_64-apple-darwin"
+                                    | "x86_64-unknown-linux-gnu"
+                            ),
+                        "invalid native variant qualified target metadata"
+                    );
+                }
+                ensure!(
+                    manifests.len() < 16
+                        && manifests.insert(variant.manifest)
+                        && !variant.execution_identity.is_empty()
+                        && variant.execution_identity.len() <= 4096
+                        && !variant.reason.is_empty()
+                        && variant.reason.len() <= 1024
+                        && variant.backend.is_some() == variant.precision.is_some(),
+                    "invalid device variant status"
+                );
+                if let Some(evidence) = &variant.device_evidence {
+                    ensure!(
+                        variant.backend.is_some()
+                            && evidence.execution_identity == variant.execution_identity
+                            && !evidence.target.is_empty()
+                            && evidence.target.len() <= 128
+                            && matches!(
+                                evidence.target.as_str(),
+                                "x86_64-pc-windows-msvc"
+                                    | "aarch64-apple-darwin"
+                                    | "x86_64-apple-darwin"
+                                    | "x86_64-unknown-linux-gnu"
+                            ),
+                        "device evidence does not bind variant"
+                    );
+                }
+                if variant.availability == Availability::Ready {
+                    ensure!(
+                        variant.model_admission != ModelAdmissionStatus::Unavailable
+                            && (variant.backend.is_none() || variant.device_evidence.is_some()),
+                        "ready variant lacks native model/device evidence"
+                    );
+                }
+                if self.active_profile == Some(variant.manifest) {
+                    active = Some((model.model, variant));
+                }
+            }
+        }
+        ensure!(models == expected, "missing device model slot");
+        if let Some(selection) = &self.selection {
+            ensure!(
+                selection.schema == DEVICE_STATUS_SCHEMA
+                    && Some(selection.model) == self.selected_model
+                    && selection.policy == self.device_policy
+                    && selection.gpu_precision == self.gpu_precision
+                    && selection.reasons.len() <= 18,
+                "device selection request identity differs"
+            );
+            ensure!(
+                selection.operation_failure.is_none() || selection.selected.is_none(),
+                "global device failure cannot select a variant"
+            );
+            if let Some(selected) = &selection.selected {
+                let variant = self
+                    .models
+                    .iter()
+                    .filter(|row| row.model == selection.model)
+                    .flat_map(|row| &row.variants)
+                    .find(|row| row.manifest == selected.manifest)
+                    .context("selected variant outside requested model")?;
+                ensure!(
+                    selected.execution_identity == variant.execution_identity
+                        && selected.backend == variant.backend
+                        && selected.precision == variant.precision
+                        && selected.capability_epoch > 0
+                        && !selected.adapter_key.is_empty()
+                        && selected.adapter_key.len() <= 256,
+                    "selected execution observation differs"
+                );
+                ensure!(
+                    self.device_policy != DevicePolicy::Cpu || selected.backend.is_none(),
+                    "forced CPU selected GPU"
+                );
+                if selected.backend.is_some() {
+                    ensure!(
+                        match self.gpu_precision {
+                            GpuPrecisionPreference::Auto => true,
+                            GpuPrecisionPreference::Fp32 =>
+                                selected.precision == Some(DevicePrecision::Float32),
+                            GpuPrecisionPreference::Fp16 =>
+                                selected.precision == Some(DevicePrecision::Float16),
+                        },
+                        "GPU precision preference differs"
+                    );
+                }
+            }
+        }
+        if self.availability == Availability::Ready {
+            let (model, variant) = active.context("ready device stage lacks resident variant")?;
+            ensure!(
+                Some(model) == self.selected_model
+                    && variant.availability == Availability::Ready,
+                "ready device stage lacks enabled selected model"
+            );
+            let selected = self
+                .selection
+                .as_ref()
+                .and_then(|row| row.selected.as_ref())
+                .context("ready device stage lacks actual selection")?;
+            ensure!(
+                Some(selected.manifest) == self.active_profile,
+                "resident differs from selected variant"
+            );
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceStatus {
+    pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization: Option<InitializationStatus>,
+    pub configuration: DeviceConfiguration,
+    pub focus: DeviceStageStatus,
+    pub context: DeviceStageStatus,
+}
+impl DeviceStatus {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == "airk.arbiter.status/3",
+            "invalid current device status schema"
+        );
+        self.configuration.validate()?;
+        self.focus
+            .validate(Stage::Focus, &self.configuration.focus)?;
+        self.context
+            .validate(Stage::Context, &self.configuration.context)?;
+        let variants = self
+            .focus
+            .models
+            .iter()
+            .chain(&self.context.models)
+            .flat_map(|model| &model.variants)
+            .collect::<Vec<_>>();
+        let manifests = variants
+            .iter()
+            .map(|variant| variant.manifest)
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            variants.len() <= 16 && variants.len() == manifests.len(),
+            "duplicate/over-capacity cross-stage variant status"
+        );
+        if let Some(initialization) = &self.initialization {
+            initialization.validate()?;
+            ensure!(
+                [&self.configuration.focus, &self.configuration.context]
+                    .iter()
+                    .all(|stage| !stage.enabled && stage.indexes.is_empty())
+                    && [&self.focus, &self.context]
+                        .iter()
+                        .all(|stage| stage.active_profile.is_none()
+                            && stage.availability != Availability::Ready),
+                "initialization status cannot imply current device readiness"
+            );
+        }
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod tests;

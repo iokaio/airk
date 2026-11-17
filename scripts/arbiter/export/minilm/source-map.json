@@ -1,0 +1,1338 @@
+{
+  "schema": "airk.research-source-migration/1",
+  "scope": "MiniLM export source only; no artifacts, receipts, weights, datasets or qualification",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-r1/runner.py",
+      "destination": "scripts/arbiter/export/minilm/exports-r1/runner.py",
+      "original_sha256": "4d02b53cb4a103f0d52be6172019247ce953292d8922f8284679826ce3630fc7",
+      "original_bytes": 9067,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "706ff266474e458ecf372d754874b0d09ca6fb5c233c5cf691a43c30cbfd20f0",
+      "maintained_bytes": 9147
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-r2/runner.py",
+      "destination": "scripts/arbiter/export/minilm/exports-r2/runner.py",
+      "original_sha256": "01188a287fdf2725539c3504f5b7b8dad475e734f121392f66f759ae91ea8499",
+      "original_bytes": 9151,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "6137e307f9c1ea6000a6d0640e9d0fe0c0626c502f49a0f7fd61ec8b34b43632",
+      "maintained_bytes": 9231
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r1/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r1/runner.py",
+      "original_sha256": "091f2a9a97f78f430797fcee8df9d7f15507364e94cfdf62c4a60328d15b3344",
+      "original_bytes": 10042,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "ef03eb587f255d2de82ad4a1a0dd1c988cb6b86ae735b87d7fd1164a436b7c9a",
+      "maintained_bytes": 10122
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r2/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r2/runner.py",
+      "original_sha256": "d32737006f4954919f7b1c8262bf0c2072a5dec68534c9bc8b7f6df23ee363d0",
+      "original_bytes": 10340,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "388cfc442d03fd5d739f31719dd8b5a9eb683a97c1c74c919fae8996bdb37dc7",
+      "maintained_bytes": 10420
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r3/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r3/runner.py",
+      "original_sha256": "a94bc1ceb4551edafaa3bd06aa1edf1810c2f7769ef474467da797e2a1194e3f",
+      "original_bytes": 10473,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "b30108b193325065a9184bd96dddb435fd893c56bc5ba8b37d3d5ced63ea2671",
+      "maintained_bytes": 10553
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r4/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r4/runner.py",
+      "original_sha256": "f18d1a4c3e1d8d785886b1289780b738d1176c0069bbc6a28c357ac61e4be149",
+      "original_bytes": 10503,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "c0812884f525259f786c58a9cd65be4466a2f195b9c22cac5805a2fbbeb3dac9",
+      "maintained_bytes": 10583
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r5/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r5/runner.py",
+      "original_sha256": "20edf80e0ed35cd20e03c89dd7f765471c1f388c3b416500c6f685c715105d58",
+      "original_bytes": 10674,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "1616301bac0412cde91dbc589b1d4feb517bf057140cdf5f4799f188f457f3a6",
+      "maintained_bytes": 10754
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r6/runner.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r6/runner.py",
+      "original_sha256": "772ede3f652101411432756faea45639d130f2f549d5099a4e7647013355bbea",
+      "original_bytes": 10803,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[2]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "9e763e1f80b83df98fe1e6f34c0749630025468703a7bb7df6dc0ef6313845c0",
+      "maintained_bytes": 10883
+    },
+    {
+      "source": "artifacts/advanced-split/models/minilm-exports-mixed-r6/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r6/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/CONTRACT-draft.md",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/CONTRACT-draft.md",
+      "original_sha256": "1e1fe39630f2d69bd017fbc34e200d8ee1f13806dae2493a7bb142eac5291373",
+      "original_bytes": 4449,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "1e1fe39630f2d69bd017fbc34e200d8ee1f13806dae2493a7bb142eac5291373",
+      "maintained_bytes": 4449
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/grade_dev.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/grade_dev.py",
+      "original_sha256": "71e0cc1d8429a039b2f566dfe4bc5496f9c8da784a17ab6aae6c3192b6abf960",
+      "original_bytes": 7094,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "MODELS/\"visible-prefix-export-source-r1/grade_candidates.py\"",
+          "new": "ROOT/\"scripts/arbiter/export/minilm/visible-prefix-r1/grade_candidates.py\""
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "f12dffc952b2f53fa2316e2605a5591ac101531ef577202513577821e1091348",
+          "new": "9253fdb047c16104379e60a02129a95ca7afa14ca89056132cbf595bb37aed6b"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "MODELS/\"a1-next-experiment-blind-metadata-r5/audit.py\"",
+          "new": "ROOT/\"scripts/arbiter/export/minilm/support/blind-metadata-r5/audit.py\""
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "9c540c08c2e56d868059ab8425193e52f0d9141f75d16df01f622c679032425b",
+          "new": "a1687757532d766baac52f9c78547f30c1d3b340f9370cfe961d7817b237ad77"
+        }
+      ],
+      "maintained_sha256": "299e7500f8cc6a1226fb4401b469d473f85b280b459e58c8bee96bd9f138a8ab",
+      "maintained_bytes": 7244
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/launch.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/launch.py",
+      "original_sha256": "f7f1801286ec38b3cbe6353ba524a4ac1c8c334873740eca6d50a98dc537eeee",
+      "original_bytes": 3513,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "eb52e6c34e21d2a82502a5875c74b9f1fba173d34a7a2ec274a26e0ec6311138",
+      "maintained_bytes": 3632
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/materialize_native.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/materialize_native.py",
+      "original_sha256": "eae4e94ac5a7d7a6b36bca4398dffc90587cff9cdfbb6f756a58aa142214ad8a",
+      "original_bytes": 2998,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "bdafbbca5440b48609f290a5fbe1faf1d02eeb5a277b1c73ba12050f5ee47620",
+      "maintained_bytes": 3117
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/native_parent_bag.rs.in",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/native_parent_bag.rs.in",
+      "original_sha256": "c59de706396b176d980498a17b1af08ba8248e079623c688f78c7808dc2003d5",
+      "original_bytes": 26454,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "c59de706396b176d980498a17b1af08ba8248e079623c688f78c7808dc2003d5",
+      "maintained_bytes": 26454
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/prepare_native_packet.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/prepare_native_packet.py",
+      "original_sha256": "799961362562a50f4079fe41b8c618a87a56270e004d411cfa1f4ea6167ef4d3",
+      "original_bytes": 5229,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\r\nimport sys\r\nsys.path.insert(0,str(Path(__file__).resolve().parents[1]/\"support\"))\r\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "if a.output.exists() or not a.output.resolve().is_relative_to(MODELS):raise ValueError(\"fresh private native packet required\")",
+          "new": "a.output=fresh_output(HERE,a.output)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE/\"run_native.py\"",
+          "new": "SOURCE_DIR/\"run_native.py\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "pins={str(a.artifact_lock.resolve())",
+          "new": "pins={str(Path(sys.modules[\"recipe_paths\"].__file__)):sha(Path(sys.modules[\"recipe_paths\"].__file__)),str(a.artifact_lock.resolve())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "MODELS/\"native-parent-bag-export-execution-r1/seal.json\"",
+          "new": "HERE/\"cpu-export-execution/seal.json\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "MODELS/\"native-parent-bag-export-execution-r1/execution.json\",",
+          "new": "HERE/\"cpu-export-execution/execution.json\","
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(MODELS/\"native-parent-bag-export-execution-r1/execution.json\").read_bytes()",
+          "new": "(HERE/\"cpu-export-execution/execution.json\").read_bytes()"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "output=MODELS/\"native-parent-bag-native-r1\"",
+          "new": "output=fresh_output(HERE,HERE/\"native\")"
+        }
+      ],
+      "maintained_sha256": "78cc3b83fd1b46dcafeff2d258317511abd46c340139f4391e70d1b9508b2c72",
+      "maintained_bytes": 5473
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/prepare_seal.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/prepare_seal.py",
+      "original_sha256": "31d7e9eb6e657724d0d8497fa90e354affe36f120510272b36c0d91785081747",
+      "original_bytes": 3323,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\r\nimport sys\r\nsys.path.insert(0,str(Path(__file__).resolve().parents[1]/\"support\"))\r\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "sha(HERE/\"runner.py\")",
+          "new": "sha(SOURCE_DIR/\"runner.py\")"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "files=[x for x in HERE.iterdir() if x.is_file()]",
+          "new": "files=[x for x in SOURCE_DIR.iterdir() if x.is_file()]+[provenance,Path(sys.modules[\"recipe_paths\"].__file__)]"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "output=MODELS/\"native-parent-bag-export-execution-r1\"",
+          "new": "output=fresh_output(HERE,HERE/\"cpu-export-execution\")"
+        }
+      ],
+      "maintained_sha256": "11add2ece7e5e559d2fc42a1448a5c81a0d3c359f8bc57301b4cc3388e71ff0f",
+      "maintained_bytes": 3684
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/run_native.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/run_native.py",
+      "original_sha256": "54996f8f3eacc9566136b4c31ed05248a7cad3ac94eb46049c5d51b1b2b0d676",
+      "original_bytes": 7313,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "ae14c30e65758b18a223783c8d95355fd99d1f7168737dbb9068d96d6753ed88",
+      "maintained_bytes": 7432
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/runner.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/runner.py",
+      "original_sha256": "090f1b8e1c8059c7d6f47ef02b823bd991e88de7aa6c7cc66c71bbc9924dd078",
+      "original_bytes": 14878,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "f744ac4dd9f57a01c638fa00d3c080a54e140a376dd0d41ff4a1e85d2a85352e",
+      "maintained_bytes": 14958
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/stage.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/stage.py",
+      "original_sha256": "5c485d6d38f3a4205545620b1fb739af91d74736c4b9eaed2e3adf3b1e4a2231",
+      "original_bytes": 2960,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "810765680d6cb2d25bb45c6e1a7e0bb8af97642cda76a217098de1c0cdd458a0",
+      "maintained_bytes": 3079
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/test_preparation.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/test_preparation.py",
+      "original_sha256": "8bdeb82d2545ed83807f6f43c6ca7b249c9df1318e711a8ca2803125e4dc5461",
+      "original_bytes": 5685,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "OLD=HERE.parent/\"visible-prefix-export-source-r1\"",
+          "new": "OLD=HERE.parent/\"visible-prefix-r1\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(HERE/\"adaptation.json\")",
+          "new": "(prepare[\"HERE\"]/\"adaptation.json\")"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(HERE/\"provenance.json\")",
+          "new": "(prepare[\"HERE\"]/\"provenance.json\")"
+        }
+      ],
+      "maintained_sha256": "0588e722326ef38ec065a3a025184f18f61c607d36822b9670edea94b6e34475",
+      "maintained_bytes": 5732
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/training_recipe_audit.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/training_recipe_audit.py",
+      "original_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "original_bytes": 6612,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "maintained_bytes": 6612
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/training_recipe.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/training_recipe.py",
+      "original_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "original_bytes": 2781,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "maintained_bytes": 2781
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/verify_encoder_fp32.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/verify_encoder_fp32.py",
+      "original_sha256": "1904cbeac122d0e0c3b900e455e59903a0c00186b674f6233267607a0cd2dc03",
+      "original_bytes": 4475,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "4e68ffa74b2e0a779dec3a721e6ea4a6c2986e90cc62f73063a744b3126dcf4d",
+      "maintained_bytes": 4555
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/verify_encoder_inputs.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/verify_encoder_inputs.py",
+      "original_sha256": "9699bbeef40ae5c2824987600d39fb9ce1a25b9d5b1449cc5e0270ecabaaed21",
+      "original_bytes": 7166,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "41bbf821e80d22c5a2a34574f3c2bd8680372b7239e4cadefff0511e92a51618",
+      "maintained_bytes": 7246
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/CONTRACT-draft.md",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/CONTRACT-draft.md",
+      "original_sha256": "99816461c01ec55afa51f85cbcb07915c3e88947a42ba304a6e07ad31e34803a",
+      "original_bytes": 4337,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "99816461c01ec55afa51f85cbcb07915c3e88947a42ba304a6e07ad31e34803a",
+      "maintained_bytes": 4337
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/grade_dev.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/grade_dev.py",
+      "original_sha256": "172ecf06212f0260182ca44210090e7e7b8b64f41d43a33134d3c34c72cdc5d3",
+      "original_bytes": 7215,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "MODELS/\"visible-prefix-export-source-r1/grade_candidates.py\"",
+          "new": "ROOT/\"scripts/arbiter/export/minilm/visible-prefix-r1/grade_candidates.py\""
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "f12dffc952b2f53fa2316e2605a5591ac101531ef577202513577821e1091348",
+          "new": "9253fdb047c16104379e60a02129a95ca7afa14ca89056132cbf595bb37aed6b"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "MODELS/\"a1-next-experiment-blind-metadata-r5/audit.py\"",
+          "new": "ROOT/\"scripts/arbiter/export/minilm/support/blind-metadata-r5/audit.py\""
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "9c540c08c2e56d868059ab8425193e52f0d9141f75d16df01f622c679032425b",
+          "new": "a1687757532d766baac52f9c78547f30c1d3b340f9370cfe961d7817b237ad77"
+        }
+      ],
+      "maintained_sha256": "b357a6b7c7447f5e7039fc77284dd9a5c7387b5c800ce549e7ce00ccee8305c7",
+      "maintained_bytes": 7365
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/launch.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/launch.py",
+      "original_sha256": "f7f1801286ec38b3cbe6353ba524a4ac1c8c334873740eca6d50a98dc537eeee",
+      "original_bytes": 3513,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "eb52e6c34e21d2a82502a5875c74b9f1fba173d34a7a2ec274a26e0ec6311138",
+      "maintained_bytes": 3632
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/materialize_native.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/materialize_native.py",
+      "original_sha256": "eae4e94ac5a7d7a6b36bca4398dffc90587cff9cdfbb6f756a58aa142214ad8a",
+      "original_bytes": 2998,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "bdafbbca5440b48609f290a5fbe1faf1d02eeb5a277b1c73ba12050f5ee47620",
+      "maintained_bytes": 3117
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/native_parent_bag.rs.in",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/native_parent_bag.rs.in",
+      "original_sha256": "c59de706396b176d980498a17b1af08ba8248e079623c688f78c7808dc2003d5",
+      "original_bytes": 26454,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "c59de706396b176d980498a17b1af08ba8248e079623c688f78c7808dc2003d5",
+      "maintained_bytes": 26454
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/prepare_native_packet.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/prepare_native_packet.py",
+      "original_sha256": "feff1945678c96b0f878678013fb067256d45bdaf6dcef7041d7c9889c05722c",
+      "original_bytes": 5170,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\r\nimport sys\r\nsys.path.insert(0,str(Path(__file__).resolve().parents[2]/\"support\"))\r\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "if a.output.exists() or not a.output.resolve().is_relative_to(MODELS):raise ValueError(\"fresh private native packet required\")",
+          "new": "a.output=fresh_output(HERE,a.output)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE/\"run_native.py\"",
+          "new": "SOURCE_DIR/\"run_native.py\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "pins={str(a.artifact_lock.resolve())",
+          "new": "pins={str(Path(sys.modules[\"recipe_paths\"].__file__)):sha(Path(sys.modules[\"recipe_paths\"].__file__)),str(a.artifact_lock.resolve())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "MODELS/\"native-parent-bag-export-execution-r1/seal.json\"",
+          "new": "HERE/\"cpu-export-execution/seal.json\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "MODELS/\"native-parent-bag-export-execution-r1/execution.json\",",
+          "new": "HERE/\"cpu-export-execution/execution.json\","
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(MODELS/\"native-parent-bag-export-execution-r1/execution.json\").read_bytes()",
+          "new": "(HERE/\"cpu-export-execution/execution.json\").read_bytes()"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "output=MODELS/\"native-parent-bag-native-r1\"",
+          "new": "output=fresh_output(HERE,HERE/\"native\")"
+        }
+      ],
+      "maintained_sha256": "ad8d3072d9e4a39d183b8ec0136fd97c1fc9dde556ac32f12c18851dba582adf",
+      "maintained_bytes": 5414
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/prepare_seal.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/prepare_seal.py",
+      "original_sha256": "31d7e9eb6e657724d0d8497fa90e354affe36f120510272b36c0d91785081747",
+      "original_bytes": 3323,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\r\nimport sys\r\nsys.path.insert(0,str(Path(__file__).resolve().parents[2]/\"support\"))\r\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "sha(HERE/\"runner.py\")",
+          "new": "sha(SOURCE_DIR/\"runner.py\")"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "files=[x for x in HERE.iterdir() if x.is_file()]",
+          "new": "files=[x for x in SOURCE_DIR.iterdir() if x.is_file()]+[provenance,Path(sys.modules[\"recipe_paths\"].__file__)]"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "output=MODELS/\"native-parent-bag-export-execution-r1\"",
+          "new": "output=fresh_output(HERE,HERE/\"cpu-export-execution\")"
+        }
+      ],
+      "maintained_sha256": "82124ea0a8534c961f2e55658d169d26c909bf40e750020ab8e16953cb99e18c",
+      "maintained_bytes": 3684
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/run_native.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/run_native.py",
+      "original_sha256": "7aed4a363e2022dd2c72363376eb1f58445920ca9225adb20a05afbd15536fe5",
+      "original_bytes": 7391,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "d5f64ce70d65bc6aa2211e8e4dc47d04f356675c1560546404bdadf2889f79a8",
+      "maintained_bytes": 7510
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/runner.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/runner.py",
+      "original_sha256": "090f1b8e1c8059c7d6f47ef02b823bd991e88de7aa6c7cc66c71bbc9924dd078",
+      "original_bytes": 14878,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "f744ac4dd9f57a01c638fa00d3c080a54e140a376dd0d41ff4a1e85d2a85352e",
+      "maintained_bytes": 14958
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/stage.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/stage.py",
+      "original_sha256": "5c485d6d38f3a4205545620b1fb739af91d74736c4b9eaed2e3adf3b1e4a2231",
+      "original_bytes": 2960,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "810765680d6cb2d25bb45c6e1a7e0bb8af97642cda76a217098de1c0cdd458a0",
+      "maintained_bytes": 3079
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/test_preparation.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/test_preparation.py",
+      "original_sha256": "c9d479176af744a57fdb3b6eb2ec2a54e24a97123f84ef18d2305bb506a90718",
+      "original_bytes": 5758,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "OLD=HERE.parent/\"visible-prefix-export-source-r1\"",
+          "new": "OLD=HERE.parents[1]/\"visible-prefix-r1\""
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(HERE/\"adaptation.json\")",
+          "new": "(prepare[\"HERE\"]/\"adaptation.json\")"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "(HERE/\"provenance.json\")",
+          "new": "(prepare[\"HERE\"]/\"provenance.json\")"
+        }
+      ],
+      "maintained_sha256": "745476055c4bb7eff9adf74cf7c33ac4ccf5715bdf81c48a400c75e36164edde",
+      "maintained_bytes": 5809
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/training_recipe_audit.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/training_recipe_audit.py",
+      "original_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "original_bytes": 6612,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "maintained_bytes": 6612
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/training_recipe.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/training_recipe.py",
+      "original_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "original_bytes": 2781,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "maintained_bytes": 2781
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/verify_encoder_fp32.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/verify_encoder_fp32.py",
+      "original_sha256": "1904cbeac122d0e0c3b900e455e59903a0c00186b674f6233267607a0cd2dc03",
+      "original_bytes": 4475,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "4e68ffa74b2e0a779dec3a721e6ea4a6c2986e90cc62f73063a744b3126dcf4d",
+      "maintained_bytes": 4555
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-export-source-r1/superseded-six-role-preparation-r1/verify_encoder_inputs.py",
+      "destination": "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/verify_encoder_inputs.py",
+      "original_sha256": "9699bbeef40ae5c2824987600d39fb9ce1a25b9d5b1449cc5e0270ecabaaed21",
+      "original_bytes": 7166,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "41bbf821e80d22c5a2a34574f3c2bd8680372b7239e4cadefff0511e92a51618",
+      "maintained_bytes": 7246
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/artifact_manifest.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/artifact_manifest.py",
+      "original_sha256": "fd93fa52ec1f2c347a8c26584887a724d2e7a50558ef7e4557c0abf4ad289e8d",
+      "original_bytes": 2486,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "36cc5478ce8aee06e283e842166da1bc5373bae04b6f731553c99b5ee551df4a",
+      "maintained_bytes": 2604
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/grade_candidates.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/grade_candidates.py",
+      "original_sha256": "f12dffc952b2f53fa2316e2605a5591ac101531ef577202513577821e1091348",
+      "original_bytes": 9481,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "MODELS/'a1-next-experiment-blind-metadata-r5/audit.py'",
+          "new": "ROOT/'scripts/arbiter/export/minilm/support/blind-metadata-r5/audit.py'"
+        },
+        {
+          "kind": "maintained-dependency",
+          "old": "9c540c08c2e56d868059ab8425193e52f0d9141f75d16df01f622c679032425b",
+          "new": "a1687757532d766baac52f9c78547f30c1d3b340f9370cfe961d7817b237ad77"
+        }
+      ],
+      "maintained_sha256": "9253fdb047c16104379e60a02129a95ca7afa14ca89056132cbf595bb37aed6b",
+      "maintained_bytes": 9616
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/launch.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/launch.py",
+      "original_sha256": "652a35504d38328e7a4964b8a3cb2b0bf77d63744261035c2f818198cbe882c4",
+      "original_bytes": 4171,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "6649ce8de09368762877a594bcb6cfcf8ce124fa5a37269b96e1ff5ce302b014",
+      "maintained_bytes": 4289
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/prepare_final_native.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/prepare_final_native.py",
+      "original_sha256": "8f987e133017f3f5d1b7c39cedf12e6176c3b9d4cd0a691d1ca58b20bfac4eda",
+      "original_bytes": 7567,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\nimport sys\nsys.path.insert(0,str(Path(__file__).resolve().parents[1]/\"support\"))\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "text=(ROOT/",
+          "new": "fresh_output(HERE,HERE/'fresh_final.rs')\ntext=(ROOT/"
+        }
+      ],
+      "maintained_sha256": "2cd0d2fe914bc61b6792ac089156ffa097ae713c538f8bc5edabaa295d55ba6d",
+      "maintained_bytes": 7897
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/prepare_native.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/prepare_native.py",
+      "original_sha256": "e8383eff9d4d18e7927646edda43d690d121916f146a49345538cfb6f441cdff",
+      "original_bytes": 7499,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\nimport sys\nsys.path.insert(0,str(Path(__file__).resolve().parents[1]/\"support\"))\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "parent=(ROOT/",
+          "new": "fresh_output(HERE,HERE/'candidate.rs')\nparent=(ROOT/"
+        }
+      ],
+      "maintained_sha256": "9b69d4874bec5bfbb00d6d104d80ed5825ac54ea906285df8782226239d9f219",
+      "maintained_bytes": 7827
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/prepare.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/prepare.py",
+      "original_sha256": "26e3f8799541650b1abedaf5e18f1b4a8b87a3bec627a891676bf1fe345f27d1",
+      "original_bytes": 3198,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "from pathlib import Path",
+          "new": "from pathlib import Path\nimport sys\nsys.path.insert(0,str(Path(__file__).resolve().parents[1]/\"support\"))\nfrom recipe_paths import private_run_root, fresh_output"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "HERE=Path(__file__).resolve().parent",
+          "new": "SOURCE_DIR=Path(__file__).resolve().parent;HERE=private_run_root(ROOT)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "source=ROOT/'tools/retrieval-train'",
+          "new": "source=ROOT/'tools/retrieval-train'\nfor name in ('safe_int8.py','training_recipe.py','training_recipe_audit.py','runner.py','verify_encoder_inputs.py','verify_encoder_fp32.py','adaptation.json'):fresh_output(HERE,HERE/name)"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "'ROOT=Path(__file__).resolve().parents[4]\\nfrom training_recipe",
+          "new": "'ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())\\nfrom training_recipe"
+        },
+        {
+          "kind": "private-preparation-root",
+          "old": "'ROOT=Path(__file__).resolve().parents[4]'))",
+          "new": "'ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())'))"
+        }
+      ],
+      "maintained_sha256": "5d0390c3d1a1981efed85b64e9ccf92d50db7181e3eb2d950ea28623b104d797",
+      "maintained_bytes": 3835
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/run_native.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/run_native.py",
+      "original_sha256": "d05c309eb8f21fa42767b1d0c8fcdec9c32f8e689b86cd615a1d0e6b5b5e122b",
+      "original_bytes": 5800,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "c3664af0c9b5a1c93e8bf20e404110ddc5fa5f938723062492e99d2760427db0",
+      "maintained_bytes": 5918
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/runner.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/runner.py",
+      "original_sha256": "fa500d3d2ad96dbd4e4b52d898d46064ae4115fedd813c33854d2a47bebaac72",
+      "original_bytes": 12768,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "1a397a6d44e3d128f6317446fa0cdc0900383dcd1534ca0d2a84ff4120cdfbca",
+      "maintained_bytes": 12848
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/stage.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/stage.py",
+      "original_sha256": "f0dae5e4ba52b8303e9780eb4ec89aae1be8b31e8c96ac8009114335c2464154",
+      "original_bytes": 2799,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "04cff3cea723f1b4a0040158a3768829fab1a98eba0b85b601fd8e96f819e435",
+      "maintained_bytes": 2917
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/test_grade_candidates.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/test_grade_candidates.py",
+      "original_sha256": "424f9f25d25038328aca733b38cd21fdfd554b7643ef45486eda4073cc958268",
+      "original_bytes": 4670,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "maintained_sha256": "fbd0ab4295804fd229ff272dfcc07cf0bed59cc84ffce68e1e6e73cb9e94f134",
+      "maintained_bytes": 4708
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/training_recipe_audit.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/training_recipe_audit.py",
+      "original_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "original_bytes": 6612,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "maintained_bytes": 6612
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/training_recipe.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/training_recipe.py",
+      "original_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "original_bytes": 2781,
+      "dependency_status": "retained-source",
+      "changes": [],
+      "maintained_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "maintained_bytes": 2781
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/verify_encoder_fp32.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/verify_encoder_fp32.py",
+      "original_sha256": "1904cbeac122d0e0c3b900e455e59903a0c00186b674f6233267607a0cd2dc03",
+      "original_bytes": 4475,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "4e68ffa74b2e0a779dec3a721e6ea4a6c2986e90cc62f73063a744b3126dcf4d",
+      "maintained_bytes": 4555
+    },
+    {
+      "source": "artifacts/advanced-split/models/visible-prefix-export-source-r1/verify_encoder_inputs.py",
+      "destination": "scripts/arbiter/export/minilm/visible-prefix-r1/verify_encoder_inputs.py",
+      "original_sha256": "9699bbeef40ae5c2824987600d39fb9ce1a25b9d5b1449cc5e0270ecabaaed21",
+      "original_bytes": 7166,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "repository-root",
+          "old": "ROOT=Path(__file__).resolve().parents[4]",
+          "new": "ROOT=next(p for p in Path(__file__).resolve().parents if (p/\"Cargo.toml\").is_file() and (p/\"crates/airk-core\").is_dir())"
+        }
+      ],
+      "maintained_sha256": "41bbf821e80d22c5a2a34574f3c2bd8680372b7239e4cadefff0511e92a51618",
+      "maintained_bytes": 7246
+    },
+    {
+      "source": "tools/retrieval-train/signed_dynamic.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r3/signed_dynamic.py",
+      "original_sha256": "ecad6215b984f2a82f07e01f3c5e0b7f86557838705a1461b3c1800d10d2202a",
+      "original_bytes": 2670,
+      "dependency_status": "current-retained-helper-not-sealed-in-historical-run",
+      "changes": [],
+      "maintained_sha256": "ecad6215b984f2a82f07e01f3c5e0b7f86557838705a1461b3c1800d10d2202a",
+      "maintained_bytes": 2670
+    },
+    {
+      "source": "tools/retrieval-train/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r4/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "current-retained-helper-not-sealed-in-historical-run",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "tools/retrieval-train/safe_int8.py",
+      "destination": "scripts/arbiter/export/minilm/mixed-r5/safe_int8.py",
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "original_bytes": 6925,
+      "dependency_status": "current-retained-helper-not-sealed-in-historical-run",
+      "changes": [],
+      "maintained_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "maintained_bytes": 6925
+    },
+    {
+      "source": "artifacts/advanced-split/models/a1-next-experiment-blind-metadata-r5/audit.py",
+      "destination": "scripts/arbiter/export/minilm/support/blind-metadata-r5/audit.py",
+      "original_sha256": "9c540c08c2e56d868059ab8425193e52f0d9141f75d16df01f622c679032425b",
+      "original_bytes": 13485,
+      "dependency_status": "retained-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\r\n"
+        },
+        {
+          "kind": "explicit-data-root",
+          "old": "ROOT = Path(__file__).resolve().parent",
+          "new": "ROOT = Path(os.environ[\"AIRK_BLIND_METADATA_ROOT\"]).resolve() if os.environ.get(\"AIRK_BLIND_METADATA_ROOT\") else None"
+        },
+        {
+          "kind": "explicit-data-root",
+          "old": "BASE = ROOT.parent",
+          "new": "BASE = ROOT.parent if ROOT is not None else None"
+        },
+        {
+          "kind": "explicit-data-root",
+          "old": "    global JOB_STATE, STAGE",
+          "new": "    global JOB_STATE, STAGE\r\n    if ROOT is None:\r\n        raise RuntimeError(\"AIRK_BLIND_METADATA_ROOT must name the sealed private audit directory\")"
+        }
+      ],
+      "maintained_sha256": "a1687757532d766baac52f9c78547f30c1d3b340f9370cfe961d7817b237ad77",
+      "maintained_bytes": 13756
+    }
+  ],
+  "identical_original_groups": [
+    {
+      "original_sha256": "090f1b8e1c8059c7d6f47ef02b823bd991e88de7aa6c7cc66c71bbc9924dd078",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/runner.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/runner.py"
+      ]
+    },
+    {
+      "original_sha256": "1904cbeac122d0e0c3b900e455e59903a0c00186b674f6233267607a0cd2dc03",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/verify_encoder_fp32.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/verify_encoder_fp32.py",
+        "scripts/arbiter/export/minilm/visible-prefix-r1/verify_encoder_fp32.py"
+      ]
+    },
+    {
+      "original_sha256": "30ad6dfa26af9ca9f779116e9491ad25a197f88f1765f5d26fdc0796dfa6492d",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/training_recipe.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/training_recipe.py",
+        "scripts/arbiter/export/minilm/visible-prefix-r1/training_recipe.py"
+      ]
+    },
+    {
+      "original_sha256": "31d7e9eb6e657724d0d8497fa90e354affe36f120510272b36c0d91785081747",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/prepare_seal.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/prepare_seal.py"
+      ]
+    },
+    {
+      "original_sha256": "5c485d6d38f3a4205545620b1fb739af91d74736c4b9eaed2e3adf3b1e4a2231",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/stage.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/stage.py"
+      ]
+    },
+    {
+      "original_sha256": "7c27d0609977325305169881fdff7ad67960f9598b139e6518b41dd769a965d7",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/training_recipe_audit.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/training_recipe_audit.py",
+        "scripts/arbiter/export/minilm/visible-prefix-r1/training_recipe_audit.py"
+      ]
+    },
+    {
+      "original_sha256": "9699bbeef40ae5c2824987600d39fb9ce1a25b9d5b1449cc5e0270ecabaaed21",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/verify_encoder_inputs.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/verify_encoder_inputs.py",
+        "scripts/arbiter/export/minilm/visible-prefix-r1/verify_encoder_inputs.py"
+      ]
+    },
+    {
+      "original_sha256": "c59de706396b176d980498a17b1af08ba8248e079623c688f78c7808dc2003d5",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/native_parent_bag.rs.in",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/native_parent_bag.rs.in"
+      ]
+    },
+    {
+      "original_sha256": "eae4e94ac5a7d7a6b36bca4398dffc90587cff9cdfbb6f756a58aa142214ad8a",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/materialize_native.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/materialize_native.py"
+      ]
+    },
+    {
+      "original_sha256": "f7f1801286ec38b3cbe6353ba524a4ac1c8c334873740eca6d50a98dc537eeee",
+      "destinations": [
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/launch.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/launch.py"
+      ]
+    },
+    {
+      "original_sha256": "fc231b9da78778583fbd3506d0a02e8f7d76c4ae93f82e09b6714b548a09c4b0",
+      "destinations": [
+        "scripts/arbiter/export/minilm/mixed-r6/safe_int8.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/safe_int8.py",
+        "scripts/arbiter/export/minilm/native-parent-bag-r1/superseded-six-role-preparation-r1/safe_int8.py",
+        "scripts/arbiter/export/minilm/visible-prefix-r1/safe_int8.py",
+        "scripts/arbiter/export/minilm/mixed-r4/safe_int8.py",
+        "scripts/arbiter/export/minilm/mixed-r5/safe_int8.py"
+      ]
+    }
+  ],
+  "changes_policy": "Reversible SPDX headers, repository discovery, explicit private audit/preparation roots, maintained dependency paths/pins and generated-worker repository discovery; numerical/model/data/artifact pins unchanged. New execution requires fresh seals.",
+  "historical_reproduction_gaps": [
+    "mixed-r3/r4/r5 import helpers not sealed by original export input_seals; supplied current retained helper bytes match multiple retained source snapshots but do not prove historical invocation identity.",
+    "Native preparation/grading needs excluded private adaptation/provenance/seals/checkpoints/receipts; moved source hashes require fresh reviewed seals.",
+    "Historical source-generating adapters retain old substitution strings and artifact-relative code dependencies; use reviewed fresh ignored staging when regenerating, not the maintained source directory."
+  ],
+  "maintained_utilities": [
+    {
+      "path": "scripts/arbiter/export/minilm/support/recipe_paths.py",
+      "sha256": "d140a518644c38f44354a9138d7eaf74be1e8a324d0932e9ebb0e5bc5199fb3d",
+      "purpose": "New explicit private preparation path admission; no historical original"
+    }
+  ]
+}

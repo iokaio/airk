@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Injected schedules/clocks only; no CUDA witness or measured peak is fabricated.
+use super::*;
+use std::cell::Cell;
+#[test]
+fn frozen_resource_roster_is_twenty_one_forwards_with_one_warmup_and_twenty_samples() {
+    let roster = forward_roster();
+    assert_eq!(roster.len(), 21);
+    assert_eq!(roster.first().map(String::as_str), Some("warmup-0"));
+    assert_eq!(roster[1], "sample-01");
+    assert_eq!(roster[20], "sample-20");
+    assert_eq!(roster.iter().collect::<BTreeSet<_>>().len(), 21);
+    assert!(!roster.iter().any(|r| r.contains("load")));
+}
+#[test]
+fn operation_cutoff_clips_to_fixed_parent_and_never_refreshes_after_observer_io() -> Result<()> {
+    let start = Instant::now();
+    let outer = start + Duration::from_secs(3600);
+    let (d, n) = cutoff(outer, 3_600_000_000_000, start, 0, 120_000)?;
+    assert_eq!(d, start + Duration::from_secs(120));
+    assert_eq!(n, 120_000_000_000);
+    let (d, n) = cutoff(
+        outer,
+        3_600_000_000_000,
+        start + Duration::from_secs(3590),
+        3_590_000_000_000,
+        120_000,
+    )?;
+    assert_eq!(d, outer);
+    assert_eq!(n, 3_600_000_000_000);
+    assert!(cutoff(outer, 3_600_000_000_000, outer, 3_600_000_000_000, 120_000).is_err());
+    assert!(cutoff(outer, 3_600_000_000_000, start, 0, 120_001).is_err());
+    Ok(())
+}
+#[test]
+fn forward_completion_never_includes_failed_or_undispatched_calls() -> Result<()> {
+    let mut completed = vec![];
+    let calls = Cell::new(0);
+    actual_forward(&mut completed, "warmup-0", || {
+        calls.set(calls.get() + 1);
+        Ok(())
+    })?;
+    let failure = actual_forward(&mut completed, "sample-01", || -> Result<()> {
+        calls.set(calls.get() + 1);
+        anyhow::bail!("actual observed refusal")
+    });
+    assert!(failure.is_err());
+    assert_eq!(calls.get(), 2);
+    assert_eq!(completed, ["warmup-0"]);
+    assert_ne!(completed, forward_roster());
+    Ok(())
+}
+#[test]
+fn complete_component_context_denominator_refuses_shortened_or_reordered_cases() -> Result<()> {
+    assert_eq!(
+        super::super::complete_context_rows(&[17, 128, 8192])?,
+        [0, 1, 2]
+    );
+    for widths in [
+        &[17, 128][..],
+        &[17, 128, 2048][..],
+        &[128, 17, 8192][..],
+        &[17, 128, 8192, 8192][..],
+    ] {
+        assert!(super::super::complete_context_rows(widths).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn resource_series_stops_first_actual_overrun_and_never_reports_partial_p95() -> Result<()> {
+    let policy = ResourcePolicy::software_v2();
+    let mut series = ResourceSeries::new(16 << 30)?;
+    let calls = Cell::new(0);
+    let retained = Cell::new(0);
+    let result = observe_series(
+        &mut series,
+        &policy,
+        || {
+            let n = calls.get() + 1;
+            calls.set(n);
+            Ok(ResourceSample {
+                elapsed_us: if n == 3 { 120_000_001 } else { 17_000 },
+                peak_process_rss_bytes: 4 << 30,
+            })
+        },
+        |_| {
+            retained.set(retained.get() + 1);
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(calls.get(), 3);
+    assert_eq!(retained.get(), 3);
+    assert_eq!(series.samples.len(), 3);
+    assert_eq!(series.samples[2].elapsed_us, 120_000_001);
+    assert!(!series.complete);
+    assert!(series.nearest_rank_p95_us.is_none());
+    Ok(())
+}
+
+#[test]
+fn original_three_model_host_and_job_caps_are_literal_and_old_models_refuse() -> Result<()> {
+    assert_eq!(
+        model_limits(ModelChoice::FocusQwenReranker06B)?,
+        (4_294_967_296, 8_589_934_592)
+    );
+    assert_eq!(
+        model_limits(ModelChoice::ContextQwenCompact)?,
+        (17_179_869_184, 34_359_738_368)
+    );
+    assert_eq!(
+        model_limits(ModelChoice::ContextQwenLarge)?,
+        (42_949_672_960, 51_539_607_552)
+    );
+    assert!(model_limits(ModelChoice::SmallIntern).is_err());
+    assert!(model_limits(ModelChoice::SmallStrands).is_err());
+    assert!(model_limits(ModelChoice::LargeIntern).is_err());
+    assert!(model_limits(ModelChoice::LargeKev).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_operation_roster_carries_real_input_digest_and_exact_twenty_two_entries() {
+    let digest = Sha256Digest::from_bytes([73; 32]);
+    let roster = operation_roster(digest);
+    assert_eq!(roster.len(), 22);
+    assert_eq!(
+        roster[0],
+        json!({"kind":"load","ordinal":0,"input_digest":null})
+    );
+    assert_eq!(
+        roster[1],
+        json!({"kind":"warmup","ordinal":0,"input_digest":digest})
+    );
+    assert_eq!(
+        roster[21],
+        json!({"kind":"sample","ordinal":20,"input_digest":digest})
+    );
+    assert!(
+        roster[1..]
+            .iter()
+            .all(|row| row["input_digest"] == json!(digest))
+    );
+}
+
+#[test]
+fn later_warm_operation_outlives_expired_load_cutoff_without_renewing_original_batch() -> Result<()>
+{
+    let start = Instant::now();
+    let outer = start + Duration::from_secs(3600);
+    let (load, load_ns) = cutoff(outer, 3_600_000_000_000, start, 0, 120_000)?;
+    let later = start + Duration::from_secs(180);
+    assert!(later > load);
+    let (warm, warm_ns) = cutoff(outer, 3_600_000_000_000, later, 180_000_000_000, 120_000)?;
+    assert_eq!(load_ns, 120_000_000_000);
+    assert_eq!(warm, start + Duration::from_secs(300));
+    assert_eq!(warm_ns, 300_000_000_000);
+    assert!(warm < outer);
+    assert!(warm_ns < 3_600_000_000_000);
+    Ok(())
+}

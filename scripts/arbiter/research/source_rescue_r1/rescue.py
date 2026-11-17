@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Preserve the explicitly assigned historical source lane; never execute its code.
+
+Run only through the same-human output guard. --write creates fresh maintained
+copies and a map; default computes disposition read-only. Private routing input
+is authenticated by --routing-sha256. Exact bytes remain historical evidence.
+"""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[4]
+HERE = Path(__file__).resolve().parent
+
+def sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+def git(*args):
+    return subprocess.check_output(['git', '-C', str(ROOT), *args])
+
+def blob(raw):
+    return hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+
+def licensed(raw, suffix):
+    """Add only a literal license prefix; preserve every original body byte."""
+    if b'SPDX-License-Identifier: Apache-2.0' in raw.split(b'\n', 1)[0]:
+        return raw, []
+    prefix = b'// SPDX-License-Identifier: Apache-2.0\n' if suffix in {'.js', '.rs'} else b'# SPDX-License-Identifier: Apache-2.0\n'
+    return prefix + raw, [{'kind': 'spdx-prefix', 'prefix': prefix.decode('ascii'), 'reason': 'AIRK-authored historical source license; original body bytes unchanged'}]
+
+def main():
+    ap=argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--routing',type=Path,required=True)
+    ap.add_argument('--routing-sha256',required=True)
+    ap.add_argument('--write',action='store_true')
+    args=ap.parse_args(); raw=args.routing.read_bytes()
+    if sha(raw)!=args.routing_sha256: raise ValueError('routing changed')
+    routing=json.loads(raw); rows=routing['lanes']['component_review']
+    # Explicit previously tracked snapshot whose live owner later advanced.
+    supplement={'path': 'artifacts/v190/final-plan/exec-20261116T052942Z/gpu-final-graph-metadata-proposal-r1/native-proposal/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs', 'source_sha256': '6decae704f82b4e2ab190f28fe873457c7d81674a6c6d18a158e467dbb9cc876', 'bytes': 11795}
+    if not any(r['path']==supplement['path'] for r in rows): rows.append(supplement)
+    head=git('rev-parse','HEAD').decode().strip()
+    reachable={}
+    for line in git('rev-list','--objects',head).decode().splitlines():
+        oid,_,path=line.partition(' ')
+        if path: reachable.setdefault(oid,path)
+    # Compiler input is read, never installed or changed; all emission stays in memory.
+    javascript=r'''
+const fs=require('fs'),path=require('path');
+const root=process.cwd(),tsPath=path.join(root,'packages/vscode/node_modules/typescript/lib/typescript.js');
+const ts=require(tsPath),crypto=require('crypto');
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const rows=JSON.parse(fs.readFileSync(0,'utf8')),out={},programs={};
+for(const r of rows){
+ if(!r.path.includes('/source/packages/vscode/out/')||!r.path.endsWith('.js'))continue;
+ const src=r.path.replace('/source/packages/vscode/out/','/source/packages/vscode/src/').replace(/\.js$/,'.ts');
+ if(!fs.existsSync(src))continue;
+ const config=src.split('/src/')[0]+'/tsconfig.json';
+ const options=ts.convertCompilerOptionsFromJson(JSON.parse(fs.readFileSync(config,'utf8')).compilerOptions,path.dirname(config)).options;
+ const source=fs.readFileSync(src);let emitted=ts.transpileModule(source.toString('utf8'),{compilerOptions:options,fileName:src}).outputText,method='Exact in-memory TypeScript transpileModule emission; no newline normalization';
+ if(!Buffer.from(emitted).equals(fs.readFileSync(r.path))){
+  if(!programs[config]){const parsed=ts.parseJsonConfigFileContent(JSON.parse(fs.readFileSync(config,'utf8')),ts.sys,path.dirname(config));programs[config]=ts.createProgram(parsed.fileNames,parsed.options);}
+  const program=programs[config],unit=program.getSourceFile(src);
+  if(unit)program.emit(unit,(name,text)=>{if(name.endsWith('.js'))emitted=text;});
+  method='Exact in-memory TypeScript Program.emit; no newline normalization; no compile-pass claim';
+ }
+ if(Buffer.from(emitted).equals(fs.readFileSync(r.path)))out[r.path]={source:src,source_sha256:sha(source),compiler_path:tsPath,compiler_sha256:sha(fs.readFileSync(tsPath)),compiler_version:ts.version,compiler_bytes:fs.statSync(tsPath).size,source_bytes:source.length,options:JSON.parse(fs.readFileSync(config,'utf8')).compilerOptions,config_path:config,config_sha256:sha(fs.readFileSync(config)),method:method};
+}
+process.stdout.write(JSON.stringify(out));
+'''
+    generated=json.loads(subprocess.check_output(['node','-e',javascript],input=json.dumps(rows).encode(),cwd=ROOT))
+    tracked={}
+    for name in git('ls-files','-z').decode().split('\0'):
+        p=ROOT/name
+        if name and p.is_file() and p.suffix.lower() in {'.py','.rs','.js','.ts','.sh','.ps1'} and p.stat().st_size<=16<<20:
+            tracked.setdefault(sha(p.read_bytes()),name)
+    decisions=[]; copies={}; commit_cache={}
+    def history(raw):
+        for data,normalization in [(raw,'none'),(raw.replace(b'\r\n',b'\n'),'CRLF to LF only')]:
+            oid=blob(data)
+            if oid not in reachable: continue
+            key=(oid,reachable[oid])
+            if key not in commit_cache:
+                path=key[1]; commits=git('log',head,'--format=%H','--find-object='+oid,'--',path).decode().splitlines()
+                proof=None
+                for commit in commits:
+                    for rev in [commit,commit+'^']:
+                        check=subprocess.run(['git','-C',str(ROOT),'rev-parse',rev+':'+path],capture_output=True)
+                        if check.returncode==0 and check.stdout.decode().strip()==oid:
+                            proof={'commit':git('rev-parse',rev).decode().strip(),'path':path,'git_blob_oid':oid};break
+                    if proof:break
+                commit_cache[key]=proof
+            if commit_cache[key]: return {**commit_cache[key],'normalization':normalization}
+        return None
+    for row in rows:
+        p=ROOT/row['path']; data=p.read_bytes()
+        if len(data)!=row['bytes'] or sha(data)!=row['source_sha256']:raise ValueError('source changed: '+row['path'])
+        if re.search(rb'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|\bgh[pousr]_[A-Za-z0-9]{30,}|\bAKIA[A-Z0-9]{16}\b',data):raise ValueError('potential secret requires review: '+row['path'])
+        result={'source':row['path'],'original_sha256':sha(data),'original_bytes':len(data)}
+        proof=history(data)
+        if proof:result.update(status='git_history_preserved',git=proof)
+        elif row['path'] in generated:
+            g=generated[row['path']]; origin=(ROOT/g['source']).read_bytes(); gp=history(origin)
+            if not gp and sha(origin) not in tracked: raise ValueError('generated owner not maintained: '+g['source'])
+            result.update(status='generated_from_maintained_typescript',generation=g,owner_git=gp,owner_worktree=tracked.get(sha(origin)))
+        elif sha(data) in tracked:result.update(status='exact_tracked_worktree',destination=tracked[sha(data)])
+        else:
+            name=sha(data)+'--'+p.name+('.in' if p.suffix=='.rs' else '')
+            dest=HERE/'sources'/name
+            retained,changes=licensed(data,p.suffix)
+            result.update(status='preserved_unintegrated_source',role=('unintegrated native proposal' if p.suffix=='.rs' else 'historical generated JavaScript variant without exact regeneration proof' if p.suffix=='.js' else 'historical operational runner or preparation/analysis helper'),filename_change=('append .in; bytes unchanged' if p.suffix=='.rs' else 'SHA256 filename prefix; bytes unchanged'),destination=dest.relative_to(ROOT).as_posix(),maintained_sha256=sha(retained),maintained_bytes=len(retained),transformations=changes)
+            copies[dest]=retained
+        decisions.append(result)
+    report={'schema':'airk.historical-source-rescue/1','routing_sha256':args.routing_sha256,'head':head,'scope':'component_review routing lane only','qualification':False,'historical_code_executed':False,'files':decisions}
+    relocation={**report,'schema':'airk.source-relocation/1','files':[r for r in decisions if r['status']=='preserved_unintegrated_source']}
+    generated_rows=[]
+    for r in decisions:
+        if r['status']!='generated_from_maintained_typescript':continue
+        g=r['generation']; owner=r['owner_git']; version={'path':g['source'],'sha256':g['source_sha256'],'bytes':g['source_bytes']}
+        if owner:version.update(git_commit=owner['commit'],git_path=owner['path'],git_blob_oid=owner['git_blob_oid'],normalization=owner['normalization'])
+        if r['owner_worktree']:version['maintained_path']=r['owner_worktree']
+        generated_rows.append({'source':r['source'],'source_sha256':r['original_sha256'],'source_bytes':r['original_bytes'],'disposition':'generated_from_maintained_typescript','reason':'Exact in-memory compiler output matched; source-owner evidence is separate, not raw TS/JS identity.','generated':{'compiler':{'path':Path(g['compiler_path']).relative_to(ROOT).as_posix(),'sha256':g['compiler_sha256'],'bytes':g['compiler_bytes']},'options':g['options'],'source_version':version,'reproduced_js_sha256':r['original_sha256'],'method':g['method']}})
+    helper=Path(__file__); proof={'schema':'airk.typescript-generation-replay/1','head':head,'helper':{'path':helper.relative_to(ROOT).as_posix(),'sha256':sha(helper.read_bytes()),'bytes':helper.stat().st_size},'qualification':False,'filesystem_emission':False,'rows':generated_rows}
+    proof_bytes=(json.dumps(proof,indent=2)+'\n').encode()
+    for r in generated_rows:r['evidence']=[{'path':(HERE/'generated-replay.json').relative_to(ROOT).as_posix(),'sha256':sha(proof_bytes),'bytes':len(proof_bytes)}]
+    outputs={HERE/'source-map.json':(json.dumps(relocation,indent=2)+'\n').encode(),HERE/'disposition.json':(json.dumps(report,indent=2)+'\n').encode(),HERE/'generated-replay.json':proof_bytes,HERE/'generated-disposition.json':(json.dumps({'schema':'airk.source-disposition/1','files':generated_rows},indent=2)+'\n').encode()}
+    if args.write:
+        for path,data in {**copies,**outputs}.items():
+            if path.exists() and path.read_bytes()!=data:raise ValueError('destination collision: '+str(path))
+        for path,data in {**copies,**outputs}.items():
+            if not path.exists():path.write_bytes(data)
+    from collections import Counter
+    print(json.dumps({'paths':len(decisions),'unique_copies':len(copies),'counts':dict(Counter(r['status'] for r in decisions)),'written':args.write}))
+
+if __name__=='__main__':main()

@@ -1,0 +1,131 @@
+{
+  "schema": "airk.research-source-exclusions/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/_internal_utils.py",
+      "sha256": "671dcf9c451c7327ec07e89ed759d95405bca82949cb4831d6a34c13bae04f5f",
+      "bytes": 1096,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/adapters.py",
+      "sha256": "59e95233504241775b8c4b83b01c6a283003798f011e6c65af06cd9cb376aebe",
+      "bytes": 21344,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/api.py",
+      "sha256": "3e51ccf874f73d0e65cae7e8786995fa7271462ed49d4c86561ece57b07d5d5e",
+      "bytes": 6496,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/auth.py",
+      "sha256": "38ca092152b244bcbd4c7afdd72f2bc72b19b9c9703c1f8ad57835cc1a265214",
+      "bytes": 10207,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/cookies.py",
+      "sha256": "63e6ca5fa4ef5b716762513a02ed125ed55559c68d745bee030431c3e1b48932",
+      "bytes": 18430,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/exceptions.py",
+      "sha256": "c57a23d6b7619f14d2fc362984a67d3af159250677df703ae1111cf590d92205",
+      "bytes": 3161,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/help.py",
+      "sha256": "94b701b4a01aafc4fa4fbf1ef5373865f77f104245867b718226f524735cb442",
+      "bytes": 3515,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/hooks.py",
+      "sha256": "411786cb2d1b45caf9ae4c02b8e6cd6a46d8b1cec492229e0701b8a877a4af64",
+      "bytes": 757,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/models.py",
+      "sha256": "5216f845afee6cd1817feea4b474a180ee6651208664a6b90ffc0b19508cb589",
+      "bytes": 34308,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/sessions.py",
+      "sha256": "06c9d1fb36082e0a05cc9eb2ab84fc86dfe2d0fc303c6540c56c56695e5d7078",
+      "bytes": 30137,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/structures.py",
+      "sha256": "9ac02dafd9aad49c4777e251ca220b7dd165a5b270bef16e3f7adf5104ff4311",
+      "bytes": 3005,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/requests/utils.py",
+      "sha256": "fcaf4082437a79f3def9afb3819bab5f376ce4f042d02cc39328c0136a024054",
+      "bytes": 30529,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_help.py",
+      "sha256": "298d717f8d54a9137ff7860457c61f361211310b3f4864ee4cb77dbc2d56acf2",
+      "bytes": 866,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_lowlevel.py",
+      "sha256": "aadc31678ae6848e610c161b482315c40ed5d174d91561420253488738447c50",
+      "bytes": 11512,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_requests.py",
+      "sha256": "6fe256ba777bc19a0476080530e26c65968f9b9fd865234d09b2f9a1f467a7a2",
+      "bytes": 90960,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_structures.py",
+      "sha256": "f26f8702aee16cdba4152a76c456669199a5b9fd3899a5b96d1b033cc37138ba",
+      "bytes": 2250,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_testserver.py",
+      "sha256": "ede9f99c7a0645bcf37a1dd09d64f6bf65199abaf0682354a94c063d4d8a2e72",
+      "bytes": 5603,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-source-r1/sources/requests/tests/test_utils.py",
+      "sha256": "7b3a2a438890d406865095d1559f0bea06994f0212c90952a9eebe315709b595",
+      "bytes": 26055,
+      "disposition": "excluded_vendor_corpus_input",
+      "reason": "Requests source/test files materialized as training corpus inputs; not AIRK authored implementation. Preserve original private corpus; never copy into source rescue."
+    }
+  ]
+}

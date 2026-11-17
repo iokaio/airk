@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Literal refusal controls; no process launch, fixtures, cache or GPU work."""
 import copy
+import io
 import ctypes
 import importlib.util
 from pathlib import Path
@@ -412,6 +413,8 @@ class JobReadback(unittest.TestCase):
 class NativeSourceEpoch(unittest.TestCase):
     def setUp(self):
         self.mandatory = [
+            'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata.rs',
+            'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/tests.rs',
             'crates/airk-retrieval/src/arbiter/runtime.rs',
             'crates/airk-retrieval/src/arbiter/runtime/cuda.rs',
             'crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md',
@@ -871,11 +874,13 @@ class NativeSourceIntroductions(unittest.TestCase):
     def setUp(self):
         NativeSourceEpoch.setUp(self)
         self.new_keys=[
+            'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata.rs',
+            'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/tests.rs',
             'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs',
             'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs',
         ]
         for key in self.new_keys:del self.old_files[key]
-        self.introductions=[{'path':str(m.ROOT/key),'new_sha256':'a'*64} for key in self.new_keys]
+        self.introductions=[{'path':str(m.ROOT/key),'new_sha256':'a'*64} for key in sorted(self.new_keys)]
         self.plan['native_source_introductions']=copy.deepcopy(self.introductions)
 
     def test_exact_new_owner_keys_record_no_historical_sha(self):
@@ -897,8 +902,8 @@ class NativeSourceIntroductions(unittest.TestCase):
 
     def test_missing_extra_stale_or_fabricated_introduction_refuses(self):
         for rows in [[],self.introductions+[{'path':str(m.ROOT/'crates/unrelated.rs'),'new_sha256':'a'*64}],
-                     [dict(self.introductions[0],new_sha256='f'*64),self.introductions[1]],
-                     [dict(self.introductions[0],old_sha256='a'*64),self.introductions[1]]]:
+                     [dict(self.introductions[0],new_sha256='f'*64),*self.introductions[1:]],
+                     [dict(self.introductions[0],old_sha256='a'*64),*self.introductions[1:]]]:
             with self.subTest(rows=rows):
                 changed=copy.deepcopy(self.plan);changed['native_source_introductions']=rows
                 with self.assertRaises(ValueError):m.verify_native_transition(self.old,self.old_files,self.new_files,changed)
@@ -914,6 +919,202 @@ class NativeSourceIntroductions(unittest.TestCase):
     def test_other_missing_old_owner_refuses(self):
         key='crates/airk-retrieval/src/arbiter/runtime.rs';del self.old_files[key]
         with self.assertRaises(ValueError):m.rebind_native_sources(self.old['required_native_sources'],self.old_files,self.new_files)
+
+
+class GraphDiagnostic(unittest.TestCase):
+    def setUp(self):
+        PlacementDiagnostic.setUp(self)
+        self.plan.update(schema='airk.private.cuda-graph-metadata-diagnostic-plan/1',selector='inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_load_only_graph_metadata_diagnostic')
+        self.value.update(schema='airk.private.cuda-graph-metadata-diagnostic/1',outcome='graph_metadata_observed',
+            operation_scope='Disposable session creation and final graph metadata observation only; no Scorer, forward, hybrid policy or qualification is returned',selected_logs_complete=True)
+        self.value['graph_metadata']={'schema':'airk.private.ort-final-graph-metadata/1','complete':True,'shim_status':0,
+            'ort_error_code':0,'reported_counts':[1,1,2,38,0,7],'encoded_bytes':2000,'failure':None,'rows':[
+                {'kind':'graph','graph':0,'parent_graph':None,'parent_node':None,'attribute':'','outer_bindings':'not_applicable'},
+                {'kind':'node','graph':0,'node':0,'name':'n','domain':'','op':'Shape','ep':'CPUExecutionProvider','version':1},
+                {'kind':'value','graph':0,'value':0,'name':'x','element_type':7,'rank':1,'type_state':'tensor','provenance':'graph_input','producer':None},
+                {'kind':'dimension','graph':0,'value':0,'index':0,'number':2,'symbol':None},
+                {'kind':'edge','graph':0,'node':0,'value':0,'role':0,'slot':0},
+                {'kind':'edge','graph':0,'node':None,'value':0,'role':3,'slot':0},
+                {'kind':'end','graph':0}]}
+
+    def validate(self):
+        m.validate_graph_diagnostic(self.value,self.plan,42,self.native,self.profile)
+
+    def test_complete_graph_capture(self):
+        self.validate()
+        self.assertEqual(m.execution_mode(self.plan),'graph')
+        with self.assertRaises(ValueError):m.validate_placement_diagnostic(self.value,self.plan,42,self.native,self.profile)
+        with self.assertRaises(ValueError):m.validate_native(self.value,self.plan,42,self.native,self.profile,self.fixture)
+
+    def test_log_omissions_stay_explicit_and_old_mode_refuses(self):
+        self.value['logs'].update(seen=4921,selected=1267,retained=1,omitted=1266,truncated=True)
+        self.value['selected_logs_complete']=False
+        self.validate()
+        self.value['selected_logs_complete']=True
+        with self.assertRaises(ValueError):self.validate()
+        self.value['selected_logs_complete']=False
+        self.plan.update(schema=m.PLACEMENT_SCHEMA,selector=m.PLACEMENT_SELECTOR)
+        self.value.update(schema='airk.private.cuda-placement-diagnostic/1',outcome='placement_observed',
+            operation_scope='Disposable session creation and final placement observation only; no Scorer, forward, hybrid policy or qualification is returned')
+        with self.assertRaises(ValueError):m.validate_placement_diagnostic(self.value,self.plan,42,self.native,self.profile)
+
+    def test_failed_graph_or_teardown_cannot_complete(self):
+        for key,bad in [('diagnostic_complete',False),('diagnostic_error','capture failed'),('outcome','failed'),
+                        ('scorer_returned',True),('forward_dispatched',True),('qualification',True),('selected_logs_complete',None)]:
+            with self.subTest(key=key):
+                old=self.value[key];self.value[key]=bad
+                with self.assertRaises(ValueError):self.validate()
+                self.value[key]=old
+        self.value['teardown']['session_drop_returned']=False
+        with self.assertRaises(ValueError):self.validate()
+
+    def test_partial_status_caps_and_counters(self):
+        g=self.value['graph_metadata']
+        for key,bad in [('schema','wrong'),('complete',False),('failure','overflow'),('shim_status',1),('shim_status',False),
+                        ('ort_error_code',1),('encoded_bytes',0),('encoded_bytes',(8<<20)+1),('reported_counts',[1,1,2,38,0,8]),
+                        ('reported_counts',[True,1,2,38,0,7]),('rows',[])]:
+            with self.subTest(key=key):
+                old=g[key];g[key]=bad
+                with self.assertRaises(ValueError):self.validate()
+                g[key]=old
+
+    def test_record_type_missing_extra_and_identity_refusals(self):
+        rows=self.value['graph_metadata']['rows']
+        for index,key,bad in [(0,'graph',1),(0,'parent_node',0),(0,'outer_bindings','resolved'),(1,'kind','unexpected'),
+                (1,'node',True),(1,'version',0),(1,'op',''),(1,'ep','CUDAExecutionProvider'),(1,'name','x'*4097),
+                (2,'rank',17),(2,'type_state','unsupported_non_tensor'),(2,'producer',99),(2,'provenance','invented'),
+                (3,'index',1),(3,'number',-1),(3,'symbol','N'),(4,'node',99),(4,'value',99),(4,'role',6),(4,'slot',1),
+                (5,'value',None),(6,'graph',1)]:
+            with self.subTest(index=index,key=key):
+                old=copy.deepcopy(rows[index]);rows[index][key]=bad
+                with self.assertRaises(ValueError):self.validate()
+                rows[index]=old
+        rows[1]['invented']=False
+        with self.assertRaises(ValueError):self.validate()
+
+    def test_missing_dimension_boundary_and_graph_end(self):
+        original=copy.deepcopy(self.value['graph_metadata']['rows'])
+        for index in [3,5,6]:
+            self.value['graph_metadata']['rows']=copy.deepcopy(original)
+            del self.value['graph_metadata']['rows'][index]
+            with self.assertRaises(ValueError):self.validate()
+
+    def payload_fixture(self):
+        rows=self.value['graph_metadata']['rows']
+        rows[4:4]=[
+            {'kind':'value','graph':0,'value':1,'name':'y','element_type':7,'rank':0,'type_state':'tensor','provenance':'immutable_session_initializer','producer':None},
+            {'kind':'constant','graph':0,'value':1,'element_type':7,'count':1,'readable':True,'reason':'read','device':'CPU'},
+            {'kind':'constant_element','graph':0,'value':1,'index':0,'element_bytes':8,'integer':42},
+            {'kind':'attribute','graph':0,'node':0,'index':0,'name':'axis','attribute_type':2,'count':1,'readable':True,'reason':'read'},
+            {'kind':'attribute_element','graph':0,'node':0,'attribute':0,'index':0,'element_kind':1,'value':0}]
+        self.value['graph_metadata']['reported_counts']=[1,2,2,83,8,12]
+
+    def test_immutable_constant_and_attribute_payload(self):
+        self.payload_fixture();self.validate()
+
+    def test_payload_wrong_device_type_order_and_missing_refuse(self):
+        self.payload_fixture();original=copy.deepcopy(self.value['graph_metadata']['rows'])
+        for index,key,bad in [(4,'provenance','overridable_initializer_unread'),(5,'device','CUDA'),(5,'count',65),
+                (5,'reason','unknown'),(6,'element_bytes',4),(6,'index',1),(6,'integer',1<<63),
+                (7,'count',65),(7,'attribute_type',4),(8,'element_kind',2),(8,'index',1),(8,'value',True)]:
+            with self.subTest(index=index,key=key):
+                self.value['graph_metadata']['rows']=copy.deepcopy(original)
+                self.value['graph_metadata']['rows'][index][key]=bad
+                with self.assertRaises(ValueError):self.validate()
+        self.value['graph_metadata']['rows']=copy.deepcopy(original);del self.value['graph_metadata']['rows'][6]
+        with self.assertRaises(ValueError):self.validate()
+
+    def test_producer_matches_output_edges(self):
+        rows=self.value['graph_metadata']['rows'];rows[2].update(provenance='node_output',producer=0)
+        rows[5].update(node=0,role=2)
+        self.validate()
+        rows[5]['value']=None
+        with self.assertRaises(ValueError):self.validate()
+
+    def test_output_edge_cannot_omit_value_producer(self):
+        self.value['graph_metadata']['rows'][5].update(node=0,role=2)
+        self.value['graph_metadata']['rows'][2]['provenance']='unresolved_outer_or_internal'
+        with self.assertRaises(ValueError):self.validate()
+
+    def test_duplicate_and_nested_graph_scope_refuse(self):
+        rows=self.value['graph_metadata']['rows'];rows.insert(2,copy.deepcopy(rows[1]))
+        with self.assertRaises(ValueError):self.validate()
+
+
+    def test_attribute_65_refused_at_owning_bound(self):
+        rows=self.value['graph_metadata']['rows']
+        rows[-1:-1]=[{'kind':'attribute','graph':0,'node':0,'index':n,'name':'a',
+            'attribute_type':99,'count':0,'readable':False,'reason':'unsupported_attribute_unread'} for n in range(65)]
+        with self.assertRaisesRegex(ValueError,'owner/order/bound'):self.validate()
+
+    def test_readable_scalar_requires_exactly_one_payload(self):
+        for count in [0,2]:
+            self.setUp()
+            self.value['graph_metadata']['rows'].insert(-1,{'kind':'attribute','graph':0,'node':0,'index':0,
+                'name':'axis','attribute_type':2,'count':count,'readable':True,'reason':'read'})
+            with self.assertRaisesRegex(ValueError,'readable attribute'):self.validate()
+
+
+class GraphProvenance(unittest.TestCase):
+    def setUp(self):
+        self.owner=pin('preserver')
+        self.plan={'schema':m.GRAPH_SCHEMA,'selector':m.GRAPH_SELECTOR,'graph_preserver':self.owner,
+                   'image_packet':pin('packet'),'descriptor':pin('manifest'),'native_image':pin('image'),'native_build_receipt':pin('build')}
+        self.binding={key:pin(key) for key in ['environment','source_roster','archive','producer','manifest','runtime_producer','cargo_json','preserver_source']}
+        self.binding['source_pins']=[pin('verifier')]
+        self.checked=[]
+        self.verifier=SimpleNamespace(verify_graph_binding=lambda *args:self.checked.append(args))
+        self.base=SimpleNamespace(pin=lambda path:self.owner,pinned=lambda row:row['path'],read=lambda path:{'static_graph_binding':self.binding},load=lambda *args:self.verifier)
+
+    def test_dedicated_verifier_and_every_binding_pin_required(self):
+        rows=m.verify_graph_provenance(self.plan,self.base)
+        self.assertEqual(len(rows),9)
+        self.assertEqual(self.checked,[(self.binding,self.plan['descriptor'],self.plan['native_image'],self.plan['native_build_receipt'])])
+
+    def test_missing_binding_wrong_owner_or_non_graph_mode_refuses(self):
+        self.base.read=lambda path:{}
+        with self.assertRaises(ValueError):m.verify_graph_provenance(self.plan,self.base)
+        self.plan['graph_preserver']=pin('foreign')
+        with self.assertRaises(ValueError):m.verify_graph_provenance(self.plan,self.base)
+        self.plan.update(schema=m.SCHEMA,selector=m.SELECTOR)
+        with self.assertRaises(ValueError):m.verify_graph_provenance(self.plan,self.base)
+
+    def test_dedicated_provenance_refusal_cannot_be_replaced_by_pins(self):
+        def reject(*args):raise ValueError('producer ancestry refused')
+        self.verifier.verify_graph_binding=reject
+        with self.assertRaisesRegex(ValueError,'ancestry refused'):m.verify_graph_provenance(self.plan,self.base)
+
+
+
+    def test_original_deadline_reaches_deep_verifier(self):
+        calls=[]
+        self.verifier.verify_graph_binding=lambda *args,**kw:calls.append(kw)
+        with patch.object(m.time,'monotonic',return_value=1):
+            m.verify_graph_provenance(self.plan,self.base,deadline=120)
+        self.assertEqual(calls,[{'deadline':120}])
+
+    def test_expired_deep_verifier_prevents_completion(self):
+        with patch.object(m.time,'monotonic',return_value=1) as clock:
+            def verify(*args,**kw):
+                self.assertEqual(kw,{'deadline':2});clock.return_value=2
+            self.verifier.verify_graph_binding=verify
+            with self.assertRaisesRegex(ValueError,'original graph provenance deadline'):
+                m.verify_graph_provenance(self.plan,self.base,deadline=2)
+
+    def test_expired_before_verifier_input_access(self):
+        self.base.pin=lambda path:self.fail('late input access')
+        with patch.object(m.time,'monotonic',return_value=2),self.assertRaises(ValueError):
+            m.verify_graph_provenance(self.plan,self.base,deadline=2)
+
+    def test_private_base_hash_stops_at_original_deadline(self):
+        b=SimpleNamespace(digest=lambda path:self.fail('unbounded digest used'))
+        with patch.object(m.time,'monotonic',return_value=1) as clock:
+            class Stream(io.BytesIO):
+                def read(self,*args):
+                    value=super().read(*args);clock.return_value=2;return value
+            with patch.object(Path,'open',return_value=Stream(b'input')):
+                m.bind_graph_hash_deadline(b,2)
+                with self.assertRaises(ValueError):b.digest('input')
 
 
 if __name__ == '__main__':

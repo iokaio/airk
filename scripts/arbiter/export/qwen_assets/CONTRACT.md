@@ -1,0 +1,3 @@
+# Publisher acquisition source contract
+
+Imports are inert. A command must supply an authenticated exact manifest and canonical existing private artifact output root; tracked source output roots and aliases refuse before writes/network. The original model selection, filename selection, two-worker concurrency, bounded download size, partial-file refusal, SHA-256/Git-blob verification and archive-only handling are preserved inside main. Existing catalog drift checks remain. New source identities are recorded separately; original manifests and acquisition receipts are unchanged. Caller-owned same-user execution, output-parent preflight and created-output audit are mandatory. No network/model run is implied by source migration.

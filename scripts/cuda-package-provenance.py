@@ -56,7 +56,7 @@ def require_native_activation_projection(projection_path=None,projection_sha256=
  value=owner.read(projection_path,1<<20)
  if set(value)!={'schema','descriptor','static_core_build','files','scope','activation','qualification'} or value['schema']!='airk.native.cuda-package-projection/1' or value['activation'] is not False or value['qualification'] is not False:raise ValueError('exact descriptive native package projection required')
  build=verified_handoff.get('gpu_build',{})
- if verified_handoff.get('activation_pins_available') is not False or build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2') or value['static_core_build']!=build.get('build_receipt',{}).get('sha256'):raise ValueError('native projection/static-core producer mismatch')
+ if verified_handoff.get('activation_pins_available') is not False or build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2','airk.cuda-static-build-proof/3') or value['static_core_build']!=build.get('build_receipt',{}).get('sha256'):raise ValueError('native projection/static-core producer mismatch')
  descriptor=value['descriptor']
  if not isinstance(descriptor,dict) or set(descriptor)!={'name','bytes','sha256'} or descriptor['name']!='airk-cuda-runtime.json' or (descriptor['bytes'],descriptor['sha256'])!=(plan['descriptor']['bytes'],plan['descriptor']['sha256']):raise ValueError('actual native descriptor pin differs')
  rows=value['files']

@@ -1,0 +1,144 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Inert metadata custody only. No code/PE/runtime activation aliases.
+use super::*;
+use airk_core::arbiter::resource_policy::ResourceFilePin;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataCustodyCopy {
+    pub original: ResourceFilePin,
+    pub copy: ResourceFilePin,
+    pub bytes: u64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Envelope {
+    schema: String,
+    copies: Vec<MetadataCustodyCopy>,
+}
+pub fn decode_metadata_custody(raw: &[u8]) -> Result<Vec<MetadataCustodyCopy>> {
+    ensure!(raw.len() <= 1 << 20, "metadata custody request cap");
+    let request: Envelope = serde_json::from_slice(raw)?;
+    ensure!(
+        request.schema == "airk.native.cuda-metadata-custody/1",
+        "unknown metadata custody input"
+    );
+    validate_metadata_custody(&request.copies)?;
+    Ok(request.copies)
+}
+fn key(path: &str) -> Result<String> {
+    for part in Path::new(path).components() {
+        match part {
+            std::path::Component::CurDir | std::path::Component::ParentDir => {
+                anyhow::bail!("metadata custody dot-path alias")
+            }
+            std::path::Component::Normal(n) => {
+                let n = n.to_str().context("metadata custody path not UTF8")?;
+                ensure!(
+                    !n.ends_with(['.', ' ']) && !n.contains(':'),
+                    "metadata custody path alias"
+                );
+            }
+            _ => {}
+        }
+    }
+    let normalized = Path::new(path).components().collect::<std::path::PathBuf>();
+    let normalized = normalized
+        .to_str()
+        .context("metadata custody normalized path not UTF8")?;
+    #[cfg(windows)]
+    {
+        Ok(normalized.replace('/', "\\").to_lowercase())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(normalized.into())
+    }
+}
+pub fn validate_metadata_custody(rows: &[MetadataCustodyCopy]) -> Result<()> {
+    validated(rows)?;
+    Ok(())
+}
+fn validated(rows: &[MetadataCustodyCopy]) -> Result<BTreeMap<String, MetadataCustodyCopy>> {
+    ensure!(rows.len() <= 512, "metadata custody mapping count cap");
+    let mut copies = BTreeMap::new();
+    let mut destinations = BTreeSet::new();
+    for row in rows {
+        row.original.validate()?;
+        row.copy.validate()?;
+        ensure!(
+            row.bytes > 0
+                && row.bytes <= 16 << 20
+                && row.original.sha256 != Sha256Digest::from_bytes([0; 32])
+                && row.original.sha256 == row.copy.sha256
+                && row.original.path != row.copy.path,
+            "metadata custody copy identity/byte bounds differ"
+        );
+        ensure!(
+            copies
+                .insert(key(&row.original.path)?, row.clone())
+                .is_none()
+                && destinations.insert(key(&row.copy.path)?),
+            "duplicate metadata original/copy path"
+        );
+    }
+    ensure!(
+        copies.keys().all(|p| !destinations.contains(p)),
+        "metadata custody cycles/chained aliases refuse"
+    );
+    Ok(copies)
+}
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+pub(super) struct Custody {
+    copies: BTreeMap<String, MetadataCustodyCopy>,
+    used: std::cell::RefCell<BTreeSet<String>>,
+}
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+impl Custody {
+    pub fn new(rows: &[MetadataCustodyCopy]) -> Result<Self> {
+        let copies = validated(rows)?;
+        Ok(Self {
+            copies,
+            used: std::cell::RefCell::new(BTreeSet::new()),
+        })
+    }
+    pub fn resolve(
+        &self,
+        pin: &ResourceFilePin,
+        metadata: bool,
+    ) -> Result<(ResourceFilePin, Option<u64>)> {
+        pin.validate()?;
+        if let Some(row) = self.copies.get(&key(&pin.path)?) {
+            ensure!(
+                metadata && &row.original == pin,
+                "unknown/mismatched metadata pin or forbidden code/authenticate redirect"
+            );
+            Ok((row.copy.clone(), Some(row.bytes)))
+        } else {
+            Ok((pin.clone(), None))
+        }
+    }
+    pub fn mapped(&self, path: &str) -> Result<bool> {
+        Ok(self.copies.contains_key(&key(path)?))
+    }
+    pub fn consumed(&self, pin: &ResourceFilePin) -> Result<()> {
+        let row = self
+            .copies
+            .get(&key(&pin.path)?)
+            .context("unknown metadata custody consumption")?;
+        ensure!(
+            &row.original == pin,
+            "metadata custody original pin changed"
+        );
+        self.used.borrow_mut().insert(key(&pin.path)?);
+        Ok(())
+    }
+    pub fn recheck(&self) -> Result<()> {
+        ensure!(
+            self.used.borrow().iter().eq(self.copies.keys()),
+            "unused/unknown metadata custody mapping"
+        );
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod tests;

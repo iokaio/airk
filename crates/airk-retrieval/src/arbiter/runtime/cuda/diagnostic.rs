@@ -16,6 +16,30 @@ pub struct LogSnapshot {
     pub truncated: bool,
     pub rows: Vec<LogRow>,
 }
+#[cfg(feature = "test-support")]
+impl LogSnapshot {
+    fn validate_disclosure(&self) -> Result<()> {
+        ensure!(
+            self.retained == self.rows.len() as u64
+                && self.selected.checked_sub(self.retained) == Some(self.omitted)
+                && self.seen >= self.selected
+                && (self.omitted == 0 || self.truncated)
+                && self.bytes <= 65536
+                && self
+                    .rows
+                    .iter()
+                    .all(|r| r.location.len() + 2 + r.message.len() <= 4096)
+                && self.bytes
+                    == self
+                        .rows
+                        .iter()
+                        .map(|r| r.location.len() + 2 + r.message.len())
+                        .sum::<usize>(),
+            "diagnostic selected-log disclosure is inconsistent"
+        );
+        Ok(())
+    }
+}
 #[derive(Default)]
 pub(crate) struct Capture {
     logs: LogSnapshot,
@@ -129,15 +153,47 @@ pub(crate) fn settle_with<T>(
     }
 }
 #[cfg(feature = "test-support")]
+fn capture_then_settle<T>(
+    session: T,
+    capture: impl FnOnce() -> Result<()>,
+    pre: impl FnOnce(&T) -> Result<()>,
+    unknown_release: impl FnOnce(),
+    post: impl FnOnce() -> (Result<()>, Option<usize>, bool),
+) -> (Result<()>, Teardown) {
+    let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(capture))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("diagnostic observation capture panicked")));
+    let teardown = settle_with(session, pre, unknown_release, post);
+    (captured, teardown)
+}
+#[cfg(feature = "test-support")]
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct LoadSnapshot {
     pub session_created: bool,
     pub placement: Option<PlacementObservation>,
+    pub graph_metadata: Option<super::GraphMetadataObservation>,
     pub logs: LogSnapshot,
     pub teardown: Option<Teardown>,
 }
 #[cfg(feature = "test-support")]
 impl LoadSnapshot {
+    pub fn validate_graph_metadata(&self) -> Result<()> {
+        self.logs.validate_disclosure()?;
+        ensure!(self.session_created, "diagnostic session was not created");
+        let placement = self
+            .placement
+            .as_ref()
+            .context("diagnostic placement missing")?;
+        complete_placement(placement)?;
+        self.graph_metadata
+            .as_ref()
+            .context("diagnostic graph metadata missing")?
+            .validate_against(placement)?;
+        self.teardown
+            .as_ref()
+            .context("diagnostic teardown missing")?
+            .validate()?;
+        Ok(())
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(self.session_created, "diagnostic session was not created");
         complete_placement(
@@ -278,18 +334,50 @@ pub(crate) fn finish(
     session: super::super::session_owner::SessionOwner,
     binding: &Binding,
 ) -> Result<()> {
+    finish_mode(session, binding, false)
+}
+#[cfg(feature = "test-support")]
+pub(crate) fn finish_graph_metadata(
+    session: super::super::session_owner::SessionOwner,
+    binding: &Binding,
+) -> Result<()> {
+    finish_mode(session, binding, true)
+}
+#[cfg(feature = "test-support")]
+fn finish_mode(
+    session: super::super::session_owner::SessionOwner,
+    binding: &Binding,
+    graph_mode: bool,
+) -> Result<()> {
     let placement = binding.device.placement(&session);
-    // Keep partial placement even when subsequent settlement fails.
-    if let Ok(value) = &placement {
-        binding
-            .log
-            .lock()
-            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
-            .state
-            .placement = Some(value.clone());
-    }
-    let teardown = settle_with(
+    let metadata = if graph_mode {
+        placement
+            .as_ref()
+            .map_err(|e| anyhow::anyhow!("{e:#}"))
+            .and_then(|p| {
+                binding
+                    .device
+                    .graph_metadata(&session, binding.load_deadline, p)
+            })
+            .map(Some)
+    } else {
+        Ok(None)
+    };
+    let (captured, teardown) = capture_then_settle(
         session,
+        || {
+            let mut capture = binding
+                .log
+                .lock()
+                .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?;
+            if let Ok(Some(value)) = &metadata {
+                capture.state.graph_metadata = Some(value.clone());
+            }
+            if let Ok(value) = &placement {
+                capture.state.placement = Some(value.clone());
+            }
+            Ok(())
+        },
         |s| s.synchronize(binding.load_deadline),
         || {
             binding.device.poison();
@@ -304,24 +392,32 @@ pub(crate) fn finish(
             )
         },
     );
-    binding
+    let recorded = binding
         .log
         .lock()
-        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
-        .state
-        .teardown = Some(teardown.clone());
+        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))
+        .map(|mut capture| {
+            capture.state.teardown = Some(teardown.clone());
+        });
     let observed = placement?;
     complete_placement(&observed)?;
     teardown.validate()?;
-    ensure!(
-        !binding
-            .log
-            .lock()
-            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
-            .logs
-            .truncated,
-        "selected CUDA diagnostic logs were truncated"
-    );
+    captured.and(recorded)?;
+    if graph_mode {
+        metadata?
+            .context("graph metadata absent")?
+            .validate_against(&observed)?;
+    } else {
+        ensure!(
+            !binding
+                .log
+                .lock()
+                .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
+                .logs
+                .truncated,
+            "selected CUDA diagnostic logs were truncated"
+        );
+    }
     in_time(binding.load_deadline)
 }
 #[cfg(test)]

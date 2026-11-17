@@ -199,6 +199,7 @@ fn snapshot_rejects_missing_teardown_or_truncated_logs() {
     let mut value = LoadSnapshot {
         session_created: true,
         placement: Some(placement()),
+        graph_metadata: None,
         logs: LogSnapshot::default(),
         teardown: None,
     };
@@ -212,4 +213,110 @@ fn snapshot_rejects_missing_teardown_or_truncated_logs() {
     assert!(value.validate().is_ok());
     value.logs.truncated = true;
     assert!(value.validate().is_err());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn graph_mode_permits_truncation_only_with_truthful_log_disclosure() {
+    let logs = LogSnapshot {
+        seen: 1,
+        selected: 1,
+        retained: 0,
+        omitted: 1,
+        bytes: 0,
+        truncated: true,
+        rows: vec![],
+    };
+    assert!(logs.validate_disclosure().is_ok());
+    for mutation in 0..4 {
+        let mut broken = logs.clone();
+        match mutation {
+            0 => broken.truncated = false,
+            1 => broken.retained = 1,
+            2 => broken.bytes = 1,
+            _ => broken.seen = 0,
+        }
+        assert!(broken.validate_disclosure().is_err());
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn poisoned_capture_never_bypasses_settlement_or_unknown_release_retention() {
+    use std::cell::{Cell, RefCell};
+    let capture = Mutex::new(());
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = capture.lock().unwrap();
+        panic!("injected capture poison");
+    }));
+    for fail_drop in [false, true] {
+        let events = RefCell::new(Vec::new());
+        let poisoned = Cell::new(false);
+        struct Owned<'a> {
+            events: &'a RefCell<Vec<&'static str>>,
+            fail: bool,
+        }
+        impl Drop for Owned<'_> {
+            fn drop(&mut self) {
+                self.events.borrow_mut().push("drop");
+                assert!(!self.fail, "injected unknown drop");
+            }
+        }
+        let (recorded, teardown) = capture_then_settle(
+            Owned {
+                events: &events,
+                fail: fail_drop,
+            },
+            || {
+                events.borrow_mut().push("capture");
+                let _guard = capture
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("capture poisoned"))?;
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("pre");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("retain");
+                poisoned.set(true);
+            },
+            || {
+                events.borrow_mut().push("post");
+                (Ok(()), Some(0), poisoned.get())
+            },
+        );
+        assert!(recorded.is_err());
+        assert_eq!(teardown.session_drop_returned, !fail_drop);
+        assert_eq!(teardown.poisoned, fail_drop);
+        if fail_drop {
+            assert_eq!(
+                *events.borrow(),
+                ["capture", "pre", "drop", "retain", "post"]
+            );
+        } else {
+            assert_eq!(*events.borrow(), ["capture", "pre", "drop", "post"]);
+            assert!(teardown.validate().is_ok());
+        }
+    }
+}
+#[cfg(feature = "test-support")]
+#[test]
+fn capture_panic_still_performs_actual_settlement() {
+    use std::cell::Cell;
+    let post_seen = Cell::new(false);
+    let (captured, teardown) = capture_then_settle(
+        (),
+        || panic!("injected capture panic"),
+        |_| Ok(()),
+        || panic!("known drop must not retain"),
+        || {
+            post_seen.set(true);
+            (Ok(()), Some(0), false)
+        },
+    );
+    assert!(captured.is_err());
+    assert!(post_seen.get());
+    assert!(teardown.validate().is_ok());
 }

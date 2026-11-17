@@ -589,3 +589,60 @@ Custody then observes actual device poison and retains the owner, lease, charge,
 control and files. Teardown.poisoned records that device state. The separate
 process_cuda_poisoned field remains the actual global runtime-loader observation;
 per-device poison does not fabricate global loader poison. Neither can pass.
+
+## Final graph metadata observation
+
+A separate test-support graph-only diagnostic collects
+`airk.private.ort-final-graph-metadata/1` through additive same-core export
+`airk_ort_collect_final_graph_metadata_v1`. Existing placement-v1 and the strict
+execution policy remain unchanged. Graph-only completion requires a complete
+metadata inventory, exact full-node multiset agreement with placement-v1, original
+deadline, actual session teardown and native custody release. Selected logs retain
+their existing64KiB bound and explicit truncation fields; graph-only observation
+does not require complete logs. The old placement diagnostic still refuses log
+truncation. Neither mode grants a Scorer, forward or placement-policy exception.
+
+Metadata JSON is compact and at most8MiB within the existing16MiB native result;
+new native graph-only reports use bounded compact serialization. Limits are65536
+nodes,262144 values,524288 ordered edges,4096 UTF8 bytes/string,rank16,64 attributes
+per node and64 elements/typed attribute array. CPU-device immutable INT32/INT64/
+BOOL constants alone permit up to64 elements each and1MiB total source payload,
+always under the encoded budget. All unsupported, large or non-CPU constants
+remain explicitly unread. Unknown types or outer bindings are never inferred
+from names. No tensor transfers, full GraphProto or weight materialization occur.
+
+Final Node indices and SessionState value IDs bind ordered explicit/implicit
+inputs, outputs, graph boundaries, attributes, dimensions and constant provenance.
+Consumers derive from the complete observed edge inventory. Both producer-to-edge
+and edge-to-producer relations are checked. Callback cancellation, partial counts,
+unknown identities, malformed ordering, duplicate records and nonfinite or invalid
+UTF8 attributes refuse complete evidence. Original loaded-file security/reconcile
+fences and poisoned-custody retention apply unchanged. A bounded C ABI record has
+independent size/alignment/offset checks in both owners; no C++ object crosses it.
+
+The optional assembly incremental_proof is a separate authenticated producer
+mode, mutually exclusive with checkpointed_proof. It validates fresh static-core
+ancestry through the existing provenance owner; old checkpointed receipts retain
+their original identities and admission path. New core/public metadata must be
+emitted under fresh artifact/source identities, never by retagging old receipts.
+The incremental producer policy and independent fixtures belong to the
+provenance owner and remain required for admission.
+
+Observation capture failure or panic must not bypass session settlement. The
+capture-and-settle owner retains that error, then always performs pre-sync,
+SessionOwner Drop, actual unknown-release poison/retention if needed, and post-
+sync. Capture locks are released before teardown. Recording teardown may fail,
+but only after actual custody has settled or been retained; missing observations
+never become release evidence.
+
+## Incremental final-graph derivation
+
+The new native derivation validator consumes separately pinned fresh raw producer and canonical proof/3. It authenticates the exact parent checkpoint using the existing unchanged validator, then proves the one translation-unit/object replacement, 39 retained session objects, 95 retained static libraries, exact provider pair, fresh session/archive identity, reviewed recipe/tool/dependency closure and naturally settled original bounded commands. No status boolean alone proves derivation. Fresh raw producer SHA is the new static_core_build; the ancestor is never reused as the child identity.
+
+Assembly adds an omitted-by-default incremental_proof pin, mutually exclusive with checkpointed_proof. The native assembly and package projection share the same validator and retain custody callbacks through the original deadline. Historical request/public bytes remain unchanged when the new optional fields are absent. Public incremental ancestry contains hashes and bounded descriptive scalars only; checkpoint_history continues to describe the parent, never a cold rebuild or child qualification.
+
+The independently authenticated maintained producer owns compilation and COFF archive member validation. Rust reopens all receipt/source dependencies consumed by its metadata proof, checks the exact integer/hash projection and before/after identity, and cannot admit an unknown raw schema, missing source, divergent provider, incomplete tree, renewed clock, changed retained member, missing final-graph export or a fabricated qualification claim.
+
+New manifest/Profile/CAL/native-input/probe request and compiled manifest/static-build pins must be emitted from the fresh derivation. Old3179 metadata remains historical. No model execution follows from descriptive metadata success.
+
+The maintained validator is fail-closed until its exact reviewed recipe authority is frozen; this is source implementation, not producer or runtime qualification.

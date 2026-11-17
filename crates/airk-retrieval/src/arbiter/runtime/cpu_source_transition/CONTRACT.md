@@ -184,3 +184,20 @@ The supplemental source pins also bind current cuda.rs wiring and diagnostic
 unknown-release behavior. A caught SessionOwner Drop panic invokes the actual
 device poison/epoch owner and retains Binding before post-sync; native custody
 therefore retains all owned resources. The original closed CPU path is unchanged.
+
+## Final graph metadata source supplement
+
+Current runtime source advances from historical 254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0 to a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5 for the separate
+same-core graph-only diagnostic. Ordinary CPU Execution mode and its builder,
+assets, ABI, Scorer construction and original task/compiler policies remain
+unchanged. The source inverse record reconstructs exact prior runtime bytes;
+this is source evidence, not qualification. The first eight closed CPU controls
+remain byte-identical. Existing CUDA source pins deliberately advance and an
+additional literal control binds graph metadata. No legacy descriptor,
+calibration, public source or qualification is rewritten or transferred.
+
+The prior strict and placement-diagnostic behavior remains; graph-only permits
+truthfully truncated selected logs solely for graph evidence, with all exact
+metadata/placement/custody checks intact. Incremental producer validation uses
+fresh static-core identities; no old runtime profile is retagged. G5 must rebase
+onto this current runtime source rather than historical9e/DDE/254f bytes.

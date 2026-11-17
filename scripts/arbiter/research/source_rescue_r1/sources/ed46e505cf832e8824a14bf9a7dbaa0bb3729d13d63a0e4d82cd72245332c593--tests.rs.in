@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn binding() -> DeviceCatalogBinding {
+    DeviceCatalogBinding {
+        catalog: Sha256Digest::from_bytes([10; 32]),
+        source: Sha256Digest::from_bytes([11; 32]),
+    }
+}
+fn configuration() -> DeviceConfiguration {
+    DeviceConfiguration::disabled(
+        Sha256Digest::from_bytes([1; 32]),
+        Incarnation::from_bytes([2; 16]),
+        binding(),
+    )
+}
+fn stage(stage: Stage, configuration: &DeviceStageConfiguration) -> DeviceStageStatus {
+    DeviceStageStatus {
+        selected_model: configuration.selected_model,
+        device_policy: configuration.device_policy,
+        gpu_precision: configuration.gpu_precision,
+        active_profile: None,
+        availability: Availability::Disabled,
+        reason: "Literal native-contract structural fixture; no execution authority".into(),
+        queued: 0,
+        running: 0,
+        selection: None,
+        models: match stage {
+            Stage::Focus => vec![DeviceModelStatus {
+                model: SelectedModel::Focus,
+                variants: vec![],
+            }],
+            Stage::Context => vec![
+                DeviceModelStatus {
+                    model: SelectedModel::ContextCompact,
+                    variants: vec![],
+                },
+                DeviceModelStatus {
+                    model: SelectedModel::ContextLarge,
+                    variants: vec![],
+                },
+            ],
+        },
+    }
+}
+fn status() -> DeviceStatus {
+    let configuration = configuration();
+    DeviceStatus {
+        schema: "airk.arbiter.status/3".into(),
+        initialization: None,
+        focus: stage(Stage::Focus, &configuration.focus),
+        context: stage(Stage::Context, &configuration.context),
+        configuration,
+    }
+}
+#[test]
+fn config4_canonical_identity_and_catalog_binding_are_exact() -> Result<()> {
+    let value = configuration();
+    let bytes = value.canonical_bytes()?;
+    assert_eq!(
+        DeviceConfiguration::decode(&bytes, value.installation, value.catalog, &binding())?,
+        value
+    );
+    let mut wrong = binding();
+    wrong.source = Sha256Digest::from_bytes([12; 32]);
+    assert!(
+        DeviceConfiguration::decode(&bytes, value.installation, value.catalog, &wrong).is_err()
+    );
+    assert!(
+        DeviceConfiguration::decode(
+            &serde_json::to_vec_pretty(&value)?,
+            value.installation,
+            value.catalog,
+            &binding()
+        )
+        .is_err()
+    );
+    let mut json = serde_json::to_value(&value)?;
+    json["configuration_schema"] = serde_json::json!("claimed-extra");
+    assert!(serde_json::from_value::<DeviceConfiguration>(json).is_err());
+    assert!(Configuration::decode(&bytes, value.installation, value.catalog).is_err());
+    Ok(())
+}
+#[test]
+fn status3_preserves_model_slots_and_never_projects_gpu_as_legacy_cpu() -> Result<()> {
+    let value = status();
+    value.validate()?;
+    let bytes = serde_json::to_vec(&value)?;
+    assert!(serde_json::from_slice::<Status>(&bytes).is_err());
+    let mut wrong = value.clone();
+    wrong.context.models.pop();
+    assert!(wrong.validate().is_err());
+    let mut wrong = value.clone();
+    wrong.context.models.push(DeviceModelStatus {
+        model: SelectedModel::Focus,
+        variants: vec![],
+    });
+    assert!(wrong.validate().is_err());
+    let mut wrong = value.clone();
+    wrong.focus.availability = Availability::Ready;
+    assert!(wrong.validate().is_err());
+    let mut wrong = value;
+    wrong.configuration.focus.device_policy = DevicePolicy::Cpu;
+    assert!(wrong.validate().is_err());
+    Ok(())
+}
+#[test]
+fn management_current_and_legacy_fields_do_not_cross_decode() -> Result<()> {
+    let current = r#"{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"context_large","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}"#;
+    let request: ManagementRequest = serde_json::from_str(current)?;
+    assert!(matches!(request, ManagementRequest::ConfigureDevice { .. }));
+    let wrong = current.replace("configure_device", "configure");
+    assert!(serde_json::from_str::<ManagementRequest>(&wrong).is_err());
+    let legacy = r#"{"operation":"configure","stage":"context","expected_revision":1,"enabled":false,"selected_profile":null,"indexes":[]}"#;
+    assert!(matches!(
+        serde_json::from_str::<ManagementRequest>(legacy)?,
+        ManagementRequest::Configure { .. }
+    ));
+    assert!(
+        serde_json::from_str::<ManagementRequest>(&legacy.replace("configure", "configure_device"))
+            .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn current_device_semantic_case_emitter() -> Result<()> {
+    let value = status();
+    value.validate()?;
+    let cases = serde_json::json!({"schema":"airk.arbiter.device-semantic-cases/1","cases":[
+        {"id":"current-disabled-auto","status":value},
+        {"id":"current-status","request":ManagementRequest::StatusDevice},
+        {"id":"legacy-status-remains-separate","request":ManagementRequest::Status},
+        {"id":"current-context-explicit-cpu-fp16-preference","request":ManagementRequest::ConfigureDevice {expected_revision:1,stage:Stage::Context,configuration:DeviceStageConfiguration {enabled:false,selected_model:Some(SelectedModel::ContextCompact),device_policy:DevicePolicy::Cpu,gpu_precision:GpuPrecisionPreference::Fp16,indexes:vec![]}}},
+        {"id":"unknown-precision-refuses","invalid":{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"bf16","indexes":[]}}}
+    ]});
+    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_DEVICE_CASES") {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)?;
+        let mut bytes = serde_json::to_vec_pretty(&cases)?;
+        bytes.push(b'\n');
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn current_private_import_retains_native_role_and_full_frame_limits() -> Result<()> {
+    use crate::{
+        native_offline_import::NativeOfflineImportRequest,
+        service::{ControlMethod, ControlResponse},
+    };
+    let request = NativeOfflineImportRequest {
+        expected_revision: 1,
+        profile: Sha256Digest::from_bytes([3; 32]),
+        directory: if cfg!(windows) {
+            "D:\\owned-fixture".into()
+        } else {
+            "/owned-fixture".into()
+        },
+    };
+    request.validate()?;
+    let method = ControlMethod::ArbiterImportDevice {
+        request: Box::new(request),
+    };
+    assert_eq!(
+        method.metadata_relay_refusal(),
+        Some("console_private_setup_forbidden")
+    );
+    assert_eq!(
+        method.request_frame_budget(),
+        crate::service::MAX_TOOLS_CALL_REQUEST_BYTES
+    );
+    assert_eq!(
+        method.response_frame_budget(),
+        crate::service::MAX_TOOLS_CALL_RESPONSE_BYTES
+    );
+    let _: ControlMethod = serde_json::from_value(serde_json::to_value(&method)?)?;
+    let response = ControlResponse::ArbiterDevice {
+        observation: Box::new(status()),
+    };
+    let mut value = serde_json::to_value(response)?;
+    let _: ControlResponse = serde_json::from_value(value.clone())?;
+    value["observation"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<ControlResponse>(value).is_err());
+    let schema = crate::arbiter::schema::document();
+    assert!(schema["$defs"].get("NativeOfflineImportRequest").is_none());
+    Ok(())
+}

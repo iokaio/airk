@@ -1,0 +1,16 @@
+--- a/onnxruntime/core/session/onnxruntime_c_api.cc
++++ b/onnxruntime/core/session/onnxruntime_c_api.cc
+@@ -5190,7 +5190,12 @@
+   try {
+     // Same conversion used by owning public session C APIs in this translation unit.
+     const auto* owner = reinterpret_cast<const onnxruntime::InferenceSession*>(session);
+-    if (!owner->IsInitialized()) return 1;
++    // Public owning API rejects !is_inited_ before inspecting execution state.
++    // Metadata/input getters alone only check that a model was loaded.
++    onnxruntime::InlinedVector<const OrtMemoryInfo*> output_memory;
++    const auto initialized = owner->GetInputOutputMemoryInfo(
++        onnxruntime::InferenceSession::SessionInputOutputType::kOutput, output_memory);
++    if (!initialized.IsOK()) { *out_ort_error_code = ORT_INVALID_ARGUMENT; return 1; }
+     uint64_t graphs = 0, nodes = 0, string_bytes = 0;
+     struct Child { onnxruntime::NodeIndex index; std::string attribute; const onnxruntime::SessionState* state; };
+     std::function<int32_t(const onnxruntime::SessionState&, uint32_t)> visit;

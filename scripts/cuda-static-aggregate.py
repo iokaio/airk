@@ -47,14 +47,23 @@ def request(destination,build,selected,core):
  argv=[str(tool),'/NOLOGO','/OUT:'+str(output),'@'+str(response)]
  return {'tool':{'path':str(tool),'bytes':tool.stat().st_size,'sha256':core.digest(tool)},'response':response,'text':text,'argv':argv,'output':output}
 
-def verify_aggregate(destination,build,core):
+
+def aggregate_tree_owner(build,core,runtime):
+ if build.get('schema')=='airk.cuda-static-build-proof/2':
+  checkpoint=module('cuda-static-checkpointed')
+  return checkpoint.execution_context(build,core)[0],checkpoint.verification('materialized')
+ proposal=Path(build['ancestry']['r12_proposal'])
+ return proposal,runtime.load(proposal/'continue_cuda_runtime.py','r12_aggregate_tree_helper')
+
+def verify_aggregate(destination,build,core,*,deadline=None):
+ if build.get('schema')=='airk.cuda-static-build-proof/3':return module('cuda-static-incremental').verify_aggregate(destination,build,core,deadline=deadline)
  runtime=module('cuda-static-runtime');archive=module('cuda-static-archive');receipt=core.read_json(destination/'gpu-static-aggregate-receipt.json')
  selected=plan(destination,build,core);req=request(destination,build,selected,core)
  if receipt.get('status')!='PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED' or receipt.get('plan')!=selected or not core.successful(receipt.get('command',{})):raise ValueError('actual GPU aggregate command/provenance missing')
  expected_command=[str(Path(os.environ.get('SystemRoot','C:/Windows'))/'System32/cmd.exe'),'/d','/c',str(destination/'commands/gpu-aggregate.cmd')]
  if (build.get('schema')=='airk.cuda-static-build-proof/2' or build.get('ancestry',{}).get('receipt_schema')=='airk.private.cuda-runtime-continuation/2'):
   if receipt.get('execution_mode')!=('checkpointed-complete-owned-tree' if build.get('schema')=='airk.cuda-static-build-proof/2' else 'r12-complete-owned-tree') or receipt.get('elapsed_seconds',301)>300:raise ValueError('actual bounded R12 aggregate tree proof missing')
-  bridge=module('cuda-static-continuation-r12');proposal=module('cuda-static-checkpointed').execution_context(build,core)[0] if build.get('schema')=='airk.cuda-static-build-proof/2' else Path(build['ancestry']['r12_proposal']);child=runtime.load(proposal/'continue_cuda_runtime.py','r12_aggregate_tree_helper');cutoff=datetime.datetime.fromisoformat(receipt['observed_utc'])+datetime.timedelta(seconds=300)
+  bridge=module('cuda-static-continuation-r12');proposal,child=aggregate_tree_owner(build,core,runtime);cutoff=datetime.datetime.fromisoformat(receipt['observed_utc'])+datetime.timedelta(seconds=300)
   bridge.verify_tree_command(core,child,proposal,destination,destination,'gpu-aggregate',req['argv'],build_tools(build,core),receipt['command'],receipt,cutoff)
  elif receipt.get('command',{}).get('argv')!=expected_command:raise ValueError('GPU aggregate actual owned command differs')
  if receipt.get('argv')!=req['argv'] or receipt.get('tool')!=req['tool']:raise ValueError('GPU aggregate tool/argument drift')
@@ -66,6 +75,7 @@ def verify_aggregate(destination,build,core):
  return {'schema':'airk.cuda-static-aggregate-proof/1','target':runtime.TARGET,'producer_proof_sha256':runtime.canonical(build),'receipt_sha256':core.digest(destination/'gpu-static-aggregate-receipt.json'),'output':row,'plan_sha256':runtime.canonical(selected),'coff':observed,'qualification':False}
 
 def aggregate(destination,build,core):
+ if build.get('schema')=='airk.cuda-static-build-proof/3':raise ValueError('incremental aggregate belongs to the completed producer; consumer relink refused')
  # Only call with a freshly reverified build proof from cuda-static-runtime.
  if (destination/'gpu-aggregate').exists() or (destination/'gpu-static-aggregate-attempt.json').exists():raise ValueError('existing aggregate preserved; no retry/overwrite')
  selected=plan(destination,build,core);req=request(destination,build,selected,core);(destination/'gpu-aggregate').mkdir();req['response'].write_bytes(req['text'].encode())

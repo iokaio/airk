@@ -1,0 +1,67 @@
+--- a/include/cudnn_frontend_shim.h
++++ b/include/cudnn_frontend_shim.h
+@@ -68,6 +68,15 @@
+ 
+ inline HMODULE
+ load_cuda_so() {
++#ifdef _WIN32
++    // AIRK: native owner authenticated and preloaded this exact imported module.
++    // Reference it without searching PATH/CWD or honoring a library-name override.
++    HMODULE handle = nullptr;
++    if (!GetModuleHandleExW(0, L"nvcuda.dll", &handle)) {
++        throw std::runtime_error("AIRK authenticated CUDA import is not preloaded");
++    }
++    return handle;
++#else
+     // Clear any existing error
+     dlerror();
+ 
+@@ -80,10 +89,20 @@
+     }
+ 
+     return handle;
++#endif
+ }
+ 
+ inline HMODULE
+ load_cudart_so() {
++#ifdef _WIN32
++    // AIRK: native owner authenticated and preloaded this exact imported module.
++    // Reference it without searching PATH/CWD or honoring a library-name override.
++    HMODULE handle = nullptr;
++    if (!GetModuleHandleExW(0, L"cudart64_12.dll", &handle)) {
++        throw std::runtime_error("AIRK authenticated CUDA import is not preloaded");
++    }
++    return handle;
++#else
+     // Clear any existing error
+     dlerror();
+ 
+@@ -143,6 +162,7 @@
+     }
+ 
+     return lib_handle;
++#endif
+ }
+ 
+ inline void *
+@@ -211,10 +231,19 @@
+ 
+ #if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
+ 
++#ifdef _WIN32
++#define NV_FE_CALL_TO_CUDA(function_name, cuda_symbol, ...) \
++    return cuda_symbol(__VA_ARGS__);
++#define NV_FE_CALL_TO_CU(function_name, cuda_symbol, ...) \
++    return cuda_symbol(__VA_ARGS__);
++
++#else
+ #define NV_FE_CALL_TO_CUDA(function_name, cuda_symbol, ...) \
+     return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDART, #cuda_symbol))(__VA_ARGS__);
+ #define NV_FE_CALL_TO_CU(function_name, cuda_symbol, ...) \
+     return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDA, #cuda_symbol))(__VA_ARGS__);
++
++#endif
+ 
+ #else
+ 

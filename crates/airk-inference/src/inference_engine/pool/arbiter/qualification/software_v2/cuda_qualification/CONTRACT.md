@@ -195,3 +195,16 @@ reports the actual global loader poison state and may remain false. These are
 not interchangeable proofs: any unknown retained-custody path prevents diagnostic
 completion even when global process_cuda_poisoned is false. Parent process exit
 never relabels that unknown native teardown as an observed native release.
+
+
+## Native final-graph metadata diagnostic
+
+The existing placement selector, byte writer and strict selected-log completeness rules remain unchanged. A distinct ignored cuda_load_only_graph_metadata_diagnostic selector emits airk.private.cuda-graph-metadata-diagnostic/1 and can report graph_metadata_observed only after the actual native diagnostic call, complete final placement, complete final graph metadata cross-comparison and real session/outer custody settlement all pass.
+
+The new selector consumes fresh authenticated FP32 Compact Probe metadata with the current native runtime manifest/static-core identity. It retains the same original120s, process16GiB and Job24GiB limits, actual lease/device/evaluation authority, file authentication, host reservation, final RSS and post-input checks. It returns no Scorer, dispatches no forward, creates no operation journal and grants no hybrid policy, activation or qualification. Existing poison/unknown-release custody remains unchanged.
+
+The graph_metadata object is the Retrieval-owned airk.private.ort-final-graph-metadata/1 observation. The full capped log snapshot is retained. selected_logs_complete is true exactly when logs.truncated is false and logs.omitted is zero; false is explicit and does not claim that the old placement diagnostic passed. New-mode success requires LoadSnapshot::validate_graph_metadata rather than the older log-complete LoadSnapshot::validate. Missing graph metadata, partial placement/graph records, mismatched node identities, failed actual session load or unproved teardown refuse success.
+
+New-mode receipt serialization is compact and bounded during encoding to16MiB before the output file is changed. Existing modes retain their old pretty serialization. The receipt is synchronized and its retention checked against the unchanged original deadline. Serialization overflow cannot replace a previous partial receipt with truncated JSON or become a successful diagnostic. Primary model/load errors and actual cleanup facts remain explicit.
+
+Pure controls cover missing/failed metadata evidence, log-completeness disclosure, serializer failure before output mutation, compact JSON preservation and byte caps. They do not prove actual graph capture, CUDA execution or model qualification. Integration requires scoped Clippy and selected native tests after combined review.

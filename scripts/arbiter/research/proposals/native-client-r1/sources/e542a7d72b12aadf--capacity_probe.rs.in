@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: Apache-2.0
+// No model/ORT/AIRK dependencies. Actual File+Take and pinned Rust stdlib.
+use std::{
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+fn measure(path: &Path, exact: bool, label: &str) -> std::io::Result<()> {
+    let file = File::open(path)?;
+    let length = file.metadata()?.len();
+    let mut bytes = Vec::new();
+    if exact {
+        bytes
+            .try_reserve_exact(usize::try_from(length).map_err(std::io::Error::other)?)
+            .map_err(std::io::Error::other)?;
+    }
+    file.take(
+        length
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("length overflow"))?,
+    )
+    .read_to_end(&mut bytes)?;
+    assert_eq!(bytes.len() as u64, length);
+    println!(
+        "{{\"source\":\"{label}\",\"exact_reserve\":{exact},\"length\":{length},\"capacity\":{}}}",
+        bytes.capacity()
+    );
+    drop(bytes); // Original big allocation is gone BEFORE the next read.
+    Ok(())
+}
+fn main() -> std::io::Result<()> {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let root = PathBuf::from(
+        args.first()
+            .expect("fresh existing same-human output directory"),
+    );
+    for (ordinal, length) in [((8 << 20) + 19), ((12 << 20) + 19)]
+        .into_iter()
+        .enumerate()
+    {
+        let source = root.join(format!("synthetic-{ordinal}.bin"));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&source)?;
+        let block = [0x5au8; 65536];
+        let mut remaining = length;
+        while remaining > 0 {
+            let n = remaining.min(block.len());
+            file.write_all(&block[..n])?;
+            remaining -= n;
+        }
+        file.sync_all()?;
+        drop(file);
+        measure(&source, false, "synthetic")?;
+        measure(&source, true, "synthetic")?;
+    }
+    if let Some(path) = args.get(1) {
+        let original = Path::new(path);
+        measure(original, false, "original-readonly")?;
+        measure(original, true, "original-readonly")?;
+    }
+    Ok(())
+}

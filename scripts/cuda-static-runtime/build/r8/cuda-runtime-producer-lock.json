@@ -1,0 +1,110 @@
+{
+  "schema": "airk.private.cuda-runtime-producer-lock/1",
+  "target": "x86_64-pc-windows-msvc",
+  "upstream_commit": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+  "ort_version": "1.30.0",
+  "cpu_owner_sha256": "a1772271cfc3e585de903a7e80021b54f97da823a485e48621a60dcee564c044",
+  "cpu_lock_sha256": "d9deff076321020cb15f1cadee6b2270d8098e4518aece7b4ef48b03fd998947",
+  "loader_patch_sha256": "a747d940c7f540dc9b20612cd39f4b235609d4520fd1361e37f800cd478e064d",
+  "loader_files": [
+    {
+      "path": "onnxruntime/core/platform/windows/env.cc",
+      "before_sha256": "39a86497a24d8d836d0470afe76728db477a84c894ab47202c1f096cc5b82af8",
+      "proposed_sha256": "2d3249b4ab640616375dbaff45f513f94d1e426e84f27a708dd645a5f2a0db4f"
+    },
+    {
+      "path": "onnxruntime/core/providers/cuda/cudnn_loader.cc",
+      "before_sha256": "041554e7d74f599982563fb9119b26d63f3507899d8e3253399308f599847124",
+      "proposed_sha256": "663582043d68c6a3cb2ce5e841f111dd6b06832c8f02392cdaa097151f1f206f"
+    },
+    {
+      "path": "onnxruntime/core/providers/cuda/cufft_loader.cc",
+      "before_sha256": "cc815da353e6a0f99f9f6a05cb6cb4f8f5574732b827c1fd80af0e56529040fe",
+      "proposed_sha256": "9d139928cf9a5256e9c4654ec2f7a35dae1a94638004574f8551126ae0682a0d"
+    }
+  ],
+  "offline_helper": {
+    "path": "cmake/external/helper_functions.cmake",
+    "before_sha256": "ae5cc8332e93737d92301a3f70cfa5c2fdb529d6a366d403932853f4bb640fa7",
+    "after_sha256": "c58e2edb90ec29c4e51e816a4b125009a5d048784cddd3ffbd2e1a4201c793db",
+    "patch_sha256": "99a2b1b81c254e7fc933e598a172f38a1302afb52c31cce25e84d513e0c10ab6"
+  },
+  "frontend_upstream_arm64": {
+    "patch_sha256": "57696b39abff7a9612ffdcb03c036e9424fbe13675aec353f542f47bd9572321",
+    "path": "include/cudnn_frontend_Tensor.h",
+    "before_sha256": "9876db5db0f89d4ed0a99afe8bea7128a3c526d08d6ff59d361e8db3dd8cee1f",
+    "after_sha256": "29d738aa58270fe99451a2ff5c4f2e503dc95987e6d45c43cb510b201625abc1"
+  },
+  "upstream_dynamic_patch_not_applied": {
+    "sha256": "e47f03b432bb91f632c91d52f52ad572d212a8bc581fc979829edf9fec4170ad",
+    "reason": "hunk3 skips new1.27 user-override block; replaced by exact rebased Windows imported-module policy; no fuzzy application"
+  },
+  "frontend_final": {
+    "path": "include/cudnn_frontend_shim.h",
+    "before_sha256": "ddaca0914107d628cc6c8b0fa0b6dd86d241f65cafd7b602140d2b5ccf184d62",
+    "after_sha256": "afd0d0793be05851f101c72c460f09f4989684af1c2a75fcd61ef09a81da1093",
+    "patch_sha256": "f0c61d25e7eb130ab28a517fcf2bc369bf593a245240b434e5da46aefb7958d1"
+  },
+  "excluded_link": {
+    "path": ".claude/skills",
+    "bytes": 9,
+    "target_sha256": "c1aefaccb300698f4b7ae764e1fa857f93c0609ba47b078e4806d926f289c23b"
+  },
+  "dependencies": [
+    {
+      "name": "cutlass",
+      "version": "v4.7.0",
+      "url": "https://github.com/NVIDIA/cutlass/archive/refs/tags/v4.7.0.zip",
+      "bytes": 52581352,
+      "sha256": "e88f72932f830ee40cb46d398319336e4e9f6dfc235de4b7844be712cf4e6ab4",
+      "upstream_sha1": "51d4f1ba4b9977b94606e23bbc307463a6741383",
+      "expanded_bytes": 167854298,
+      "entries": 8377
+    },
+    {
+      "name": "cudnn_frontend",
+      "version": "v1.27.0",
+      "url": "https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.27.0.zip",
+      "bytes": 9842175,
+      "sha256": "0190120bfc8b1f8288c19beffa5a21af643650d6f65e8bad89ab5d7ed74f4273",
+      "upstream_sha1": "1e4c9a464d3437e388ab0163f3be068dba783c08",
+      "expanded_bytes": 27629196,
+      "entries": 1198
+    }
+  ],
+  "cudnn": {
+    "bytes": 683336095,
+    "sha256": "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
+    "extraction_receipt_sha256": "09b1b5b88d60a8ca3882bd4be8b047bd9ed76ff5d9814eb64a1b7c184225485c",
+    "archive_license_sha256": "295a1b7118d3417f5d6a943e5f87b59e2a0631fb277129c3b15dee6248adc7cf"
+  },
+  "runtime_flavor": {
+    "compiled_flash_attention": true,
+    "compiled_memory_efficient_attention": true,
+    "flash_nvcc_threads": 1,
+    "nvcc_threads": 2,
+    "parallel_jobs": 2,
+    "sm": 86,
+    "first_model_gate": "FP32-unfused-TF32off",
+    "fp16_admission": "later separate G5; no FP16 model execution/qualification from compiler availability",
+    "no_second_ort_core": true
+  },
+  "build_path": {
+    "fresh_child": "cu8",
+    "object_path_max": 240,
+    "temp_child": "t",
+    "cuda_cache_child": "cc",
+    "aliases_or_drive_substitution": false
+  },
+  "generated_patch_eol": "LF matching authenticated source; no source-wide normalization",
+  "final_placement": {
+    "path": "onnxruntime/core/session/onnxruntime_c_api.cc",
+    "before_sha256": "5ba4ae260bafb56a32bf697c970ae0fb19cc311da9dbb7ab2630d759b475d425",
+    "after_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
+    "patch_sha256": "3b8a4e79f72da0ff52e2b9597578d48b83a552e9e78282054f46d5d40c0a9b23",
+    "symbol": "airk_ort_collect_final_placement_v1",
+    "abi": "Windows x64 __cdecl, same static core, final live SessionState tree; no API table changes",
+    "symbol_resolution": "Windows PE optional export from actual static-core-containing EXE; typed lookup in module containing OrtGetApiBase; missing export refuses GPU before model work"
+  },
+  "cmake_frontend_path_spelling": "Path.as_posix(), matching actual CMake PATH cache; CPU validator unchanged"
+}

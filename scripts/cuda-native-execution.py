@@ -29,13 +29,26 @@ def read(p,limit=16<<20):
 def load(p,name):
  spec=importlib.util.spec_from_file_location(name,p);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 
+MAINTAINED_HELPER_ROOT=Path(__file__).resolve().parent/'cuda-native-execution/helpers'
+
 def helpers(plan):
- base=Path(plan['ownership_helper_root'])
- for name,sha in HELPERS.items():
-  if digest(regular(base/name))!=sha:raise ValueError('original ownership primitive source differs')
- sys.path.insert(0,str(base));parent=load(base/'reference_parent_no_site_r2.py','cuda_nn0_existing_parent');owner=load(base/'reference_owned.py','cuda_nn0_existing_owned')
- if digest(regular(parent.worker.__file__))!=HELPERS['reference_worker.py']:raise ValueError('ownership dependency shadowed')
- return parent,owner
+ # Retained plan paths authenticate historical evidence; executable code always
+ # comes from the byte-identical maintained copies, never an artifact import.
+ historical=Path(plan['ownership_helper_root'])
+ base=MAINTAINED_HELPER_ROOT
+ for source in dict.fromkeys((historical,base)):
+  for name,sha in HELPERS.items():
+   if digest(regular(source/name))!=sha:raise ValueError('original ownership primitive source differs')
+ missing=object();previous=sys.modules.get('reference_worker',missing)
+ try:
+  worker=load(base/'reference_worker.py','reference_worker')
+  parent=load(base/'reference_parent_no_site_r2.py','cuda_nn0_existing_parent')
+  owner=load(base/'reference_owned.py','cuda_nn0_existing_owned')
+  if parent.worker is not worker or regular(parent.worker.__file__)!=base/'reference_worker.py' or digest(regular(parent.worker.__file__))!=HELPERS['reference_worker.py']:raise ValueError('ownership dependency shadowed')
+  return parent,owner
+ finally:
+  if previous is missing:sys.modules.pop('reference_worker',None)
+  else:sys.modules['reference_worker']=previous
 
 def source_image(plan):
  packet=read(pinned(plan['image_packet']));build=read(pinned(plan['native_build_receipt']),32<<20)

@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "destination": "scripts/arbiter/export/qwen_assets/qwen3-challenger-assets-r1/acquire_candidates.py",
+      "changes": [
+        "SPDX header",
+        "inert import; main wrapper with explicit pinned manifest and private output root; LF normalization",
+        "reuse exact hash-verified manifest bytes before original final drift check"
+      ],
+      "maintained_sha256": "c3f85f234bd1c71183a0f4a544cf1bd1516868033685b3a9b814c4efd9688eed",
+      "source": "artifacts/advanced-split/models/qwen3-challenger-assets-r1/acquire_candidates.py",
+      "original_sha256": "4d7aeb5eefaa889bb7c29e91ba3ed0e08bf70aa168fcc5cabdd1aed2856de1d8"
+    },
+    {
+      "destination": "scripts/arbiter/export/qwen_assets/qwen3-reranker06-assets-r1/acquire_candidates.py",
+      "changes": [
+        "SPDX header",
+        "inert import; main wrapper with explicit pinned manifest and private output root; LF normalization",
+        "reuse exact hash-verified manifest bytes before original final drift check"
+      ],
+      "maintained_sha256": "c3f85f234bd1c71183a0f4a544cf1bd1516868033685b3a9b814c4efd9688eed",
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-assets-r1/acquire_candidates.py",
+      "original_sha256": "4d7aeb5eefaa889bb7c29e91ba3ed0e08bf70aa168fcc5cabdd1aed2856de1d8"
+    }
+  ],
+  "schema": "airk.source-relocation/1"
+}

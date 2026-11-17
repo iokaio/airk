@@ -1,0 +1,77 @@
+{
+  "schema": "airk.research-source-migration/1",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-candidate-r1/bag_loss.py",
+      "destination": "scripts/arbiter/training/minilm/parent_bag_r1/bag_loss.py",
+      "original_sha256": "b79f00e81513ef1bdf18a74361c3e2e805ed2e9131092545e6d48dc3546e93f6",
+      "maintained_sha256": "5e843c8e2007130569839d16341f71ddfc1576cfa958b68e7b0f42764000a0f6",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "5e843c8e2007130569839d16341f71ddfc1576cfa958b68e7b0f42764000a0f6",
+      "original_bytes": 1670,
+      "maintained_bytes": 1708
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-candidate-r1/prepare.py",
+      "destination": "scripts/arbiter/training/minilm/parent_bag_r1/prepare.py",
+      "original_sha256": "0fe68b94cda703dc13991ed1ce3397bf0d004634f003f57447cb7830a147e5ec",
+      "maintained_sha256": "048a3980f68fa5ff7cba467ca5404eb983bb1eef4652fd90685d5b42090370e9",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "f020a606f504d4dfdccd817b5fe74f3032c4893d7e0c89795951a6371caea974",
+      "original_bytes": 6557,
+      "maintained_bytes": 7598
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-proposal-r1/prepare_sources.py",
+      "destination": "scripts/arbiter/training/minilm/parent_bag_r1/prepare_sources.py",
+      "original_sha256": "ecc967fd448d5034d308b7911da13363a3606306a505959a9fe9964b0afc078f",
+      "maintained_sha256": "d8a680551e5ff26fdd32e367236025a11970bd0ddfd2d985ead44fae327b5a4e",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "7be0e0f8868852b0a0bdcb8afec7a2ad9b59344e291eb59b062c5d8d1a3f4d19",
+      "original_bytes": 8905,
+      "maintained_bytes": 9960
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-candidate-r1/test_bag_loss.py",
+      "destination": "scripts/arbiter/training/minilm/parent_bag_r1/test_bag_loss.py",
+      "original_sha256": "a5e765504246d1a56b4a6d2064dce6edb712c4cf20aace3f5787280203366294",
+      "maintained_sha256": "8b7682443fba1c1a41cbe421d67071496cc78b7111e2bfbacbf4ae35973d5956",
+      "transformations": [
+        "prepend SPDX Apache-2.0"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "8b7682443fba1c1a41cbe421d67071496cc78b7111e2bfbacbf4ae35973d5956",
+      "original_bytes": 2699,
+      "maintained_bytes": 2737
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-candidate-r1/train.py",
+      "destination": "scripts/arbiter/training/minilm/parent_bag_r1/train.py",
+      "original_sha256": "5dc7398adbbc4d07c4099c26140163787b37ce9ebdb9c1aebef9d86d34a622f8",
+      "maintained_sha256": "006e07ed0c9c82c690becd307f9708bb5b03688eab117d1e4c45174017a587cd",
+      "transformations": [
+        "prepend SPDX Apache-2.0",
+        "repository-marker root discovery; separate private data roots from maintained executable source; explicit Focus execution root",
+        "explicit private root refusal and/or explicit maintained loss source pin; fresh stage environment propagation"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "056d1ec82b53e879158b4d322b8f10c142c656bac183438c292d1be705202838",
+      "original_bytes": 7997,
+      "maintained_bytes": 9084
+    }
+  ],
+  "data_weights_receipts_included": false
+}

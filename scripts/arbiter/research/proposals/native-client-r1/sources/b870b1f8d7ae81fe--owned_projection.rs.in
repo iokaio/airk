@@ -1,0 +1,205 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Pure projection of retained actual owner facts, never an approval or new model run.
+use super::*;
+
+fn project(
+    raw: &Value,
+    capture: &Value,
+    capture_sha: Sha256Digest,
+    input_sha: Sha256Digest,
+    policy: &ResourcePolicy,
+    reservation: u64,
+) -> Result<Value> {
+    ensure!(
+        raw["schema"] == "airk.private.owned-software-v2-native-execution/1"
+            && raw["measurement_passed"] == true
+            && raw["committed_memory_passed"] == true
+            && capture["complete"] == true
+            && capture["process_id"].as_u64().is_some_and(|pid| pid > 0)
+            && capture["execution_user"]
+                .as_str()
+                .is_some_and(|user| !user.is_empty())
+            && serde_json::from_value::<Sha256Digest>(capture["native_binary_sha256"].clone())
+                .is_ok()
+            && capture["input_sha256"] == json!(input_sha)
+            && capture["resource_policy_digest"] == json!(policy.digest()?)
+            && capture["resource_policy"] == serde_json::to_value(policy)?
+            && capture["process_id"] == raw["owned"]["suspended_assignment"]["pid"]
+            && capture["native_binary_sha256"]
+                == raw["owned"]["suspended_assignment"]["image"]["sha256"]
+            && capture["execution_user"] == raw["execution_sid"],
+        "original raw native owner/capture binding absent or refused"
+    );
+    let owner = json!({
+        "schema":"airk.private.software-v2-owned-execution/1",
+        "capture_sha256":capture_sha,"input_sha256":input_sha,
+        "resource_policy_digest":policy.digest()?,
+        "process_id":capture["process_id"],"execution_user":capture["execution_user"],
+        "complete":raw["complete"],"failure":raw["failure"],
+        "post_input_drift":raw["post_input_drift"],
+        "whole_phase_deadline_not_refreshed":raw["whole_phase_deadline_not_refreshed"],
+        "whole_phase_expired":raw["whole_phase_expired"],
+        "no_automatic_retry":raw["no_automatic_retry"],
+        "other_processes_touched":raw["other_processes_touched"],
+        "owned":raw["owned"],"command":raw["command"],"stdout":raw["stdout"],
+        "input_seals":raw["input_seals"],"operation_watch":raw["operation_watch"],
+        "operation_journal":raw["operation_journal_pin"]
+    });
+    settled_owner(&owner)?;
+    committed(&owner["owned"], reservation)?;
+    Ok(owner)
+}
+
+#[test]
+#[ignore = "explicit retained actual raw owner projection; zero model execution"]
+fn emit_retained_software_v2_owned_execution() -> Result<()> {
+    let path = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_RAW_OWNER")?);
+    let sha256: Sha256Digest =
+        serde_json::from_value(json!(std::env::var("AIRK_SOFTWARE_V2_RAW_OWNER_SHA256")?))?;
+    let raw_pin = PinnedFile {
+        bytes: fs::symlink_metadata(&path)?.len(),
+        path,
+        sha256,
+    };
+    let raw: Value = serde_json::from_slice(&pinned(&raw_pin)?)?;
+    let capture_pin: PinnedFile = serde_json::from_value(raw["native_body_pin"].clone())?;
+    let capture: Value = serde_json::from_slice(&pinned(&capture_pin)?)?;
+    ensure!(
+        capture == raw["native_body"],
+        "retained original capture differs from raw owner body"
+    );
+    let plan: PinnedFile = {
+        let path = PathBuf::from(
+            raw["plan"]["path"]
+                .as_str()
+                .context("actual plan path absent")?,
+        );
+        PinnedFile {
+            bytes: fs::symlink_metadata(&path)?.len(),
+            path,
+            sha256: serde_json::from_value(raw["plan"]["sha256"].clone())?,
+        }
+    };
+    let plan: Value = serde_json::from_slice(&pinned(&plan)?)?;
+    let input_pin: ResourceFilePin = serde_json::from_value(plan["native_input"].clone())?;
+    let input: ResourceRunInput = serde_json::from_slice(&core_pin(&input_pin)?)?;
+    input.validate()?;
+    let profile: Profile = serde_json::from_slice(&core_pin(&input.profile)?)?;
+    let mut owner = project(
+        &raw,
+        &capture,
+        capture_pin.sha256,
+        input_pin.sha256,
+        &input.policy,
+        profile.memory_reservation_bytes,
+    )?;
+    verify_named_seals(
+        owner["input_seals"]
+            .as_object()
+            .context("actual input seals absent")?,
+    )?;
+    seal(&owner, Path::new(&input_pin.path), input_pin.sha256)?;
+    let stdout: PinnedFile = serde_json::from_value(owner["stdout"].clone())?;
+    pinned(&stdout)?;
+    let journal: PinnedFile = serde_json::from_value(owner["operation_journal"].clone())?;
+    ensure!(!pinned(&journal)?.is_empty(), "retained journal empty");
+    owner["original_raw_execution"] = serde_json::to_value(raw_pin)?;
+    // Full source/target/selector/input closure and RecordedDecision approval stay
+    // with owned_execution/source_closure. Projection creates no such authority.
+    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_CANONICAL_OWNER_OUTPUT")?);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(&owner)?)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[test]
+fn owned_projection_keeps_committed_reservation_strict_independently_of_rss() -> Result<()> {
+    committed(&json!({"peak_host_committed_bytes":1000}), 1000)?;
+    for owned in [
+        json!({}),
+        json!({"peak_host_committed_bytes":0}),
+        json!({"peak_host_committed_bytes":1001}),
+        json!({"peak_host_committed_bytes":-1}),
+    ] {
+        assert!(committed(&owned, 1000).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn owned_projection_refuses_missing_actual_owner_and_failed_measurement() -> Result<()> {
+    let policy = ResourcePolicy::software_v2();
+    let digest = Sha256Digest::from_bytes([7; 32]);
+    for raw in [
+        json!({}),
+        json!({"schema":"airk.private.owned-software-v2-native-execution/1",
+        "measurement_passed":false,"committed_memory_passed":true}),
+    ] {
+        assert!(project(&raw, &json!({}), digest, digest, &policy, 1000).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn owned_projection_preserves_actual_facts_and_refuses_proof_mutations() -> Result<()> {
+    let policy = ResourcePolicy::software_v2();
+    let image = Sha256Digest::from_bytes([8; 32]);
+    let input = Sha256Digest::from_bytes([7; 32]);
+    let capture_sha = Sha256Digest::from_bytes([9; 32]);
+    let capture = json!({"complete":true,"input_sha256":input,"resource_policy_digest":policy.digest()?,
+        "resource_policy":policy,"process_id":77,"execution_user":"SYNTHETIC-USER",
+        "native_binary_sha256":image});
+    // Literal synthetic proof population, never real process/qualification evidence.
+    let raw = json!({"schema":"airk.private.owned-software-v2-native-execution/1",
+    "complete":true,"measurement_passed":true,"committed_memory_passed":true,
+    "failure":null,"post_input_drift":[],"whole_phase_deadline_not_refreshed":true,
+    "whole_phase_expired":false,"no_automatic_retry":true,"other_processes_touched":false,
+    "execution_sid":"SYNTHETIC-USER","owned":{
+        "exit_code":0,"timed_out":false,"log_oversized":false,
+        "owned_descendants_settled":true,"owned_job_forced_termination":false,
+        "owned_job_final_active_processes":0,"owned_job_final_member_pids":[],
+        "parent_assigned_to_job":false,"child_assigned_before_resume":true,
+        "owned_total_processes":1,"unexpected_third_process":false,
+        "whole_process_deadline_not_refreshed":true,"peak_host_committed_bytes":1000,
+        "retained_member_exits":[{"exit_observed":true,"exit_code":0}],
+        "handle_close_proof":{"forced":false,"settled":true,"final_active":0,
+            "members_before":[],"final_member_pids":[]},
+        "suspended_assignment":{"pid":77,"image":{"sha256":image}}
+    }});
+    let canonical = project(&raw, &capture, capture_sha, input, &policy, 1000)?;
+    assert_eq!(
+        canonical["schema"],
+        "airk.private.software-v2-owned-execution/1"
+    );
+    assert_eq!(canonical["capture_sha256"], json!(capture_sha));
+    assert_eq!(canonical["owned"], raw["owned"]);
+    for (path, value) in [
+        ("/whole_phase_expired", json!(true)),
+        ("/whole_phase_deadline_not_refreshed", json!(false)),
+        ("/no_automatic_retry", json!(false)),
+        ("/other_processes_touched", json!(true)),
+        ("/post_input_drift", json!(["changed"])),
+        ("/failure", json!("native error")),
+        ("/owned/owned_job_forced_termination", json!(true)),
+        ("/owned/peak_host_committed_bytes", json!(1001)),
+        ("/owned/suspended_assignment/pid", json!(78)),
+        ("/owned/handle_close_proof/settled", json!(false)),
+    ] {
+        let mut changed = raw.clone();
+        *changed
+            .pointer_mut(path)
+            .context("literal synthetic mutation absent")? = value;
+        assert!(
+            project(&changed, &capture, capture_sha, input, &policy, 1000).is_err(),
+            "{path}"
+        );
+    }
+    let mut changed = capture.clone();
+    changed["resource_policy_digest"] = json!(image);
+    assert!(project(&raw, &changed, capture_sha, input, &policy, 1000).is_err());
+    Ok(())
+}

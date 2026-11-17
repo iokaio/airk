@@ -171,3 +171,47 @@ It preserves the one static core, lightweight CLI and existing C7 receipt shapes
 Compilation/sealing does not establish model, device, product, installed or
 release qualification. No system/user installation or global environment change
 is performed by the builder.
+
+
+## Agent command reference
+
+Run from the repository root with pinned toolchains and provisioned inputs. Select the affected crate/features/tests; these commands are a menu, not a mandatory full run for every edit.
+
+| Purpose | Command |
+|---|---|
+| Format / verify | `cargo fmt --all`; `cargo fmt --all -- --check` |
+| Scoped Rust check (Clippy) | `python scripts/dev-check.py -p <crate>` plus needed features/targets |
+| Scoped tests | `cargo nextest run --profile ci -p <crate> --locked --timings -E '<test expression>'` (add required features/target directory) |
+| Integration preflight | `python scripts/check-service-clients.py --runtime-dir <matched-debug-pair-dir> --files 16 --model --report <receipt.json>` |
+| Doctests | `cargo test --doc --workspace --locked --timings` |
+| Extension type check / build | `npm run compile --prefix packages/vscode`; tests: `npm test --prefix packages/vscode` |
+| Admin build / verify / tests | `npm run build --prefix packages/admin`; `npm run check --prefix packages/admin`; `npm test --prefix packages/admin` |
+| Read-surface parity | Use the [per-surface selections](docs/read-interface-parity.md#current-per-surface-selections) for CLI/session, MCP, Admin and Workbench |
+| Final workspace gate | `cargo clippy --workspace --all-targets --all-features --locked --timings -- -D warnings`, then `cargo test --workspace --all-features --locked --timings` |
+| Package tested native pair | `python scripts/package-native.py --target <native-target> --runtime-dir <tested-pair-dir> --output artifacts/<fresh-output>` |
+| Package compiled universal VSIX | `python scripts/package-extension.py --channel stable --output artifacts/<fresh-output>` |
+| Repository / whitespace checks | `pwsh -NoProfile -File scripts/check-repo.ps1`; `git diff --check` |
+
+Nextest is pinned to `0.9.148`; the `ci` profile disables retries and excludes long campaigns by default. Final qualification restores excluded campaigns with `--ignore-default-filter` when using Nextest and runs doctests separately.
+
+Build the matched debug pair with `python scripts/build-service-runtime.py --destination <matched-debug-pair-dir> --profile debug` after provisioning model/static ORT inputs and sealing Admin assets. See [required qualification](CONTRIBUTING.md#required-qualification) and [split build order](docs/ci-and-builds.md). The builder stages matching `airk`/`airkctl` images and metadata; do not mix binaries from separate builds. Packaging consumes tested artifacts; full local build wrappers are in CONTRIBUTING.md.
+
+Do not run `cargo check` before an equivalent Clippy run; it compiles the same code twice.
+
+## Agent validation matrix
+
+Select checks by changed behavior and the claim being made, using the owning contract, actual callers and active plan. Confirm selectors/features against live source. Combine applicable rows; broaden only for changed dependencies, unexplained failures or uncovered acceptance criteria. This is a selection aid, not an approval gate.
+
+| Change | Checks | What it proves |
+|---|---|---|
+| Prose or agent instructions | Relevant content/links, repository check and whitespace; repository check enforces AGENTS/CLAUDE hash equality | Documentation consistency, not runtime behavior |
+| Rust in one crate | Format, scoped dev-check and focused regressions, including refusal/recovery; report selected count | Selected crate behavior in the tested configuration |
+| Platform-only Rust | Scoped Clippy first on that platform, then affected regressions | Changed platform path only |
+| Component interface/state/invariants/lock order/test commands | Applicable checks plus owning CONTRACT.md update | Contract and implementation remain aligned |
+| Shared native contract | Reviewed contract and fixtures landed before consumers; affected consumer checks | Agreed shape/semantics and exercised consumers |
+| Structural move | Exact bytes for digested/persisted formats, parsed equality elsewhere; unchanged test identities/assertions; rerunnable script for large moves; affected embedded/package checks | Preserved behavior at measured boundaries |
+| CLI/session, Admin, Workbench or MCP reads | [Per-surface selections](docs/read-interface-parity.md#current-per-surface-selections), full-result/input comparisons through canonical handlers and affected real transports; document inapplicable operations | Equivalent exercised inputs/results; mocks alone do not qualify transport parity |
+| Frontend callback/view | Typecheck, affected behavior tests, regenerated asset verification; embedded/package consumer checks when qualifying an artifact | UI logic; artifact checks additionally cover shipped bytes |
+| Harness/script | Focused script tests and affected consumers; no unrelated native rebuild | Harness behavior, not fresh native qualification |
+| Installer, persistence or process ownership | Cheap failure/recovery regressions, then affected real process/platform/artifact checks on reviewed inputs | Ownership/recovery at the exercised boundary |
+| Release or platform outcome | Final workspace gate, doctests, runtime/package checks and active plan's qualification campaigns | Only the qualified platforms/artifacts; scoped passes do not replace final gates |

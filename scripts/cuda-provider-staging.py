@@ -52,3 +52,48 @@ def stage_checkpointed_providers(destination,build,aggregate,output,composite_ro
  finally:
   with (output/'staging-receipt.json').open('xb') as f:f.write((json.dumps(receipt,indent=2)+'\n').encode())
  return receipt
+
+
+def stage_incremental_providers(destination,build,aggregate,output,incremental_root,proposal,receipt_sha,repo_root):
+ import time
+ deadline=time.monotonic()+300
+ runtime=load('cuda-static-runtime');owner=load('cuda-static-incremental');guards=load('cuda-runtime-environment');core=runtime.load(Path(repo_root)/'scripts/provision-static-onnx-runtime.py','cpu_owner_incremental_stage')
+ observed=owner.verify_incremental(destination,incremental_root,proposal,receipt_sha,repo_root,deadline=deadline)
+ actual=load('cuda-static-aggregate').verify_aggregate(Path(destination),observed,core,deadline=deadline)
+ if observed!=build or actual!=aggregate:raise ValueError('actual incremental producer/aggregate changed before staging')
+ output=core.plain(output);policy=guards.incremental_output_policy(build,'provider_stage',output,core)
+ recipe_path=core.plain(build['recipe']['path'],regular=True);core.verify_file(recipe_path,build['recipe'])
+ provider_base=core.plain(core.read_json(recipe_path)['parent_context']['destination'])
+ if output.exists():raise ValueError('existing incremental provider stage retained')
+ def audit(path,created=False):
+  remaining=deadline-time.monotonic()
+  if remaining<=0:raise TimeoutError('incremental staging original consumer deadline expired')
+  guards.audit_incremental_output(policy,path,core,created,min(10,remaining))
+  if time.monotonic()>=deadline:raise TimeoutError('incremental staging original consumer deadline expired after guard')
+ sources=[(core.child(provider_base,row['path']),Path(row['path']).name,row) for row in build['provider_dlls']]+[(Path(build['build_receipt']['path']),'gpu-incremental-build-receipt.json',build['build_receipt'])]
+ if sorted(name for _,name,_ in sources)!=['gpu-incremental-build-receipt.json','onnxruntime_providers_cuda.dll','onnxruntime_providers_shared.dll']:raise ValueError('exact incremental pair/private child receipt roster differs')
+ audit(output);output.mkdir();audit(output,True)
+ receipt={'schema':'airk.private.gpu-provider-stage/3','status':'RUNNING','build_mode':'incremental-session-collector','qualification':False,'complete_cuda_runtime':False,'producer_proof_sha256':runtime.canonical(build),'aggregate_proof_sha256':runtime.canonical(aggregate),'output_policy':policy,'consumer_deadline_seconds':300,'files':[]}
+ primary_error=None
+ try:
+  for source,name,row in sources:
+   core.verify_file(core.plain(source,regular=True),row);target=output/name;audit(target)
+   with source.open('rb') as src,target.open('xb') as dst:shutil.copyfileobj(src,dst,1024*1024)
+   audit(target,True);core.verify_file(core.plain(target,regular=True),row);core.verify_file(core.plain(source,regular=True),row)
+   receipt['files'].append({'path':name,'bytes':target.stat().st_size,'sha256':core.digest(target)})
+  if owner.verify_incremental(destination,incremental_root,proposal,receipt_sha,repo_root,deadline=deadline)!=build or owner.verify_aggregate(Path(destination),build,core,deadline=deadline)!=aggregate:raise ValueError('incremental provenance changed during provider staging')
+  core.verify_file(core.plain(build['recipe']['path'],regular=True),build['recipe'])
+  if time.monotonic()>=deadline:raise TimeoutError('incremental staging original consumer deadline expired')
+  receipt['status']='PASS_PRIVATE_PROVIDER_COPY_ONLY_INCOMPLETE_UNAPPROVED'
+ except BaseException as exc:
+  primary_error=exc;receipt.update(status='FAILED_PRESERVED_NO_RETRY',error=type(exc).__name__+': '+str(exc));raise
+ finally:
+  try:
+   target=output/'staging-receipt.json';audit(target)
+   with target.open('xb') as stream:stream.write((json.dumps(receipt,indent=2)+'\n').encode())
+   audit(target,True)
+   if time.monotonic()>=deadline:raise TimeoutError('incremental staging original consumer deadline expired')
+  except BaseException as retention_error:
+   if primary_error is None:raise
+   primary_error.add_note('Secondary staging receipt retention failure: '+type(retention_error).__name__+': '+str(retention_error))
+ return receipt

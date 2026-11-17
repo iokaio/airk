@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+
+fn context_profile() -> Result<Profile> {
+    let mut profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    profile.model = ModelChoice::ContextQwenCompact;
+    profile.stage = Some(Stage::Context);
+    profile.tasks = BTreeSet::from([Task::ContextAction]);
+    profile.task_policies = BTreeMap::from([(
+        Task::ContextAction,
+        crate::arbiter::context_action::policy_digest()?,
+    )]);
+    profile.policy = crate::arbiter::compiler::qwen::policy_digest()?;
+    profile.abi = abi(false);
+    profile.max_tokens = 2048;
+    profile.max_candidates = 8;
+    profile.qualification = None;
+    profile.qualified_targets.clear();
+    profile.downloads.clear();
+    Ok(profile)
+}
+#[test]
+fn shared_builder_focus_abi_is_the_exact_core_three_input_contract() -> Result<()> {
+    let actual = abi(true);
+    actual.validate_focus()?;
+    assert_eq!(
+        actual
+            .inputs
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["input_ids", "attention_mask", "position_ids"]
+    );
+    assert!(
+        actual
+            .inputs
+            .iter()
+            .all(|item| item.element == TensorType::Int64 && item.axes == ["batch", "tokens"])
+    );
+    assert_eq!(actual.output.name, "logits");
+    assert_eq!(actual.output.axes, ["batch", "labels"]);
+    assert_eq!(actual.readout, Readout::FocusYesNo);
+    Ok(())
+}
+#[test]
+fn shared_builder_context_retains_all_six_shaped_inputs() {
+    let actual = abi(false);
+    assert_eq!(
+        actual
+            .inputs
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "input_ids",
+            "attention_mask",
+            "position_ids",
+            "decision_positions",
+            "candidate_positions",
+            "option_mask"
+        ]
+    );
+    assert_eq!(actual.output.name, "scores");
+    assert_eq!(actual.readout, Readout::DecisionSymbol);
+    assert_eq!(actual.inputs[5].element, TensorType::Bool);
+}
+#[test]
+fn structural_numeric_calibration_binds_current_complete_assets_without_a_fitted_claim()
+-> Result<()> {
+    let profile = context_profile()?;
+    let policy = crate::arbiter::context_action::policy_digest()?;
+    let calibration = structural_calibration(&profile, policy);
+    JointCalibration::parse_and_validate(&serde_json::to_vec(&calibration)?, &profile, policy)?;
+    assert_eq!(calibration.rules.len(), 1);
+    assert_eq!(calibration.rules[0].action, ContextActionClass::Read);
+    assert_eq!(calibration.rules[0].minimum_raw_margin, f32::MAX);
+    assert_eq!(
+        calibration.rules[0].allowed_roles,
+        vec![EvidenceRole::Unknown]
+    );
+    assert_eq!(
+        calibration.rules[0].allowed_relevance,
+        vec![RelevanceHypothesis::Uncertain]
+    );
+    assert!(
+        profile.qualification.is_none()
+            && profile.qualified_targets.is_empty()
+            && profile.downloads.is_empty()
+    );
+    let mut changed = calibration;
+    changed.assets.clear();
+    assert!(changed.validate(&profile, policy).is_err());
+    Ok(())
+}
+#[test]
+fn stale_compiler_or_semantic_policy_refuses_before_asset_or_session_loading() -> Result<()> {
+    let profile = context_profile()?;
+    super::super::validate_selected_policies(&profile)?;
+    let mut changed = profile.clone();
+    changed.policy = Sha256Digest::from_bytes([0; 32]);
+    assert!(super::super::validate_selected_policies(&changed).is_err());
+    let mut changed = profile;
+    changed
+        .task_policies
+        .insert(Task::ContextAction, Sha256Digest::from_bytes([0; 32]));
+    assert!(super::super::validate_selected_policies(&changed).is_err());
+    Ok(())
+}
+#[test]
+fn historical_metadata_does_not_inherit_new_selected_policy_rules() -> Result<()> {
+    let profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    super::super::validate_selected_policies(&profile)?;
+    Ok(())
+}
+
+#[test]
+fn growing_stream_is_bounded_at_declared_length_plus_one() {
+    struct Growing {
+        count: usize,
+    }
+    impl Read for Growing {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            buffer.fill(1);
+            self.count += buffer.len();
+            Ok(buffer.len())
+        }
+    }
+    let mut stream = Growing { count: 0 };
+    assert!(hash_bounded(&mut stream, 4).is_err());
+    assert_eq!(stream.count, 5);
+}
+#[test]
+fn changed_and_oversized_small_assets_refuse_before_consumption() -> Result<()> {
+    let folder = std::env::temp_dir().join(format!(
+        "airk-selected-profile-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    fs::create_dir(&folder)?;
+    let path = folder.join("tokenizer.json");
+    fs::write(&path, b"good")?;
+    let input = AssetInput {
+        asset: Asset {
+            name: "tokenizer.json".into(),
+            role: AssetRole::Tokenizer,
+            bytes: 4,
+            sha256: sha(b"good"),
+        },
+        path: path.clone(),
+    };
+    assert_eq!(verified_small(&input, 64)?, b"good");
+    authenticate(&input)?;
+    fs::write(&path, b"evil")?;
+    assert!(verified_small(&input, 64).is_err());
+    fs::write(&path, b"goodx")?;
+    assert!(verified_small(&input, 64).is_err());
+    fs::remove_file(path)?;
+    fs::remove_dir(folder)?;
+    Ok(())
+}
+
+/// Input is a native request reusing Core Asset/CpuFit/ModelChoice types, never
+/// a handwritten Profile. No model/session/inference is constructed here.
+#[test]
+#[ignore = "reviewed actual asset inventories and fresh private output required"]
+fn emit_selected_experimental_profiles_from_reviewed_assets() -> Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RequestedAsset {
+        asset: Asset,
+        path: PathBuf,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        model: ModelChoice,
+        profile_id: String,
+        assets: Vec<RequestedAsset>,
+        cpu_fit: CpuFit,
+        memory_reservation_bytes: u64,
+        peak_disk_bytes: u64,
+        maximum_candidates: usize,
+        #[serde(default)]
+        calibration: Option<RequestedAsset>,
+    }
+    let input_path = PathBuf::from(std::env::var("AIRK_SELECTED_PROFILE_INPUTS")?);
+    let mut raw = Vec::new();
+    fs::File::open(&input_path)?
+        .take((1 << 20) + 1)
+        .read_to_end(&mut raw)?;
+    ensure!(raw.len() <= 1 << 20, "profile inventory request limit");
+    let requests: Vec<Request> = serde_json::from_slice(&raw)?;
+    ensure!(
+        !requests.is_empty() && requests.len() <= 3,
+        "selected profile emission cardinality"
+    );
+    let output = PathBuf::from(std::env::var("AIRK_SELECTED_PROFILE_OUTPUT")?);
+    ensure!(!output.exists(), "fresh private profile master required");
+    fs::create_dir(&output)?;
+    let mut models = BTreeSet::new();
+    let mut rows = Vec::new();
+    for (index, request) in requests.into_iter().enumerate() {
+        ensure!(
+            models.insert(request.model),
+            "duplicate selected model inventory"
+        );
+        let directory = output.join(format!("{index:02}"));
+        let input = ProfileInput {
+            model: request.model,
+            profile_id: request.profile_id,
+            assets: request
+                .assets
+                .into_iter()
+                .map(|item| AssetInput {
+                    asset: item.asset,
+                    path: item.path,
+                })
+                .collect(),
+            cpu_fit: request.cpu_fit,
+            memory_reservation_bytes: request.memory_reservation_bytes,
+            peak_disk_bytes: request.peak_disk_bytes,
+            maximum_candidates: request.maximum_candidates,
+            calibration: request
+                .calibration
+                .map(|item| {
+                    CalibrationInput::SuppliedUnqualified(AssetInput {
+                        asset: item.asset,
+                        path: item.path,
+                    })
+                })
+                .unwrap_or(CalibrationInput::NumericRawOnly),
+        };
+        let prepared = prepare(input, &directory)?;
+        let profile_path = directory.join("experimental-profile.json");
+        let fixture = prepared
+            .profile
+            .assets
+            .iter()
+            .find(|asset| asset.role == AssetRole::Fixture)
+            .context("fixture")?;
+        let consumer = serde_json::json!({"profile":profile_path,"files":prepared.files,"fixtures":prepared.files[&fixture.name]});
+        fs::write(
+            directory.join("consumer-input.private.json"),
+            serde_json::to_vec_pretty(&consumer)?,
+        )?;
+        rows.push(serde_json::json!({"model":prepared.profile.model,"profile":profile_path,"profile_sha256":sha(&fs::read(&profile_path)?),
+            "manifest":prepared.profile.manifest,"files":prepared.files,"numeric_raw_only":prepared.numeric_raw_only,
+            "consumer_input":directory.join("consumer-input.private.json"),"qualification":null}));
+    }
+    fs::write(
+        output.join("selected-profiles.private.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+        "schema":"airk.private.selected-native-profile-master/1","input_inventory_sha256":sha(&raw),"profiles":rows,
+        "scope":"Actual Rust-owned experimental metadata/asset authentication only; no NN/fit/calibration/quality/platform/publication qualification. Private filemaps/fixtures are never automatically distributable."}))?,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn checked_stream_retains_literal_sha_and_exact_length() -> Result<()> {
+    let digest = hash_bounded_checked(&b"abc"[..], 3, || Ok(()))?;
+    assert_eq!(
+        digest.to_string(),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert!(hash_bounded_checked(&b"ab"[..], 3, || Ok(())).is_err());
+    assert!(hash_bounded_checked(&b"abcd"[..], 3, || Ok(())).is_err());
+    assert!(hash_bounded_checked(&b""[..], u64::MAX, || Ok(())).is_err());
+    Ok(())
+}
+#[test]
+fn checked_stream_refuses_every_observed_expiry_boundary() {
+    // abc has one data read and one EOF read: seven explicit deadline checks.
+    for expires_at in 1..=7 {
+        let mut checks = 0;
+        let result = hash_bounded_checked(&b"abc"[..], 3, || {
+            checks += 1;
+            ensure!(checks < expires_at, "injected original expiry");
+            Ok(())
+        });
+        assert!(result.is_err(), "expiry boundary {expires_at}");
+        assert_eq!(checks, expires_at);
+    }
+}
+#[test]
+fn checked_stream_read_failure_and_post_read_expiry_refuse() {
+    struct Failed;
+    impl Read for Failed {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("injected read failure"))
+        }
+    }
+    assert!(hash_bounded_checked(Failed, 3, || Ok(())).is_err());
+    let read = std::cell::Cell::new(false);
+    struct One<'a>(&'a std::cell::Cell<bool>);
+    impl Read for One<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.0.set(true);
+            buffer[0] = 1;
+            Ok(1)
+        }
+    }
+    assert!(
+        hash_bounded_checked(One(&read), 1, || {
+            ensure!(!read.get(), "expired while read was blocked");
+            Ok(())
+        })
+        .is_err()
+    );
+}

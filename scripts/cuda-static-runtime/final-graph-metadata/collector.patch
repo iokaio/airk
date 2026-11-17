@@ -1,0 +1,234 @@
+--- a/onnxruntime/core/session/onnxruntime_c_api.cc
++++ b/onnxruntime/core/session/onnxruntime_c_api.cc
+@@ -5250,3 +5250,231 @@
+   }
+ }
+ #endif  // defined(_WIN32)
++
++// AIRK application-private final graph metadata. Additive, no OrtApi table change.
++#if defined(_WIN32)
++struct AirkOrtGraphRecordV1 {
++  uint32_t kind, flags;
++  uint64_t graph, node, value, slot;
++  int64_t integer;
++  double real;
++  const char* text[4];
++  size_t text_bytes[4];
++};
++static_assert(sizeof(AirkOrtGraphRecordV1) == 120, "AIRK graph record size");
++static_assert(alignof(AirkOrtGraphRecordV1) == 8, "AIRK graph record alignment");
++static_assert(offsetof(AirkOrtGraphRecordV1, text) == 56, "AIRK graph record text offset");
++static_assert(offsetof(AirkOrtGraphRecordV1, text_bytes) == 88, "AIRK graph record lengths offset");
++using AirkOrtGraphCallbackV1 = int32_t(__cdecl*)(void*, const AirkOrtGraphRecordV1*);
++extern "C" __declspec(dllexport) int32_t __cdecl airk_ort_collect_final_graph_metadata_v1(
++    const OrtApiBase* base, const OrtSession* session, AirkOrtGraphCallbackV1 callback,
++    void* user, uint64_t* counts, int32_t* ort_error) noexcept {
++  // counts = accepted nodes, values, edges, UTF8 bytes, constant payload bytes, records.
++  if (counts) std::fill(counts, counts + 6, uint64_t{0});
++  if (ort_error) *ort_error = ORT_INVALID_ARGUMENT;
++  if (!base || !session || !callback || !counts || !ort_error) return 1;
++  if (base != OrtGetApiBase() || std::strcmp(base->GetVersionString(), "1.30.0") != 0) return 2;
++  *ort_error = ORT_FAIL;
++  try {
++    const auto* owner = reinterpret_cast<const onnxruntime::InferenceSession*>(session);
++    onnxruntime::InlinedVector<const OrtMemoryInfo*> memory;
++    if (!owner->GetInputOutputMemoryInfo(onnxruntime::InferenceSession::SessionInputOutputType::kOutput, memory).IsOK()) return 1;
++    constexpr uint64_t absent = UINT64_MAX;
++    int failure = 0;
++    uint64_t graphs = 0;
++    auto text = [](AirkOrtGraphRecordV1& r, size_t i, const std::string& value) {
++      r.text[i] = value.data(); r.text_bytes[i] = value.size();
++    };
++    auto emit = [&](const AirkOrtGraphRecordV1& r) {
++      uint64_t bytes = 0;
++      for (size_t i = 0; i != 4; ++i) {
++        if (r.text_bytes[i] > 4096 || (r.text_bytes[i] && !r.text[i])) { failure = 4; return false; }
++        bytes += r.text_bytes[i];
++      }
++      if (bytes > 8388608 - counts[3] || counts[5] >= 4194304) { failure = 4; return false; }
++      if ((r.kind == 2 && counts[0] >= 65536) || (r.kind == 3 && counts[1] >= 262144) ||
++          (r.kind == 5 && counts[2] >= 524288)) { failure = 4; return false; }
++      if (callback(user, &r) != 0) { failure = 5; return false; }
++      counts[3] += bytes; ++counts[5];
++      if (r.kind == 2) ++counts[0];
++      if (r.kind == 3) ++counts[1];
++      if (r.kind == 5) ++counts[2];
++      if (r.kind == 9) counts[4] += r.flags; // actual encoded source element width
++      return true;
++    };
++    auto checkpoint = [&]() { AirkOrtGraphRecordV1 r{}; return callback(user, &r) == 0; };
++    struct Child { onnxruntime::NodeIndex node; const std::string* attribute; const onnxruntime::SessionState* state; };
++    std::function<int(const onnxruntime::SessionState&, uint32_t, uint64_t, uint64_t, const std::string&)> visit;
++    visit = [&](const onnxruntime::SessionState& state, uint32_t depth, uint64_t parent, uint64_t parent_node,
++                const std::string& attribute) -> int {
++      if (depth > 32 || graphs >= 4096) return 4;
++      const uint64_t graph = graphs++;
++      const auto& viewer = state.GetGraphViewer();
++      const auto& ids = state.GetOrtValueNameIdxMap();
++      AirkOrtGraphRecordV1 begin{}; begin.kind = 1; begin.graph = graph; begin.node = parent_node;
++      begin.value = parent; begin.flags = depth ? 1 : 0; text(begin, 0, attribute);
++      if (!emit(begin)) return failure;
++      if (ids.Size() > 262144 - counts[1]) return 4;
++      std::vector<std::pair<const std::string*, int>> values;
++      values.reserve(ids.Size());
++      for (const auto& entry : ids) {
++        if (!checkpoint()) return 5;
++        if (entry.second < 0) return 3;
++        if (entry.first.size() > 4096) return 4;
++        values.emplace_back(&entry.first, entry.second);
++      }
++      std::sort(values.begin(), values.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
++      const auto& constants = state.GetConstantInitializedTensors();
++      for (const auto& entry : values) {
++        if (!checkpoint()) return 5;
++        const std::string& name = *entry.first;
++        const auto* arg = viewer.GetNodeArg(name);
++        const auto* type = arg ? arg->TypeAsProto() : nullptr;
++        const auto ci = constants.find(entry.second);
++        const onnxruntime::Tensor* tensor = ci != constants.end() && ci->second.IsTensor()
++            ? &ci->second.Get<onnxruntime::Tensor>() : nullptr;
++        AirkOrtGraphRecordV1 value{}; value.kind = 3; value.graph = graph; value.value = static_cast<uint64_t>(entry.second);
++        value.slot = absent; value.node = absent; text(value, 0, name);
++        const auto* producer = viewer.GetProducerNode(name);
++        const bool graph_input = std::any_of(viewer.GetInputs().begin(), viewer.GetInputs().end(),
++            [&](const auto* input) { return input && input->Name() == name; });
++        const bool initialized = state.GetInitializedTensors().find(entry.second) != state.GetInitializedTensors().end();
++        const std::string provenance = ci != constants.end() ? "immutable_session_initializer" : initialized ? "overridable_initializer_unread"
++            : producer ? "node_output" : graph_input ? "graph_input" : "unresolved_outer_or_internal";
++        if (producer) value.node = producer->Index();
++        text(value, 1, provenance);
++        if (type && type->has_tensor_type()) {
++          value.flags = 1; value.integer = type->tensor_type().elem_type();
++          if (type->tensor_type().has_shape()) value.slot = static_cast<uint64_t>(type->tensor_type().shape().dim_size());
++        } else if (type) { value.flags = 2; }
++        else if (tensor) { value.flags = 1; value.integer = tensor->GetElementType(); value.slot = tensor->Shape().NumDimensions(); }
++        if (value.slot != absent && value.slot > 16) return 4;
++        if (!emit(value)) return failure;
++        if (value.slot != absent) for (uint64_t i = 0; i < value.slot; ++i) {
++          AirkOrtGraphRecordV1 dim{}; dim.kind = 4; dim.graph = graph; dim.value = value.value; dim.slot = i;
++          if (type && type->has_tensor_type() && type->tensor_type().has_shape()) {
++            const auto& d = type->tensor_type().shape().dim(static_cast<int>(i));
++            if (d.has_dim_value()) { dim.flags = 1; dim.integer = d.dim_value(); }
++            else if (d.has_dim_param()) { dim.flags = 2; text(dim, 0, d.dim_param()); }
++          } else { dim.flags = 1; dim.integer = tensor->Shape()[static_cast<size_t>(i)]; }
++          if (!emit(dim)) return failure;
++        }
++        if (ci != constants.end()) {
++          AirkOrtGraphRecordV1 c{}; c.kind = 8; c.graph = graph; c.value = value.value;
++          std::string reason = "not_tensor", device = "unknown";
++          uint64_t width = 0;
++          if (tensor) {
++            c.integer = tensor->GetElementType();
++            const auto size = tensor->Shape().Size();
++            if (size < 0) return 3;
++            c.slot = static_cast<uint64_t>(size);
++            const bool cpu = tensor->Location().device.Type() == OrtDevice::CPU;
++            device = cpu ? "CPU" : "non_CPU";
++            width = tensor->IsDataType<int64_t>() ? 8 : tensor->IsDataType<int32_t>() ? 4 : tensor->IsDataType<bool>() ? 1 : 0;
++            reason = !cpu ? "non_CPU_unread" : !width ? "unsupported_type_unread" : c.slot > 64 ? "large_constant_unread"
++                : c.slot * width > 1048576 - counts[4] ? "constant_payload_budget_unread" : "read";
++            c.flags = reason == "read" ? 1 : 0;
++          }
++          text(c, 0, reason); text(c, 1, device);
++          if (!emit(c)) return failure;
++          if (c.flags) for (uint64_t i = 0; i < c.slot; ++i) {
++            AirkOrtGraphRecordV1 item{}; item.kind = 9; item.graph = graph; item.value = value.value;
++            item.slot = i; item.flags = static_cast<uint32_t>(width);
++            item.integer = width == 8 ? tensor->Data<int64_t>()[i] : width == 4 ? tensor->Data<int32_t>()[i] : tensor->Data<bool>()[i] ? 1 : 0;
++            if (!emit(item)) return failure;
++          }
++        }
++      }
++      auto edges = [&](const auto& args, uint64_t node, uint32_t role) -> int {
++        uint64_t slot = 0;
++        for (const auto* arg : args) {
++          AirkOrtGraphRecordV1 edge{}; edge.kind = 5; edge.flags = role; edge.graph = graph;
++          edge.node = node; edge.slot = slot++; edge.value = absent;
++          if (arg && arg->Exists()) {
++            int index = -1;
++            if (!ids.GetIdx(arg->Name(), index).IsOK() || index < 0) return 3;
++            edge.value = static_cast<uint64_t>(index);
++          }
++          if (!emit(edge)) return failure;
++        }
++        return 0;
++      };
++      int result = edges(viewer.GetInputs(), absent, 3); if (result) return result;
++      result = edges(viewer.GetOutputs(), absent, 4); if (result) return result;
++      result = edges(viewer.GetInputsIncludingInitializers(), absent, 5); if (result) return result;
++      std::vector<Child> children;
++      for (const auto& node : viewer.Nodes()) {
++        const std::string& provider = node.GetExecutionProviderType();
++        if (node.OpType().empty() || provider.empty()) return 3;
++        AirkOrtGraphRecordV1 n{}; n.kind = 2; n.graph = graph; n.node = node.Index(); n.integer = node.SinceVersion();
++        text(n, 0, node.Name()); text(n, 1, node.Domain()); text(n, 2, node.OpType()); text(n, 3, provider);
++        if (!emit(n)) return failure;
++        result = edges(node.InputDefs(), n.node, 0); if (result) return result;
++        result = edges(node.ImplicitInputDefs(), n.node, 1); if (result) return result;
++        result = edges(node.OutputDefs(), n.node, 2); if (result) return result;
++        if (node.GetAttributes().size() > 64) return 4;
++        std::vector<const ONNX_NAMESPACE::AttributeProto*> attributes;
++        for (const auto& a : node.GetAttributes()) {
++          if (!checkpoint()) return 5;
++          if (a.second.name().size() > 4096) return 4;
++          attributes.push_back(&a.second);
++        }
++        std::sort(attributes.begin(), attributes.end(), [](const auto* a, const auto* b) { return a->name() < b->name(); });
++        uint64_t ordinal = 0;
++        for (const auto* a : attributes) {
++          AirkOrtGraphRecordV1 attr{}; attr.kind = 6; attr.graph = graph; attr.node = n.node;
++          attr.slot = ordinal++; attr.integer = a->type(); text(attr, 0, a->name());
++          uint32_t item_kind = 0; uint64_t count = 0;
++          switch (a->type()) {
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_INT: item_kind = 1; count = 1; break;
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_FLOAT: item_kind = 2; count = 1; break;
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_STRING: item_kind = 3; count = 1; break;
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_INTS: item_kind = 1; count = a->ints_size(); break;
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_FLOATS: item_kind = 2; count = a->floats_size(); break;
++            case ONNX_NAMESPACE::AttributeProto_AttributeType_STRINGS: item_kind = 3; count = a->strings_size(); break;
++            default: break;
++          }
++          attr.value = count; attr.flags = item_kind && count <= 64 ? 1 : 0;
++          const std::string reason = attr.flags ? "read" : item_kind ? "large_array_unread" : "unsupported_attribute_unread";
++          text(attr, 1, reason); if (!emit(attr)) return failure;
++          if (a->type() == ONNX_NAMESPACE::AttributeProto_AttributeType_GRAPH) {
++            if (!checkpoint()) return 5;
++            const auto* child_state = state.GetSubgraphSessionState(node.Index(), a->name());
++            if (!child_state) return 3;
++            if (children.size() >= 4096) return 4;
++            // AttributeProto strings are owned by the live Node, unlike a temporary derived subgraph map.
++            children.push_back({node.Index(), &a->name(), child_state});
++          }
++          if (attr.flags) for (uint64_t i = 0; i < count; ++i) {
++            AirkOrtGraphRecordV1 item{}; item.kind = 7; item.graph = graph; item.node = n.node;
++            item.slot = attr.slot; item.value = i; item.flags = item_kind;
++            if (item_kind == 1) item.integer = a->type() == ONNX_NAMESPACE::AttributeProto_AttributeType_INT ? a->i() : a->ints(static_cast<int>(i));
++            if (item_kind == 2) item.real = a->type() == ONNX_NAMESPACE::AttributeProto_AttributeType_FLOAT ? a->f() : a->floats(static_cast<int>(i));
++            if (item_kind == 3) text(item, 0, a->type() == ONNX_NAMESPACE::AttributeProto_AttributeType_STRING ? a->s() : a->strings(static_cast<int>(i)));
++            if (!emit(item)) return failure;
++          }
++        }
++      }
++      size_t child_count = 0;
++      for (const auto& node : state.GetSubgraphSessionStateMap()) {
++        if (node.second.size() > 4096 - child_count) return 4;
++        child_count += node.second.size();
++        for (const auto& child : node.second) if (!child.second) return 3;
++      }
++      if (children.size() != child_count) return 3;
++      std::sort(children.begin(), children.end(), [](const Child& a, const Child& b) {
++        return a.node < b.node || (a.node == b.node && *a.attribute < *b.attribute);
++      });
++      for (const auto& child : children) {
++        result = visit(*child.state, depth + 1, graph, child.node, *child.attribute); if (result) return result;
++      }
++      AirkOrtGraphRecordV1 end{}; end.kind = 10; end.graph = graph;
++      return emit(end) ? 0 : failure;
++    };
++    const int result = visit(owner->GetSessionState(), 0, absent, absent, std::string{});
++    if (!result && counts[0] == 0) return 3;
++    if (!result) *ort_error = ORT_OK;
++    return result;
++  } catch (...) { return 6; }
++}
++#endif  // defined(_WIN32)

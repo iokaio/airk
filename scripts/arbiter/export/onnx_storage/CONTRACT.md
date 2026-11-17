@@ -1,0 +1,5 @@
+# ONNX storage-only contract
+
+The maintained storage_normalizer.py is semantically identical to its retained original: source migration adds only an SPDX header. Main initializer declarations, tensor bytes, topology and allowed external ranges remain exact. The worker operates on independent copies in fresh private outputs and retains original graph and proof separately; it never mutates an admitted input graph or weight file.
+
+Focus preparation takes explicit private source and output paths and pins the maintained normalizer. Context weight8 r3 accepts only that exact maintained normalizer path/hash in a fresh release. Historical execution seals are preserved, never retagged. The no-forward owner wrapper requires an explicit normalization_source in addition to its original output, environment, source/runtime pins and start gate. Same-user output preflight and created-output audit remain caller duties. No inference, numerical qualification or release claim follows from storage normalization.

@@ -1,0 +1,263 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use airk_core::arbiter::{device::*, *};
+fn binding() -> DeviceCatalogBinding {
+    DeviceCatalogBinding {
+        catalog: Sha256Digest::from_bytes([10; 32]),
+        source: Sha256Digest::from_bytes([11; 32]),
+    }
+}
+fn fixture() -> Result<(tempfile::TempDir, ConfigurationStore)> {
+    let root = tempfile::tempdir()?;
+    let lease = Arc::new(ServiceLease::acquire(root.path())?);
+    let store = ConfigurationStore::open(
+        lease,
+        Sha256Digest::from_bytes([1; 32]),
+        Incarnation::from_bytes([2; 16]),
+    )?;
+    Ok((root, store))
+}
+fn profile() -> Result<Profile> {
+    let mut value: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    value.stage = Some(Stage::Focus);
+    value.model = ModelChoice::FocusQwenReranker06B;
+    value.manifest = Sha256Digest::from_bytes([3; 32]);
+    value.cpu_fit = Some(CpuFit::default());
+    value.qualification = None;
+    value.qualified_targets.clear();
+    value.tasks = std::collections::BTreeSet::from([Task::FocusRank]);
+    value.task_policies =
+        std::collections::BTreeMap::from([(Task::FocusRank, Sha256Digest::from_bytes([9; 32]))]);
+    value.abi = ScoreAbi {
+        readout: Readout::FocusYesNo,
+        inputs: ["input_ids", "attention_mask", "position_ids"]
+            .into_iter()
+            .map(|name| TensorContract {
+                name: name.into(),
+                element: TensorType::Int64,
+                axes: vec!["batch".into(), "tokens".into()],
+            })
+            .collect(),
+        output: TensorContract {
+            name: "logits".into(),
+            element: TensorType::Float32,
+            axes: vec!["batch".into(), "labels".into()],
+        },
+    };
+    value.max_tokens = 512;
+    value.validate()?;
+    Ok(value)
+}
+fn enabled(store: &ConfigurationStore) -> Result<Configuration> {
+    let mut value = store.load()?;
+    value.revision += 1;
+    value.focus.enabled = true;
+    value.focus.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
+    value.focus.indexes = vec![Enrollment {
+        index_id: airk_core::index_catalog::IndexId::from_identity(Incarnation::from_bytes(
+            [4; 16],
+        )),
+        tasks: std::collections::BTreeSet::from([Task::FocusRank]),
+    }];
+    store.apply(value.revision - 1, &value)
+}
+#[test]
+fn absent_device_load_is_disabled_without_creating_state() -> Result<()> {
+    let (root, store) = fixture()?;
+    let StoredConfiguration::Device(value) = store.device(binding()).load()? else {
+        panic!("unexpected legacy");
+    };
+    assert!(!value.focus.enabled);
+    assert_eq!(value.focus.device_policy, DevicePolicy::Auto);
+    assert!(!root.path().join(DIRECTORY).exists());
+    Ok(())
+}
+#[test]
+fn auto_migration_archives_exact_three_bytes_and_legacy_manager_refuses_four() -> Result<()> {
+    let (root, store) = fixture()?;
+    let old = enabled(&store)?;
+    let raw = old.canonical_bytes()?;
+    let profile = profile()?;
+    let migrated = store.device(binding()).load_or_migrate(
+        |pin| (pin == profile.manifest).then_some(&profile),
+        || Ok(()),
+    )?;
+    assert!(migrated.focus.enabled);
+    assert_eq!(migrated.focus.selected_model, Some(SelectedModel::Focus));
+    assert_eq!(migrated.focus.device_policy, DevicePolicy::Auto);
+    assert_eq!(
+        serde_json::to_value(&migrated.focus.indexes)?,
+        serde_json::to_value(&old.focus.indexes)?
+    );
+    assert_eq!(
+        std::fs::read(
+            root.path()
+                .join(DIRECTORY)
+                .join(format!("configuration-v3-{}.retained", digest(&raw)))
+        )?,
+        raw
+    );
+    assert!(store.load().is_err());
+    assert!(store.apply(old.revision, &old).is_err());
+    assert_eq!(
+        store.device(binding()).migrate_checked(
+            old.revision,
+            digest(&raw),
+            |pin| (pin == profile.manifest).then_some(&profile),
+            || Ok(())
+        )?,
+        migrated
+    );
+    Ok(())
+}
+#[test]
+fn wrong_hash_expiry_and_conflicting_archive_preserve_active_legacy_bytes() -> Result<()> {
+    let (root, store) = fixture()?;
+    let old = enabled(&store)?;
+    let raw = old.canonical_bytes()?;
+    let profile = profile()?;
+    assert!(
+        store
+            .device(binding())
+            .migrate_checked(
+                old.revision,
+                Sha256Digest::from_bytes([99; 32]),
+                |_| Some(&profile),
+                || Ok(())
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .device(binding())
+            .migrate_checked(
+                old.revision,
+                digest(&raw),
+                |_| Some(&profile),
+                || anyhow::bail!("original deadline expired")
+            )
+            .is_err()
+    );
+    let archive = root
+        .path()
+        .join(DIRECTORY)
+        .join(format!("configuration-v3-{}.retained", digest(&raw)));
+    std::fs::write(&archive, b"conflicting retained bytes")?;
+    assert!(
+        store
+            .device(binding())
+            .migrate_checked(old.revision, digest(&raw), |_| Some(&profile), || Ok(()))
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
+        raw
+    );
+    assert_eq!(std::fs::read(archive)?, b"conflicting retained bytes");
+    Ok(())
+}
+#[test]
+fn current_cpu_preference_cas_and_catalog_source_binding_are_preserved() -> Result<()> {
+    let (_root, store) = fixture()?;
+    let initial = store
+        .device(binding())
+        .initialize_checked(None, || Ok(()))?;
+    let mut candidate = initial.clone();
+    candidate.revision += 1;
+    candidate.context.device_policy = DevicePolicy::Cpu;
+    candidate.context.gpu_precision = GpuPrecisionPreference::Fp16;
+    assert_eq!(
+        store
+            .device(binding())
+            .apply_checked(initial.revision, &candidate, || Ok(()))?,
+        candidate
+    );
+    assert!(
+        store
+            .device(binding())
+            .apply_checked(initial.revision, &candidate, || Ok(()))
+            .is_err()
+    );
+    let mut wrong = binding();
+    wrong.source = Sha256Digest::from_bytes([12; 32]);
+    assert!(store.device(wrong).load().is_err());
+    let observed = store
+        .device(binding())
+        .with_current(|| Ok(()), |current| Ok(current.clone()))?;
+    assert_eq!(observed.context.device_policy, DevicePolicy::Cpu);
+    assert_eq!(observed.context.gpu_precision, GpuPrecisionPreference::Fp16);
+    Ok(())
+}
+#[test]
+fn old_v2_initialization_remains_explicit_disabled_and_preserves_bytes() -> Result<()> {
+    let (root, store) = fixture()?;
+    let old = root.path().join("arbiter-v2");
+    std::fs::create_dir(&old)?;
+    let bytes = include_bytes!("../../../../../../fixtures/arbiter/configuration-disabled-v2.json");
+    std::fs::write(old.join(CONFIGURATION), bytes)?;
+    assert!(store.device(binding()).load().is_err());
+    assert!(
+        store
+            .device(binding())
+            .initialize_checked(None, || Ok(()))
+            .is_err()
+    );
+    let current = store
+        .device(binding())
+        .initialize_checked(Some(digest(bytes)), || Ok(()))?;
+    assert!(!current.focus.enabled && !current.context.enabled);
+    assert_eq!(std::fs::read(old.join(CONFIGURATION))?, bytes);
+    Ok(())
+}
+
+#[test]
+fn expiry_after_synced_archive_and_staged_four_keeps_three_then_explicit_recovery() -> Result<()> {
+    use std::cell::Cell;
+    let (root, store) = fixture()?;
+    let old = enabled(&store)?;
+    let raw = old.canonical_bytes()?;
+    let profile = profile()?;
+    let calls = Cell::new(0u32);
+    let expired = || {
+        calls.set(calls.get() + 1);
+        if calls.get() == 6 {
+            anyhow::bail!("original management clock expired before publish");
+        }
+        Ok(())
+    };
+    assert!(
+        store
+            .device(binding())
+            .migrate_checked(
+                old.revision,
+                digest(&raw),
+                |pin| (pin == profile.manifest).then_some(&profile),
+                expired
+            )
+            .is_err()
+    );
+    assert_eq!(calls.get(), 6);
+    assert_eq!(
+        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
+        raw
+    );
+    assert_eq!(
+        std::fs::read(
+            root.path()
+                .join(DIRECTORY)
+                .join(format!("configuration-v3-{}.retained", digest(&raw)))
+        )?,
+        raw
+    );
+    let current = store.device(binding()).migrate_checked(
+        old.revision,
+        digest(&raw),
+        |pin| (pin == profile.manifest).then_some(&profile),
+        || Ok(()),
+    )?;
+    assert_eq!(current.revision, old.revision + 1);
+    assert!(current.focus.enabled);
+    Ok(())
+}

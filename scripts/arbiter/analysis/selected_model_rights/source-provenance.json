@@ -1,0 +1,42 @@
+{
+  "files": [
+    {
+      "destination": "scripts/arbiter/analysis/selected_model_rights/build_rights.py",
+      "changes": [],
+      "maintained_sha256": "55339d79c3d2b9e62f7ce3da4f385009bba0434f15d8461b64a49f371e900b04",
+      "source": "artifacts/advanced-split/models/selected-model-rights-r1/build_rights.py",
+      "original_sha256": "55339d79c3d2b9e62f7ce3da4f385009bba0434f15d8461b64a49f371e900b04"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/selected_model_rights/fetch_base_readme.py",
+      "changes": [
+        "SPDX header"
+      ],
+      "maintained_sha256": "03d295beadee1075fbe17f66d30200841db1bba094fe1f7967304d93695d2822",
+      "source": "artifacts/advanced-split/models/selected-model-rights-r1/fetch_base_readme.py",
+      "original_sha256": "e4c46bf86715033c9549a5bd1ececfc40f000bef062f5930dbd2845cdd5f7eb6"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/selected_model_rights/native_json_projection.py",
+      "changes": [],
+      "maintained_sha256": "9792c5431ec39f4e84a0f49189195bdae800ebaa3473db0a725f3a3e95d5573c",
+      "source": "artifacts/advanced-split/models/selected-model-rights-r1/native_json_projection.py",
+      "original_sha256": "9792c5431ec39f4e84a0f49189195bdae800ebaa3473db0a725f3a3e95d5573c"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/selected_model_rights/test_native_json_projection.py",
+      "changes": [],
+      "maintained_sha256": "fc2e7a9b56988c37a1f6e97c915f1f2f3bd049f84e9ca3a1ec772f99e8e4af2c",
+      "source": "artifacts/advanced-split/models/selected-model-rights-r1/test_native_json_projection.py",
+      "original_sha256": "fc2e7a9b56988c37a1f6e97c915f1f2f3bd049f84e9ca3a1ec772f99e8e4af2c"
+    },
+    {
+      "destination": "scripts/arbiter/analysis/selected_model_rights/verify_rights.py",
+      "changes": [],
+      "maintained_sha256": "fa959e46ba778cd576380e347998a1a8359f8cbbd71f4f35a1e91f9a60904ebe",
+      "source": "artifacts/advanced-split/models/selected-model-rights-r1/verify_rights.py",
+      "original_sha256": "fa959e46ba778cd576380e347998a1a8359f8cbbd71f4f35a1e91f9a60904ebe"
+    }
+  ],
+  "schema": "airk.source-relocation/1"
+}

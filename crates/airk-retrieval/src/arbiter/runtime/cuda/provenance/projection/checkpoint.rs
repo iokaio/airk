@@ -204,7 +204,7 @@ fn finite(value: &Value) -> Result<f64> {
     Ok(n)
 }
 // Strict bounded RFC3339 UTC, preserving fractional seconds rather than discarding them.
-fn utc(value: &str) -> Result<i128> {
+pub(super) fn utc(value: &str) -> Result<i128> {
     let v = value
         .strip_suffix("+00:00")
         .or_else(|| value.strip_suffix('Z'))

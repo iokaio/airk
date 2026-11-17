@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/compiler-width-guard-r1/source_spans.rs",
+      "changes": [],
+      "maintained_sha256": "3d2008ee44f9c002547969d4adc13308a3ef201f7c456ea28152a3e6cbb4700b",
+      "original_sha256": "3d2008ee44f9c002547969d4adc13308a3ef201f7c456ea28152a3e6cbb4700b",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/compiler-width-guard-r1/source_spans.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-generic-spans-proposal-r1/public_human_visibility.rs",
+      "changes": [],
+      "maintained_sha256": "f070f56eb06c934ee0b97d1c7eb1cdb7364261b4460959d4c9c17f62080e4566",
+      "original_sha256": "f070f56eb06c934ee0b97d1c7eb1cdb7364261b4460959d4c9c17f62080e4566",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-generic-spans-proposal-r1/public_human_visibility.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-generic-spans-proposal-r1/public_human_visibility/source_spans.rs",
+      "changes": [],
+      "maintained_sha256": "78d8e5569207f445e1e30a36c91bf9c7c055651b3d0eaaae6032d5009e91b130",
+      "original_sha256": "78d8e5569207f445e1e30a36c91bf9c7c055651b3d0eaaae6032d5009e91b130",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-generic-spans-proposal-r1/public_human_visibility/source_spans.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-generic-spans-proposal-r1/public_human_visibility/source_spans/tests.rs",
+      "changes": [],
+      "maintained_sha256": "7b89cecd55a88a1670b23c801141a39e5bdb36db1e9cdd8d4882cab1410ca175",
+      "original_sha256": "7b89cecd55a88a1670b23c801141a39e5bdb36db1e9cdd8d4882cab1410ca175",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-generic-spans-proposal-r1/public_human_visibility/source_spans/tests.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-generic-spans-proposal-r2/public_human_visibility/source_spans.rs",
+      "changes": [],
+      "maintained_sha256": "71aad07489ed8919cfdf26f27ca0f3c2da6cee6d7cbe8de45c92607c94e6309a",
+      "original_sha256": "71aad07489ed8919cfdf26f27ca0f3c2da6cee6d7cbe8de45c92607c94e6309a",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-generic-spans-proposal-r2/public_human_visibility/source_spans.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-generic-spans-proposal-r2/public_human_visibility/source_spans/tests.rs",
+      "changes": [],
+      "maintained_sha256": "129aef8cca6739fbd80ae8c780604df22dd402824af8721a886351f6c2471afe",
+      "original_sha256": "129aef8cca6739fbd80ae8c780604df22dd402824af8721a886351f6c2471afe",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-generic-spans-proposal-r2/public_human_visibility/source_spans/tests.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-phase-source-spans-proposal-r1/public_human_visibility.rs",
+      "changes": [],
+      "maintained_sha256": "07f5f5ddfd41656e35d97f593ad54558b6fb0946e02f5e996e47bd2e9f14bc1a",
+      "original_sha256": "07f5f5ddfd41656e35d97f593ad54558b6fb0946e02f5e996e47bd2e9f14bc1a",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-phase-source-spans-proposal-r1/public_human_visibility.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/native-phase-source-spans-proposal-r2/public_human_visibility.rs",
+      "changes": [],
+      "maintained_sha256": "36e0d26f31b81840d3470c87af8361ea119a405e6f48a95d341e2f65e792e17a",
+      "original_sha256": "36e0d26f31b81840d3470c87af8361ea119a405e6f48a95d341e2f65e792e17a",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/native-phase-source-spans-proposal-r2/public_human_visibility.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/qasper-train-focus512-proposal-r1/public_human_visibility/qasper_replay.rs",
+      "changes": [],
+      "maintained_sha256": "9224f29f26a5002bde469c204f40c973b81812d1e6287ec80262a5ec24a080ae",
+      "original_sha256": "9224f29f26a5002bde469c204f40c973b81812d1e6287ec80262a5ec24a080ae",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/qasper-train-focus512-proposal-r1/public_human_visibility/qasper_replay.rs.in"
+    },
+    {
+      "source": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/cosqa-source-join-r1/unit-stats-observation-r1/public_human_visibility.rs",
+      "changes": [],
+      "maintained_sha256": "0cba898e606d39b926249b9eef824fe20e203762491b1402d74ee54cf0065873",
+      "original_sha256": "0cba898e606d39b926249b9eef824fe20e203762491b1402d74ee54cf0065873",
+      "destination": "scripts/arbiter/analysis/historical_proposals/public_source_native/unit-stats-observation-r1/public_human_visibility.rs.in"
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/research-attribution-r1/license-notices.py",
+      "changes": [],
+      "maintained_sha256": "27989d030d385c3118896d7e79bdcfc15db4b23efbc831c0d7729887b8c77f41",
+      "original_sha256": "27989d030d385c3118896d7e79bdcfc15db4b23efbc831c0d7729887b8c77f41",
+      "destination": "scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-r1/license-notices.py"
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/research-attribution-r1/test_research_notices.py",
+      "changes": [],
+      "maintained_sha256": "552a8b37743439f9fc34fddee1ffd8ed5a0ff299a733a87e1ebeff6a713e7058",
+      "original_sha256": "552a8b37743439f9fc34fddee1ffd8ed5a0ff299a733a87e1ebeff6a713e7058",
+      "destination": "scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-r1/test_research_notices.py"
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/research-attribution-techqa-r2/before-license-notices.py",
+      "changes": [],
+      "maintained_sha256": "27989d030d385c3118896d7e79bdcfc15db4b23efbc831c0d7729887b8c77f41",
+      "original_sha256": "27989d030d385c3118896d7e79bdcfc15db4b23efbc831c0d7729887b8c77f41",
+      "destination": "scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-techqa-r2/before-license-notices.py"
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/research-attribution-techqa-r2/before-test_research_notices.py",
+      "changes": [],
+      "maintained_sha256": "552a8b37743439f9fc34fddee1ffd8ed5a0ff299a733a87e1ebeff6a713e7058",
+      "original_sha256": "552a8b37743439f9fc34fddee1ffd8ed5a0ff299a733a87e1ebeff6a713e7058",
+      "destination": "scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-techqa-r2/before-test_research_notices.py"
+    }
+  ],
+  "schema": "airk.source-relocation/1"
+}

@@ -1,0 +1,627 @@
+{
+  "schema": "airk.source-relocation/1",
+  "scope": "Versioned Qwen recipes; retained source originals and all private data remain unchanged",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/focus_reference.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/focus_reference.py",
+      "original_sha256": "c6cd23cffbbf0882959100d86d82ecaf4553cac6e68ee872350691d8ece66d54",
+      "maintained_sha256": "d26caf475392e967da3380f4019f84e175d0096ae8003b317fbe38dd5d71cc36",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/owned_reference.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/owned_reference.py",
+      "original_sha256": "c6c6197d128e41d68d38d47e3e071a1a2d2665f75b83a55ce6bbee859bddf9d4",
+      "maintained_sha256": "9c826066b0e6ebac08e5b2170c3a44d05b6a6289cff45b200dd9ba74605c95d1",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/prepare_reference_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/prepare_reference_owner.py",
+      "original_sha256": "7f551b1619eb5bfe2963e555e7d8f404d8efd6edd0b997cb71a7bb1c27943d04",
+      "maintained_sha256": "0fb869f69a95c86d6c3f7020baf019d7e96354ecb4ae03d9f5daebed132ffc7c",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/run_focus_export-before-owner-review.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/run_focus_export-before-owner-review.py",
+      "original_sha256": "9fb8ea6cfe62ff0f8144df6f5f62c149fd6839b3f3cbff20d6b3ec69cd94aa8f",
+      "maintained_sha256": "3bcbea8d6521f3f77fbfe271f95a5abe696f1b926214635cb8512bfd7aa3e245",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/run_focus_export.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/run_focus_export.py",
+      "original_sha256": "3b7ae63a8c514188195835f291c0ecce501ca42605354d36405c889788884580",
+      "maintained_sha256": "83915615cd1ca499cd3ab7c025796c188549527d000d3a327daa49c21ccb0f37",
+      "changes": [
+        "SPDX header",
+        "repository-relative private assets"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/test_focus_reference.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/test_focus_reference.py",
+      "original_sha256": "cd8912b7534ca43723d73f7fb187ee8861e7c4b4bed026f80a890e0b5c164c6c",
+      "maintained_sha256": "835cf1c6b543f146987fcfdb9059486c521100bda9162236a9cdf87c88670cce",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-experiment-r1/tokenizer_census.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-experiment-r1/tokenizer_census.py",
+      "original_sha256": "f8bae08b30b2d99b43ec6eaf13a1869fd61c7745978c6ed5051012dbbe485ccc",
+      "maintained_sha256": "581bc5b31dbc4b1d4db6dc1e68995fbca6621d889bd57cad6f6152c8dba4abc0",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/cpu_export_execution.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/cpu_export_execution.py",
+      "original_sha256": "535ca1e089fcbff3e2dc40b192425c6b470eccd7dde730f5f5a306ac03b767eb",
+      "maintained_sha256": "535ca1e089fcbff3e2dc40b192425c6b470eccd7dde730f5f5a306ac03b767eb",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/focus_model_view.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/focus_model_view.py",
+      "original_sha256": "b88846182af1336e5e72a246d31447448a17247b1fae2a5a474fdd8fce7ef573",
+      "maintained_sha256": "15fd96ac7cf2c37a6fea8a988e5d2c5d70d6038cf87e9f61af50bd694b7983e3",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/graph_closure.py",
+      "original_sha256": "d91dd080f53ac2abbed18937cfcca74b1e158a122ac89c60cf16d2a3e270365a",
+      "maintained_sha256": "a6123d2516e673d8a65fefa86ba1a7f54a60e9943d003b253a7095aa53c17c8a",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/owned_export.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/owned_export.py",
+      "original_sha256": "55c850e770744ab18823e27d765d2c334c582680cb039bfba5368b901bbc0b35",
+      "maintained_sha256": "4c4cadb70d9364ef3278a093346f71f70bca73fe67e82e83738316ac4ce48331",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/prepare_export_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/prepare_export_owner.py",
+      "original_sha256": "ad7a25d5bf229ecafd1b136884344a984cc3aa036a1b0e30a8604efa2670f618",
+      "maintained_sha256": "4a1e807f812919783e2aa97536266dbc1064a79268171ed25142e6a1f91cb7d3",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/run_static_export.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/run_static_export.py",
+      "original_sha256": "d71073ab8d775f8bc5234922aff1a40a0c95042dd131ca69f502750e1d725e67",
+      "maintained_sha256": "24ec3c00353f8266a7ef52585ce595f56ef190d9bbe6bb253215a3ef350a7a4d",
+      "changes": [
+        "SPDX header",
+        "explicit private input/output paths and CLI; LF normalization"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/test_focus_model_view.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/test_focus_model_view.py",
+      "original_sha256": "2f6384fe753d24a18a44f131fea02b21ff12ec83833c3f0b053ce94613bbf40a",
+      "maintained_sha256": "602495cfe31edefc45d85eac28430a748cf0d5deed5957d4da948ba1f127ff8f",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/test_graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/test_graph_closure.py",
+      "original_sha256": "5e1818d5fa2e3140e9c6b64445b25aa96da982510597bbc56bc079eb34d49156",
+      "maintained_sha256": "24f73636e80b5d6306c381ec0c3426f9e4a343c2d2fe5896cc715e35567e189a",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/cpu_export_execution.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/cpu_export_execution.py",
+      "original_sha256": "535ca1e089fcbff3e2dc40b192425c6b470eccd7dde730f5f5a306ac03b767eb",
+      "maintained_sha256": "535ca1e089fcbff3e2dc40b192425c6b470eccd7dde730f5f5a306ac03b767eb",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/graph_closure.py",
+      "original_sha256": "babf65f4af66187775422f5a7edb0fd90dae8ff536c76c362299a20c0dad251c",
+      "maintained_sha256": "b4f0677b991ed2c95ff6f0be6e5dbfee0b4e03a2c5f22e06688f885a9d8926d1",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/owned_export.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/owned_export.py",
+      "original_sha256": "55c850e770744ab18823e27d765d2c334c582680cb039bfba5368b901bbc0b35",
+      "maintained_sha256": "4c4cadb70d9364ef3278a093346f71f70bca73fe67e82e83738316ac4ce48331",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/prepare_export_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/prepare_export_owner.py",
+      "original_sha256": "ad7a25d5bf229ecafd1b136884344a984cc3aa036a1b0e30a8604efa2670f618",
+      "maintained_sha256": "4a1e807f812919783e2aa97536266dbc1064a79268171ed25142e6a1f91cb7d3",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/run_static_export.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/run_static_export.py",
+      "original_sha256": "18743ee83d17d0e7f454497a026f267f47d655cc344c1ddc78d87b05ef5121a5",
+      "maintained_sha256": "b9d614afda065645e92de3fcf0212a99d10210cf77632b869d3f3625ee0eb348",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/test_graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/test_graph_closure.py",
+      "original_sha256": "22aaca8661e963413ef81a1dd40205ae7d280f6d25cd495c5596072c544bcccc",
+      "maintained_sha256": "6eaf19e6544db2bc37d76112a83eb898d1c8a4b465efca70508cbe1ebf8d29e9",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-weight8-r1/owned_weight8.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-weight8-r1/owned_weight8.py",
+      "original_sha256": "572cbc6c2f97486a069981fc32536fe0b756802731ca59355c6ac55894924b84",
+      "maintained_sha256": "6285a838bd53d2b9d5a358b0a9930552c50d81d6841504600503359d492cd2c0",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-weight8-r1/prepare_weight8_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-weight8-r1/prepare_weight8_owner.py",
+      "original_sha256": "32b8553abd4e082be2482f29aff2aeba0d85689c44bd5763300853ce8a82acea",
+      "maintained_sha256": "83a6dbeda115fccb73b5437498ed2c46e24fa34af2854d5c71604118d2d7e023",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-reranker06-weight8-r1/run_weight8.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-reranker06-weight8-r1/run_weight8.py",
+      "original_sha256": "66be57d4ba63c3bebf999e9f6c5bfade79f82e02002730219106bd16a094a10f",
+      "maintained_sha256": "43b700a6ed7139a09576c5bd131e37be179db33a50db43e71e3d3b4aa465bf3e",
+      "changes": [
+        "SPDX header",
+        "explicit private input/output paths and CLI; LF normalization"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/launch_qwen3_tiny_r3.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/launch_qwen3_tiny_r3.py",
+      "original_sha256": "3638f2e5628b22982ba22788afe333e0ceb7bc3f4cafefe5aa2fb698a574110a",
+      "maintained_sha256": "3638f2e5628b22982ba22788afe333e0ceb7bc3f4cafefe5aa2fb698a574110a",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/prepare_qwen3_tiny_r3.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/prepare_qwen3_tiny_r3.py",
+      "original_sha256": "45f04d1aa1b4ee7974f78d504ab8ce09f95d9ffff44b417c948a088be2cc1450",
+      "maintained_sha256": "45f04d1aa1b4ee7974f78d504ab8ce09f95d9ffff44b417c948a088be2cc1450",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/qwen3_pilot_r2.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_pilot_r2.py",
+      "original_sha256": "a7e0025e60e8d33b27c7204e86829558513e956bcfc92e09588890136cde7c2b",
+      "maintained_sha256": "a7e0025e60e8d33b27c7204e86829558513e956bcfc92e09588890136cde7c2b",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/qwen3_reference_r2.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py",
+      "original_sha256": "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
+      "maintained_sha256": "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/qwen3_tiny_worker_r3.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_tiny_worker_r3.py",
+      "original_sha256": "4de2cb545c2e7c5d22f16a86824e13d3be92456aaf49009a0e90cb5a893e764e",
+      "maintained_sha256": "4de2cb545c2e7c5d22f16a86824e13d3be92456aaf49009a0e90cb5a893e764e",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/test_qwen3_owned_r3.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/test_qwen3_owned_r3.py",
+      "original_sha256": "d473e3d24deff9cdf6e2dcfc123fe76267b8d09d14d136447e1d63c320af4070",
+      "maintained_sha256": "d473e3d24deff9cdf6e2dcfc123fe76267b8d09d14d136447e1d63c320af4070",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/test_qwen3_preparation_r2.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/test_qwen3_preparation_r2.py",
+      "original_sha256": "b2325dcb6121e55163f2b167c1031f723083597204c058454c3afdfc71f3c3ab",
+      "maintained_sha256": "b2325dcb6121e55163f2b167c1031f723083597204c058454c3afdfc71f3c3ab",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-readout-r1/derive_numeric_fixture.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/derive_numeric_fixture.py",
+      "original_sha256": "37fc7671e759c594e1c3acefed610b11a24fdb057ddc2198b9421976ea988b43",
+      "maintained_sha256": "37fc7671e759c594e1c3acefed610b11a24fdb057ddc2198b9421976ea988b43",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-readout-r1/prepare_readout.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/prepare_readout.py",
+      "original_sha256": "e4b24e6264c62ae025e9bed8713e3b7a0e15e8a9496e3371e414f148c9e9b270",
+      "maintained_sha256": "e4b24e6264c62ae025e9bed8713e3b7a0e15e8a9496e3371e414f148c9e9b270",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-readout-r1/readout_worker.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/readout_worker.py",
+      "original_sha256": "75a2b99fb9f036a249accba201bf521dcd083b763a5703d0fd2e88b0998bc8f2",
+      "maintained_sha256": "75a2b99fb9f036a249accba201bf521dcd083b763a5703d0fd2e88b0998bc8f2",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-readout-r1/test_readout.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/test_readout.py",
+      "original_sha256": "c787b21d8df1cd5f9691453ba80fb7ea14157a438e589313878a3b9b0e0f7b2f",
+      "maintained_sha256": "c787b21d8df1cd5f9691453ba80fb7ea14157a438e589313878a3b9b0e0f7b2f",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/graph_closure.py",
+      "original_sha256": "24d064d3fa59404d01550b83ed2a8fab98a26313f5164c303fc963a888911523",
+      "maintained_sha256": "53332a0f7cd70a9713554d0b7316d277eb3a9b5b455dd52362587073ce229b54",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/pack_onnx.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/pack_onnx.py",
+      "original_sha256": "f50ffe3ade2f09cdbcbdcfe4c594c3b3c707408beff8597567e28e58848de9fd",
+      "maintained_sha256": "f50ffe3ade2f09cdbcbdcfe4c594c3b3c707408beff8597567e28e58848de9fd",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/prepare_profile_request_r2.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/prepare_profile_request_r2.py",
+      "original_sha256": "a3a545d5d0da4f0a7e991acab6af56775cb3c55fd4b7c2af04fe825f540908ec",
+      "maintained_sha256": "a3a545d5d0da4f0a7e991acab6af56775cb3c55fd4b7c2af04fe825f540908ec",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/prepare_profile_request.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/prepare_profile_request.py",
+      "original_sha256": "a257757a528b7d2356e6281ab2835bf7ff6a4637304c7d8b8273f5e430ad1a1b",
+      "maintained_sha256": "a257757a528b7d2356e6281ab2835bf7ff6a4637304c7d8b8273f5e430ad1a1b",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/prepare_storage.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/prepare_storage.py",
+      "original_sha256": "e3a4cabc8bd2247b06e815790fa29441c5f805d6e8b8ac293fa4c5d9b1d14ed5",
+      "maintained_sha256": "e3a4cabc8bd2247b06e815790fa29441c5f805d6e8b8ac293fa4c5d9b1d14ed5",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/storage_worker.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/storage_worker.py",
+      "original_sha256": "68c585105184ea6d9a90b731bc9a4328414df2ce14c37d35c9af48d6d3b562ef",
+      "maintained_sha256": "68c585105184ea6d9a90b731bc9a4328414df2ce14c37d35c9af48d6d3b562ef",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/test_storage.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-storage-r1/test_storage.py",
+      "original_sha256": "e48e246778c94b79d86a3ab21c08311a9d9ef4a848451d3ddfdcd203cdb4a2f7",
+      "maintained_sha256": "e48e246778c94b79d86a3ab21c08311a9d9ef4a848451d3ddfdcd203cdb4a2f7",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r1/capture_build_target_evidence.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r1/capture_build_target_evidence.py",
+      "original_sha256": "682dd5445e73d11530ec94d5e82fd61d671271f15f80c7c86004daa7abbe42da",
+      "maintained_sha256": "682dd5445e73d11530ec94d5e82fd61d671271f15f80c7c86004daa7abbe42da",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r1/prepare_native.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r1/prepare_native.py",
+      "original_sha256": "507c73088d75bb2ec4cb94680f199e5012a34486651b64094b0ff121fb75af7b",
+      "maintained_sha256": "507c73088d75bb2ec4cb94680f199e5012a34486651b64094b0ff121fb75af7b",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r1/run_native_context.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r1/run_native_context.py",
+      "original_sha256": "a353f2559b235de3466e66f341247978fa1d28a899a32f41917d2fe827255bed",
+      "maintained_sha256": "a353f2559b235de3466e66f341247978fa1d28a899a32f41917d2fe827255bed",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r1/test_native_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r1/test_native_owner.py",
+      "original_sha256": "116260d6245ed40787b16137f3e859c83a3c39e3a899bd9c5613015512038e1a",
+      "maintained_sha256": "116260d6245ed40787b16137f3e859c83a3c39e3a899bd9c5613015512038e1a",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r2/prepare_native.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r2/prepare_native.py",
+      "original_sha256": "507c73088d75bb2ec4cb94680f199e5012a34486651b64094b0ff121fb75af7b",
+      "maintained_sha256": "507c73088d75bb2ec4cb94680f199e5012a34486651b64094b0ff121fb75af7b",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r2/prepare_profile_request_r3.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r2/prepare_profile_request_r3.py",
+      "original_sha256": "87dc08d11eeeea91483964c9530af24fef593e92691256a8c0baabaa10e05502",
+      "maintained_sha256": "87dc08d11eeeea91483964c9530af24fef593e92691256a8c0baabaa10e05502",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r2/run_native_context.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r2/run_native_context.py",
+      "original_sha256": "51584b7246ab889f91513eafa790bc00fda59f0941407ab3f51264dd82b98b5e",
+      "maintained_sha256": "51584b7246ab889f91513eafa790bc00fda59f0941407ab3f51264dd82b98b5e",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-owned-r2/test_native_owner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-owned-r2/test_native_owner.py",
+      "original_sha256": "f02293fe3bd105a6e6a503d10b9f32df1566834bdbbe5cd01f26525b285bcbaa",
+      "maintained_sha256": "f02293fe3bd105a6e6a503d10b9f32df1566834bdbbe5cd01f26525b285bcbaa",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-preparation-r1/numeric_probes.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-native-preparation-r1/numeric_probes.py",
+      "original_sha256": "864b925ad5951e13fac3312fb233ba14acc024215551873583cba7488d3f769a",
+      "maintained_sha256": "864b925ad5951e13fac3312fb233ba14acc024215551873583cba7488d3f769a",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r1/prepare_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r1/prepare_quant.py",
+      "original_sha256": "9afd5d20833f3935214b7b53e6cabb1d9d2bb0467d096a92ae732fb69e35d627",
+      "maintained_sha256": "9afd5d20833f3935214b7b53e6cabb1d9d2bb0467d096a92ae732fb69e35d627",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r1/quant_worker.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r1/quant_worker.py",
+      "original_sha256": "bb56165c9869605621eb46f422c7cf33dc11f37e6d20d4eb1703ed583d4df98e",
+      "maintained_sha256": "bb56165c9869605621eb46f422c7cf33dc11f37e6d20d4eb1703ed583d4df98e",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r1/quantize_context.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r1/quantize_context.py",
+      "original_sha256": "4e250ffa69251adb088d0ef83b18ea27e0537144bb74614e8fd31cec2ef07691",
+      "maintained_sha256": "4e250ffa69251adb088d0ef83b18ea27e0537144bb74614e8fd31cec2ef07691",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r1/test_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r1/test_quant.py",
+      "original_sha256": "6953872dec8dc889e0d3e32cb1db767b3655dad2f908274d0f493c1e41d91ff3",
+      "maintained_sha256": "6953872dec8dc889e0d3e32cb1db767b3655dad2f908274d0f493c1e41d91ff3",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/graph_closure.py",
+      "original_sha256": "24d064d3fa59404d01550b83ed2a8fab98a26313f5164c303fc963a888911523",
+      "maintained_sha256": "53332a0f7cd70a9713554d0b7316d277eb3a9b5b455dd52362587073ce229b54",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/prepare_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/prepare_quant.py",
+      "original_sha256": "918bb86456920de3dc5025a9e147b08e774a301b2e49f9ca6516efe4ed32bdea",
+      "maintained_sha256": "918bb86456920de3dc5025a9e147b08e774a301b2e49f9ca6516efe4ed32bdea",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/projection_census.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/projection_census.py",
+      "original_sha256": "3a1bee5f7f1b6a1c5743a90e7d97e7249c4222d0dd420aad0d75694ae00c971f",
+      "maintained_sha256": "3a1bee5f7f1b6a1c5743a90e7d97e7249c4222d0dd420aad0d75694ae00c971f",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/quant_worker.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/quant_worker.py",
+      "original_sha256": "2e2590105c28c32aaf264c8c90d2e97f9b97ccdfc098b435634a9e7487e048c0",
+      "maintained_sha256": "2e2590105c28c32aaf264c8c90d2e97f9b97ccdfc098b435634a9e7487e048c0",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/quantize_context.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/quantize_context.py",
+      "original_sha256": "4a2366a051a009ff7194ddbd734ba5e97e32e96b48230f9502710fa7248660fb",
+      "maintained_sha256": "4a2366a051a009ff7194ddbd734ba5e97e32e96b48230f9502710fa7248660fb",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r2/test_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r2/test_quant.py",
+      "original_sha256": "e054df56e90a5d942bd4db25ef41fc99896b32a9725f039a0f40a636d0ba9370",
+      "maintained_sha256": "e054df56e90a5d942bd4db25ef41fc99896b32a9725f039a0f40a636d0ba9370",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/graph_closure.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/graph_closure.py",
+      "original_sha256": "24d064d3fa59404d01550b83ed2a8fab98a26313f5164c303fc963a888911523",
+      "maintained_sha256": "53332a0f7cd70a9713554d0b7316d277eb3a9b5b455dd52362587073ce229b54",
+      "changes": [
+        "SPDX header"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/prepare_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/prepare_quant.py",
+      "original_sha256": "414651fdc849b6ef10846019f510fd994de9ea31399378dc4897faac4f717ddf",
+      "maintained_sha256": "32cf767568a3a930faacbd1e975b6efebd2da40bda90d33540b932476f7fadc9",
+      "changes": [
+        "bind maintained ONNX storage normalizer for fresh releases"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/projection_census.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/projection_census.py",
+      "original_sha256": "3a1bee5f7f1b6a1c5743a90e7d97e7249c4222d0dd420aad0d75694ae00c971f",
+      "maintained_sha256": "3a1bee5f7f1b6a1c5743a90e7d97e7249c4222d0dd420aad0d75694ae00c971f",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/quant_worker.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/quant_worker.py",
+      "original_sha256": "2e2590105c28c32aaf264c8c90d2e97f9b97ccdfc098b435634a9e7487e048c0",
+      "maintained_sha256": "2e2590105c28c32aaf264c8c90d2e97f9b97ccdfc098b435634a9e7487e048c0",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/quantize_context.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/quantize_context.py",
+      "original_sha256": "d988e73c45b2a50c4dd2a15548ca0ff4c2ac3bacf68989e6c0a0e3912fcae2e0",
+      "maintained_sha256": "99064b1eec059361a786e5453ea990ef2b775315f16048816bc860af47f003ca",
+      "changes": [
+        "bind maintained ONNX storage normalizer for fresh releases"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-weight8-r3/test_quant.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/context-weight8-r3/test_quant.py",
+      "original_sha256": "1fcdcdaaaef417614593bc00ff149802d3d52864f924a2631ebc01eaa611e9b3",
+      "maintained_sha256": "1fcdcdaaaef417614593bc00ff149802d3d52864f924a2631ebc01eaa611e9b3",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/external-data-pack-r1/pack_onnx.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/external-data-pack-r1/pack_onnx.py",
+      "original_sha256": "fcae7872dedc8fc7297913ed046fe87959ad71a774adecbdb6293e14af4d6025",
+      "maintained_sha256": "fcae7872dedc8fc7297913ed046fe87959ad71a774adecbdb6293e14af4d6025",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/export_scores_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/export_scores_r4.py",
+      "original_sha256": "83b9b86ba3ba0b5ad3533987142a61d71ffed70bc02b5b3b01cba29071439ae2",
+      "maintained_sha256": "83b9b86ba3ba0b5ad3533987142a61d71ffed70bc02b5b3b01cba29071439ae2",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/full_reference_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/full_reference_r4.py",
+      "original_sha256": "208a0c55ac9f9743cd41bcd03f11f2c65411b65f2370a8b2044511e0607250ec",
+      "maintained_sha256": "208a0c55ac9f9743cd41bcd03f11f2c65411b65f2370a8b2044511e0607250ec",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/full_worker_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/full_worker_r4.py",
+      "original_sha256": "82998265e22f6e4456588efa9be0d754eb91eafca64a9840dd430519cefde42d",
+      "maintained_sha256": "82998265e22f6e4456588efa9be0d754eb91eafca64a9840dd430519cefde42d",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/launch_full_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/launch_full_r4.py",
+      "original_sha256": "a616b3fe3648ec993f778c9a6844af7f617d8647bcfc4219fcd91739eff77a07",
+      "maintained_sha256": "a616b3fe3648ec993f778c9a6844af7f617d8647bcfc4219fcd91739eff77a07",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/owned_profile_17.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/owned_profile_17.py",
+      "original_sha256": "fc670b1fa1d5fc5fb94a1428751416cee162dffb1a5ca0c6feaa30c3aa591ad0",
+      "maintained_sha256": "fc670b1fa1d5fc5fb94a1428751416cee162dffb1a5ca0c6feaa30c3aa591ad0",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/owned_profile_4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/owned_profile_4.py",
+      "original_sha256": "44f6707a78e833212f7b9e231f09fd65437ab17294fc2f73b67c3a39e925d451",
+      "maintained_sha256": "44f6707a78e833212f7b9e231f09fd65437ab17294fc2f73b67c3a39e925d451",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/prepare_full_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/prepare_full_r4.py",
+      "original_sha256": "fde925fff0e75bc1ddc7ea59235a95e28ca196c4a1b19f14fae1402c14e5c109",
+      "maintained_sha256": "fde925fff0e75bc1ddc7ea59235a95e28ca196c4a1b19f14fae1402c14e5c109",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/full-stages-r4/test_full_r4.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/full-stages-r4/test_full_r4.py",
+      "original_sha256": "5e2c4f173e448a69b8f072da63bb3c78756e441ee782c933060a82b9dbb50fb7",
+      "maintained_sha256": "5e2c4f173e448a69b8f072da63bb3c78756e441ee782c933060a82b9dbb50fb7",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/profile-staging-r1/stage_profiles.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/profile-staging-r1/stage_profiles.py",
+      "original_sha256": "44428d082c9eb66f9a2f1cf83a4a24e8b86ac08301c525dc165809dac82fe68f",
+      "maintained_sha256": "44428d082c9eb66f9a2f1cf83a4a24e8b86ac08301c525dc165809dac82fe68f",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/profile-staging-r1/test_stage_profiles.py",
+      "destination": "scripts/arbiter/export/qwen/qwen3-challengers-r1/profile-staging-r1/test_stage_profiles.py",
+      "original_sha256": "bd8507d5938a3e4228bc8ac7e2e2bc53f4de94bb2d3776c98c19805379e43597",
+      "maintained_sha256": "bd8507d5938a3e4228bc8ac7e2e2bc53f4de94bb2d3776c98c19805379e43597",
+      "changes": []
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen-tiny-export-r1/runner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen-tiny-export-r1/runner.py",
+      "original_sha256": "b5eea9d69e68c18ad8ed8b0279b3237749888f1163efb9d2a515e908fa16abb8",
+      "maintained_sha256": "e41f62d301ed583ed5291576359cf0b22c6299ef7cf290193fc9e391c389ddf2",
+      "changes": [
+        "repository root"
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen-tiny-export-r2/runner.py",
+      "destination": "scripts/arbiter/export/qwen/qwen-tiny-export-r2/runner.py",
+      "original_sha256": "81d4b1b3650b999623372718ca31d9b1803b78c72a3f98213f90bffb944aa053",
+      "maintained_sha256": "37d95159fe89e66a6e67a26a79da8e749bbce199748bc67b4d8d82e3911d2683",
+      "changes": [
+        "repository root"
+      ]
+    }
+  ]
+}

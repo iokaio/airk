@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Apply one new native-owned R8 configuration, observe exact Ready, run one Dev condition."""
+from pathlib import Path
+import json,subprocess,os,time,argparse
+p=argparse.ArgumentParser();p.add_argument('--ordinal',type=int,choices=[2,3,4,5],required=True);a=p.parse_args();base=Path(__file__).resolve().parent;plan=json.loads((base/'native-a6-command-plan-r8-runtime-r2.json').read_bytes());c=plan['phases'][0]['conditions'][a.ordinal];out=base/('native-a6-config-r8-dev-'+str(a.ordinal).zfill(2));out.mkdir();start=time.monotonic();env=os.environ.copy();env.update(c['emitter_environment']);r=subprocess.run(c['emitter_argv'],capture_output=True,env=env,timeout=60);(out/'emitter.log').write_bytes(r.stdout+r.stderr);r.check_returncode();assert b'1 passed; 0 failed' in r.stdout
+r=subprocess.run(c['apply_native_configuration_argv'],capture_output=True,timeout=60);(out/'configure-stdout.bin').write_bytes(r.stdout);(out/'configure-stderr.bin').write_bytes(r.stderr);r.check_returncode();waitstart=time.monotonic();observations=[]
+while True:
+ r=subprocess.run(c['observe_actual_ready_argv'],capture_output=True,timeout=30);n=len(observations);(out/f'status-{n:03}-stdout.bin').write_bytes(r.stdout);(out/f'status-{n:03}-stderr.bin').write_bytes(r.stderr);r.check_returncode();v=json.loads(r.stdout);observations.append({'availability':v['availability'],'selected':v['selected_profile'],'active':v['active_profile'],'elapsed_seconds':time.monotonic()-waitstart});assert v['selected_profile']==c['emitter_environment']['AIRK_ARBITER_EVALUATION_PROFILE'];assert v['availability'] in ('requested','draining','verifying','warming','ready')
+ if v['availability']=='ready':assert v['active_profile']==v['selected_profile'];break
+ assert time.monotonic()-waitstart<120
+(out/'observation.json').write_text(json.dumps({'observations':observations,'all_configuration_seconds':time.monotonic()-start,'ready_wait_seconds':time.monotonic()-waitstart,'scope':'One new native Configure accepted then read-only observation of same operation. No retries, resource/performance qualification or fake Ready.'},indent=2)+'\n');print(json.dumps({'actual_ready':observations[-1],'starting':c['name']}),flush=True);raise SystemExit(subprocess.call(c['condition_argv']))

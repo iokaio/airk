@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Synthetic map decisions only; no protected files or successful build exists here.
+use super::*;
+fn row() -> MetadataCustodyCopy {
+    let root = std::env::temp_dir();
+    let sha = Sha256Digest::from_bytes([1; 32]);
+    MetadataCustodyCopy {
+        original: ResourceFilePin {
+            path: root.join("original.json").to_str().unwrap().into(),
+            sha256: sha,
+        },
+        copy: ResourceFilePin {
+            path: root.join("protected-copy.json").to_str().unwrap().into(),
+            sha256: sha,
+        },
+        bytes: 3,
+    }
+}
+#[test]
+fn custody_never_redirects_code_authentication_or_mismatched_original_pin() -> Result<()> {
+    let row = row();
+    let book = Custody::new(std::slice::from_ref(&row))?;
+    assert!(book.mapped(&row.original.path)?);
+    assert!(!book.mapped(&row.copy.path)?);
+    assert!(book.resolve(&row.original, false).is_err());
+    let mut wrong = row.original.clone();
+    wrong.sha256 = Sha256Digest::from_bytes([2; 32]);
+    assert!(book.resolve(&wrong, true).is_err());
+    assert_eq!(
+        book.resolve(&row.original, true)?,
+        (row.copy.clone(), Some(3))
+    );
+    assert!(book.recheck().is_err());
+    book.consumed(&row.original)?;
+    book.recheck()?;
+    Ok(())
+}
+#[test]
+fn custody_refuses_duplicate_unknown_unused_changed_and_chained_mappings() -> Result<()> {
+    let row = row();
+    assert!(Custody::new(&[row.clone(), row.clone()]).is_err());
+    let mut other = row.clone();
+    other.original.path.push_str(".other");
+    assert!(Custody::new(&[row.clone(), other]).is_err());
+    let mut other = row.clone();
+    other.original = row.copy.clone();
+    other.copy.path.push_str(".other");
+    assert!(Custody::new(&[row.clone(), other]).is_err());
+    let mut wrong = row.clone();
+    wrong.bytes = 0;
+    assert!(Custody::new(&[wrong]).is_err());
+    let mut wrong = row.clone();
+    wrong.copy.sha256 = Sha256Digest::from_bytes([2; 32]);
+    assert!(Custody::new(&[wrong]).is_err());
+    let book = Custody::new(&[row])?;
+    assert!(
+        book.consumed(&ResourceFilePin {
+            path: std::env::temp_dir()
+                .join("unknown.json")
+                .to_str()
+                .unwrap()
+                .into(),
+            sha256: Sha256Digest::from_bytes([1; 32])
+        })
+        .is_err()
+    );
+    assert!(book.recheck().is_err());
+    Ok(())
+}
+#[test]
+fn custody_decoder_rejects_unknown_schema_fields_and_relative_copy() {
+    assert!(decode_metadata_custody(br#"{"schema":"other","copies":[]}"#).is_err());
+    assert!(
+        decode_metadata_custody(
+            br#"{"schema":"airk.native.cuda-metadata-custody/1","copies":[],"approved":true}"#
+        )
+        .is_err()
+    );
+    let mut row = row();
+    row.copy.path = "relative.json".into();
+    assert!(Custody::new(&[row]).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn custody_windows_case_aliases_do_not_create_distinct_originals() -> Result<()> {
+    let row = row();
+    let mut other = row.clone();
+    other.original.path = other.original.path.to_uppercase();
+    other.copy.path.push_str(".other");
+    assert!(Custody::new(&[row, other]).is_err());
+    Ok(())
+}

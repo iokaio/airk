@@ -636,7 +636,7 @@ def prepare(args):
     runtime_path = plan_path.with_name(plan_path.stem + '-runtime.json')
     evidence_path = plan_path.with_name(plan_path.stem + '-prerequisites.json')
     require(not any(x.exists() for x in (plan_path, runtime_path, evidence_path)), 'preparation metadata must be fresh')
-    helper_root = root / 'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1'
+    helper_root = root / 'scripts/cuda-native-execution/helpers'
     plan = {'schema': SCHEMA, 'human_sid': SID, 'limits': dict(LIMITS), 'model': args.model,
             'repository_root': str(root), 'output_root': str(args.output_root), 'cache_prefix': str(args.cache_prefix),
             'expected_weights_bytes': selected['expected_weights_bin_bytes'],

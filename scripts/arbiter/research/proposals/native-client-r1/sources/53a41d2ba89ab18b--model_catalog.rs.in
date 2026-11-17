@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Capability selection works offline before any workspace/model state exists.
+use anyhow::{Result, ensure};
+use serde_json::{Value, json};
+use std::fs;
+mod common;
+
+#[test]
+fn model_catalog_never_opens_collection_state_and_only_selects_int8() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let missing_root = directory.path().join("not-a-workspace");
+    let missing_state = directory.path().join("not-created");
+    // airkctl asks the service for the catalog (M10); the service has no project.
+    let service = common::BareService::start();
+    let output = common::ctl::Ctl::new()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .args([
+            "--root",
+            missing_root.to_str().unwrap(),
+            "--data-dir",
+            missing_state.to_str().unwrap(),
+            "model-catalog",
+        ])
+        .env("AIRK_USAGE_MODE", "diagnostic")
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ensure!(
+        output.stdout.len() < 32768,
+        "catalog exceeds protocol bound"
+    );
+    let value: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["automatic_int8"], true);
+    assert_eq!(
+        value["capabilities"]["architecture"],
+        std::env::consts::ARCH
+    );
+    assert_eq!(
+        value["capabilities"]["operating_system"],
+        std::env::consts::OS
+    );
+    assert!(value["capabilities"]["logical_cpus"].as_u64().unwrap() >= 1);
+    let profiles = value["catalog"]["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 2);
+    assert!(
+        profiles
+            .iter()
+            .any(|p| p["id"] == value["selection"]["profile_id"])
+    );
+    assert_eq!(value["catalog"]["schema"], 2);
+    assert_eq!(value["catalog"]["default_profile"], "minilm-l6-v2-u8-v3");
+    let runtime = "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2";
+    assert_eq!(value["capabilities"]["runtime"], runtime);
+    // Independent current-contract expectations: no FP32 profile, inherited
+    // v1 graph or fabricated upstream URL can replace either trained export.
+    // The mixed policy explicitly retains embeddings and six FFN outputs FP32.
+    let expected = [
+        (
+            "minilm-l6-v2-u8-v3",
+            "mixed-u8",
+            "1d9ca474df1025a006f0b8fdfc6372d2bcb78502f6c8f46ee7c72a588fbb248b",
+            69_325_925,
+        ),
+        (
+            "minilm-l6-v2-s8-v3",
+            "mixed-s8",
+            "d918cfad34439a7258ddd403e1dbbacf44109a228be50985407dcbdd01151ccd",
+            69_355_444,
+        ),
+    ];
+    let tokenizer = "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037";
+    let license = "1efe4b67fd59a127e3c43ed3e7bfb3a6c152764a45b9edab5d520707b29056d0";
+    for (profile, (id, precision, model, bytes)) in profiles.iter().zip(expected) {
+        assert_eq!(profile["id"], id);
+        assert_eq!(profile["precision"], precision);
+        assert_eq!(profile["runtime"], runtime);
+        assert_eq!(profile["manifest"]["model_sha256"], model);
+        assert_eq!(profile["manifest"]["tokenizer_sha256"], tokenizer);
+        assert_eq!(profile["manifest"]["license_sha256"], license);
+        assert_eq!(
+            profile["quantization"]["schema"],
+            "airk.minilm.quantization/2"
+        );
+        assert_eq!(profile["quantization"]["fp32_embeddings_retained"], true);
+        assert_eq!(
+            profile["quantization"]["constant_linear_parameters"],
+            10_616_832
+        );
+        assert_eq!(
+            profile["quantization"]["quantized_linear_parameters"],
+            7_077_888
+        );
+        assert_eq!(
+            profile["assets"],
+            json!([
+                {"name":"model.onnx","bytes":bytes,"sha256":model,"url":null},
+                {"name":"tokenizer.json","bytes":466247,"sha256":tokenizer,"url":null},
+                {"name":"LICENSE","bytes":34889,"sha256":license,"url":null}
+            ])
+        );
+    }
+    assert_eq!(fs::read_dir(directory.path())?.count(), 0);
+    Ok(())
+}

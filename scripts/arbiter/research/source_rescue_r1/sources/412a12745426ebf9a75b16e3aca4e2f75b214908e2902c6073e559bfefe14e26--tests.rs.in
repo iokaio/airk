@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn fixture() -> Result<(DeviceStatus, ScopeBinding)> {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/split/arbiter/device_cases.json"
+    ))?;
+    let status: DeviceStatus = serde_json::from_value(cases["cases"][0]["status"].clone())?;
+    let mut scope = crate::arbiter::stage_tests::scope();
+    scope.installation = status.configuration.installation;
+    scope.catalog = status.configuration.catalog;
+    Ok((status, scope))
+}
+#[test]
+fn literal_scoped_snapshot_preserves_full_stage_metadata_without_any_enrollment_list() -> Result<()>
+{
+    let (status, scope) = fixture()?;
+    let focus = serde_json::to_value(&status.focus)?;
+    let context = serde_json::to_value(&status.context)?;
+    let observed = ScopedDeviceStatus::from_status(status, scope)?;
+    let json = serde_json::to_value(&observed)?;
+    assert_eq!(json["schema"], "airk.arbiter.scoped-device-status/1");
+    assert_eq!(json["observation"]["state"], "observed");
+    assert_eq!(json["observation"]["focus"]["status"], focus);
+    assert_eq!(json["observation"]["context"]["status"], context);
+    fn no_enrollment(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(row) => {
+                for (key, value) in row {
+                    assert!(!matches!(key.as_str(), "indexes" | "configuration"));
+                    no_enrollment(value);
+                }
+            }
+            serde_json::Value::Array(rows) => {
+                for row in rows {
+                    no_enrollment(row)
+                }
+            }
+            _ => {}
+        }
+    }
+    no_enrollment(&json);
+    let round: ScopedDeviceStatus = serde_json::from_value(json.clone())?;
+    round.validate()?;
+    assert_eq!(serde_json::to_value(round)?, json);
+    Ok(())
+}
+#[test]
+fn literal_unavailable_snapshot_never_fabricates_current_revision_or_disabled_stage() -> Result<()>
+{
+    let (_, scope) = fixture()?;
+    let value = ScopedDeviceStatus::unavailable(scope, "Current configuration unavailable")?;
+    let json = serde_json::to_value(&value)?;
+    assert_eq!(json["scope"]["configuration_revision"], 0);
+    assert_eq!(json["observation"]["state"], "unavailable");
+    assert!(json["observation"].get("focus").is_none());
+    let mut bad = value.clone();
+    bad.scope.configuration_revision = 1;
+    assert!(bad.validate().is_err());
+    assert!(ScopedDeviceStatus::unavailable(value.scope, "").is_err());
+    Ok(())
+}
+#[test]
+fn scoped_snapshot_refuses_foreign_authority_publication_stage_and_unknown_fields() -> Result<()> {
+    let (status, scope) = fixture()?;
+    let mut bad = scope.clone();
+    bad.installation = Sha256Digest::from_bytes([99; 32]);
+    assert!(ScopedDeviceStatus::from_status(status.clone(), bad).is_err());
+    let value = ScopedDeviceStatus::from_status(status, scope)?;
+    let mut bad = value.clone();
+    bad.scope.publication.generation += 1;
+    assert!(bad.validate().is_err());
+    let mut bad = value.clone();
+    if let ScopedDeviceObservation::Observed { focus, .. } = &mut bad.observation {
+        focus.application.scope.authorization = Sha256Digest::from_bytes([99; 32]);
+    }
+    assert!(bad.validate().is_err());
+    let mut bad = value.clone();
+    if let ScopedDeviceObservation::Observed { focus, .. } = &mut bad.observation {
+        focus.status.models[0].model = SelectedModel::ContextLarge;
+    }
+    assert!(bad.validate().is_err());
+    let mut json = serde_json::to_value(value)?;
+    json["observation"]["invented_qualification"] = true;
+    assert!(serde_json::from_value::<ScopedDeviceStatus>(json).is_err());
+    Ok(())
+}
+#[test]
+fn all_rust_device_cases_keep_requested_actual_precision_and_typed_reasons_complete() -> Result<()>
+{
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/split/arbiter/device_cases.json"
+    ))?;
+    let mut selected = 0;
+    for row in cases["cases"].as_array().context("native device cases")? {
+        let Some(raw) = row.get("status") else {
+            continue;
+        };
+        let status: DeviceStatus = serde_json::from_value(raw.clone())?;
+        if status.initialization.is_some() {
+            continue;
+        }
+        let mut scope = crate::arbiter::stage_tests::scope();
+        scope.installation = status.configuration.installation;
+        scope.catalog = status.configuration.catalog;
+        let output = serde_json::to_value(ScopedDeviceStatus::from_status(status, scope)?)?;
+        for stage in ["focus", "context"] {
+            assert_eq!(output["observation"][stage]["status"], raw[stage]);
+        }
+        selected += 1;
+    }
+    assert!(selected > 10, "native complete status cases missing");
+    Ok(())
+}
+
+#[test]
+fn scoped_device_semantic_case_emitter() -> Result<()> {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/split/arbiter/device_cases.json"
+    ))?;
+    let mut outputs = Vec::new();
+    for index in [0, 4, 6] {
+        let status: DeviceStatus = serde_json::from_value(cases["cases"][index]["status"].clone())?;
+        let mut scope = crate::arbiter::stage_tests::scope();
+        scope.installation = status.configuration.installation;
+        scope.catalog = status.configuration.catalog;
+        outputs.push(serde_json::json!({"id":cases["cases"][index]["id"],"status":ScopedDeviceStatus::from_status(status,scope)?}));
+    }
+    let (_, scope) = fixture()?;
+    outputs.push(serde_json::json!({"id":"current_configuration_unavailable","status":ScopedDeviceStatus::unavailable(scope,"Current configuration4 unavailable; no migration or probe performed")?}));
+    if let Some(path) = std::env::var_os("AIRK_WRITE_SCOPED_DEVICE_CASES") {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(&serde_json::to_vec_pretty(&serde_json::json!({"schema":"airk.scoped-device-semantic-cases/1","qualification":false,"cases":outputs}))?)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    Ok(())
+}

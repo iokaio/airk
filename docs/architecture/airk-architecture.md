@@ -511,3 +511,46 @@ footers. The Word builder uses existing Pandoc plus Python's standard-library
 OOXML finishing; python-docx and network downloads are not required. Source
 references in Word point to the branch's public repository URLs and remain
 optional: the operating narrative and glossary are contained in the document.
+
+
+## Component contract map
+
+Paths below are repository-relative unless qualified by a crate. Private roots and host details are in the [current campaign instructions](../agent-current-work.md).
+
+| Path | What it owns | Contract |
+|---|---|---|
+| `crates/airk-core/` | Shared native types and read/service contracts | `src/read_limits/CONTRACT.md`, `src/service_records/CONTRACT.md`, `src/install_record/CONTRACT.md` |
+| `crates/airk-process/`, `crates/airk-host/` | Native processes, platform adapters, install files/layout and checkpoint fences | Host `src/{native_command,install_files,install_layout,checkpoint_fence}/CONTRACT.md` |
+| `crates/airk-ingest/`, `crates/airk-store/`, `crates/airk-retrieval/` | Extraction, persisted indexes and retrieval/inference primitives | Store `src/store_fs/CONTRACT.md`; otherwise owning source/tests |
+| `crates/airk-kernel/` | Publication, query execution, budgets and Workbench plans | Owning source/tests and `docs/architecture.md` |
+| `crates/airk-mcp/` | Canonical evidence handlers, MCP schemas and SDK transport | `docs/read-interface-parity.md`, native schemas/tests |
+| `crates/airk-ipc/` | Same-user transport, frames and I1 control protocol | `CONTRACT.md` |
+| `crates/airkctl/` | CLI, session and agent-config writing | `src/contract/CONTRACT.md` (I2) |
+| `crates/airk-endpoint/`, `crates/airk-https/` | Endpoint contracts, HTTPS gateway and Admin handlers | Endpoint `src/admin_contract/CONTRACT.md`; HTTPS `src/admin_plane/CONTRACT.md` (I3) |
+| `crates/airk-catalog-control/`, `crates/airk-frontend/` | Catalog mutations and service-side client/read adapters | Owning source/tests; I1/I2/I3 where crossed |
+| `crates/airk-inference/`, `crates/airk-supervisor/` | Inference lifetime and in-process workers | Owning source/tests and `docs/process-model.md` |
+| `crates/airk-installer/`, `crates/airk-service/`, `crates/airk-cli/` | Installation, resident service/setup and thin `airk` executable | Service `src/setup_role/CONTRACT.md`; Core install-record contract |
+| `packages/vscode/` | VS Code host, Explorer and Workbench | I2 plus `docs/split/contracts.md` |
+| `packages/admin/` | Browser/Admin presentation and shared UI workflows | I3 plus `docs/split/contracts.md` |
+| `scripts/`, `.github/workflows/` | Checks, packaging, installers and release workflows | `CONTRIBUTING.md`, `docs/ci-and-builds.md`, script tests |
+| `temp/`, `.airk/` and private fixture/state subpaths under `artifacts/` (listed in the current campaign instructions) | Local scratch and private/index state. Never staged, packaged or published. | none |
+
+Contract paths in the table are relative to their named crate. Dependency direction: clients/transports call owning service/kernel APIs; kernel uses ingest/store/retrieval, which use Core contracts. Core and process foundations have no AIRK dependencies. Exact edges live in Cargo manifests and `scripts/dev/boundary-exceptions.json`; architectural rationale is in docs/architecture.md.
+
+## Agent workflow glossary
+
+- **Receipt**: A retained result/evidence record tied to request, source or artifact identity; native operation receipts and local validation-run receipts have different owners.
+- **Qualification**: Evidence from the required runtime, transport, package and platform checks on identified inputs; compilation alone is insufficient.
+- **Plane**: A protocol/authority boundary, such as evidence reads, local control or browser Admin management.
+- **Fence order**: The owning contract's order of locks and revision/authority checks that prevents stale or unauthorized publication or delivery.
+- **Arbiter**: The approved optional local evidence-gathering/answer capability inside the existing service, bounded by the active plan.
+- **P10**: The Arbiter package in the advanced-split plan. Historical build receipts also used this name for a Cargo target; call that directory the **isolated target** in new records.
+- **Mac Neo**: The existing macOS arm64 SSH qualification/signing host; location and ignored connection configuration are in the current campaign instructions.
+- **I1**: Same-user local IPC control request/frame contract owned by airk-ipc.
+- **I2**: airkctl caller contract: commands, exit/error/version documents and session protocol.
+- **I3**: Browser Admin HTTP envelope, authentication/admission and operation contract.
+- **Generation pilot**: The approved Rust schema-to-TypeScript generation path for I2/I3; semantic rules remain tested against Rust-emitted cases.
+- **Compatibility row**: A reviewed compatibility-inventory entry identifying retained behavior, its surviving owner and preservation evidence.
+- **Installed journey**: An end-to-end test against an installed product, including its actual host/process and cleanup behavior.
+- **Matched debug pair**: airk and airkctl built/staged together by the runtime builder with matching source, version, contract and artifact metadata.
+- **Isolated target**: The persistent Cargo build/cache directory assigned to this campaign; its path is in the current campaign instructions.

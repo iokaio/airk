@@ -1,5 +1,11 @@
 # AIRK documentation
 
+See the [source rescue catalogue](arbiter/source-rescue.md) for maintained analysis/training/build code, historical versions, README links and audit limits.
+
+Agent work follows the [standing rules](../AGENTS.md) and mandatory [current assignment](agent-current-work.md). The [instruction preservation map](agent-rules-migration.md) records the 17 November reorganization.
+
+For model and native artifact implementation, see [research and reproduction source](../scripts/arbiter/README.md) and [build tooling](../scripts/README.md).
+
 **Current source version: 1.8.207 (15 November 2026).** Native and extension versions agree. The [Arbiter final plan](arbiter/final-plan.md) is being implemented; the [execution ledger](simplify/one-process-ledger.md) distinguishes source behavior, scoped checks, artifacts and installed or platform qualification. Version 1.9.0 is reserved for final delivery after its gates pass. The [earlier 1.9.0 record](releases/release-1.9.0.md) preserves historical candidate evidence. No publication or optional-model qualification is implied.
 
 Start with [native installation](service-installation.md), [CLI-only onboarding](agent-integration.md#standalone-onboarding-without-vs-code), the generated [CLI reference](cli-reference.md), [agent setup](agent-integration.md), [Admin pages](admin-pages.md) and [process ownership](process-model.md). AIRK Service works without VS Code; the extension is a separate client. Verified portable setup and same-request recovery use `airkctl service setup --portable --program` and `service setup --resume`. Product Help and the static Help site consume the same generated native/UI catalog.

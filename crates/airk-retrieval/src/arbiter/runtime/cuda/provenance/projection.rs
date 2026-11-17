@@ -4,6 +4,8 @@ use super::*;
 use airk_core::arbiter::resource_policy::ResourceFilePin;
 use serde_json::Value;
 mod checkpoint;
+mod incremental;
+pub(in crate::arbiter::runtime::cuda) use incremental::validate_incremental_producer;
 mod strict;
 pub(in crate::arbiter::runtime::cuda) use checkpoint::validate_checkpointed_producer;
 
@@ -271,8 +273,27 @@ pub(in crate::arbiter::runtime::cuda) fn project(
     );
     super::super::validate_metadata_custody(&input.custody_copies)?;
     super::super::validate_historical_tool_custody(&input.historical_tool_copies)?;
-    let build = json(source, &input.build_proof)?;
-    let producer = json(source, &input.producer_receipt)?;
+    let actual_build = json(source, &input.build_proof)?;
+    let actual_producer = json(source, &input.producer_receipt)?;
+    let incremental = if actual_build["schema"] == "airk.cuda-static-build-proof/3" {
+        Some(validate_incremental_producer(
+            source,
+            &input.producer_receipt,
+            &input.build_proof,
+        )?)
+    } else {
+        None
+    };
+    // Inherited options/tools/source history are the authenticated parent, never a
+    // claim that the incremental child rebuilt CUDA or the whole source tree.
+    let build = incremental
+        .as_ref()
+        .map(|v| v.parent.build.clone())
+        .unwrap_or_else(|| actual_build.clone());
+    let producer = incremental
+        .as_ref()
+        .map(|v| v.parent.producer.clone())
+        .unwrap_or_else(|| actual_producer.clone());
     let aggregate = json(source, &input.aggregate_proof)?;
     let command = json(source, &input.aggregate_receipt)?;
     let lock = json(source, &input.source_lock)?;
@@ -287,7 +308,9 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         rows(&legal_inventory)?.len() == input.notices.len(),
         "exact legal owner roster required"
     );
-    let checkpointed = if build["schema"] == "airk.cuda-static-build-proof/2" {
+    let checkpointed_value = if incremental.is_some() {
+        None
+    } else if build["schema"] == "airk.cuda-static-build-proof/2" {
         Some(validate_checkpointed_producer(
             source,
             &input.producer_receipt,
@@ -310,31 +333,64 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         );
         None
     };
+    let checkpointed = incremental
+        .as_ref()
+        .map(|v| &v.parent)
+        .or(checkpointed_value.as_ref());
     ensure!(
         producer["policy"]["one_static_core"] == true
             && producer["policy"]["optional_shared_cuda_provider"] == true
             && producer["policy"]["runtime_version"] == "1.30.0",
         "producer core policy differs"
     );
+    if let Some(derived) = &incremental {
+        ensure!(
+            aggregate["schema"] == "airk.cuda-static-aggregate-proof/1"
+                && aggregate["qualification"] == false
+                && aggregate["target"] == "x86_64-pc-windows-msvc"
+                && sha(&aggregate["producer_proof_sha256"])? == canonical_sha(&actual_build)?
+                && sha(&aggregate["receipt_sha256"])? == input.producer_receipt.sha256
+                && input.aggregate_receipt.sha256 == input.producer_receipt.sha256
+                && command == actual_producer
+                && aggregate["output"]["path"] == "aggregate/onnxruntime.lib"
+                && aggregate["output"]["bytes"] == actual_build["new_aggregate"]["bytes"]
+                && aggregate["output"]["sha256"] == actual_build["new_aggregate"]["sha256"]
+                && aggregate["coff"] == actual_producer["archive_proof"]["aggregate"]
+                && sha(&aggregate["plan_sha256"])? == canonical_sha(&derived.recipe)?
+                && derived.build == actual_build
+                && derived.producer == actual_producer
+                && derived.provider_dlls.len() == 2
+                && derived.static_core_build == input.producer_receipt.sha256,
+            "incremental aggregate/producer closure differs"
+        );
+    } else {
+        ensure!(
+            aggregate["schema"] == "airk.cuda-static-aggregate-proof/1"
+                && aggregate["qualification"] == false
+                && sha(&aggregate["producer_proof_sha256"])? == canonical_sha(&build)?
+                && sha(&aggregate["receipt_sha256"])? == input.aggregate_receipt.sha256
+                && command["status"] == "PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED"
+                && successful(&command["command"]),
+            "matching naturally settled static aggregate required"
+        );
+        ensure!(
+            (checkpointed.is_some() || build["toolchain"] == producer["toolchain"])
+                && build["provider_dlls"] == producer["provider_dlls"]
+                && aggregate["output"] == command["output"]
+                && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
+                && sha(&command["plan"]["producer_proof_sha256"])? == canonical_sha(&build)?
+                && sha(&lock["cpu_lock_sha256"])? == input.cpu_lock.sha256
+                && sha(&build["cuda_inventory_sha256"])? == input.cuda_inventory.sha256
+                && sha(&lock["cudnn"]["extraction_receipt_sha256"])?
+                    == input.cudnn_inventory.sha256,
+            "proof/source/aggregate closure mismatch"
+        );
+    }
     ensure!(
-        aggregate["schema"] == "airk.cuda-static-aggregate-proof/1"
-            && aggregate["qualification"] == false
-            && sha(&aggregate["producer_proof_sha256"])? == canonical_sha(&build)?
-            && sha(&aggregate["receipt_sha256"])? == input.aggregate_receipt.sha256
-            && command["status"] == "PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED"
-            && successful(&command["command"]),
-        "matching naturally settled static aggregate required"
-    );
-    ensure!(
-        (checkpointed.is_some() || build["toolchain"] == producer["toolchain"])
-            && build["provider_dlls"] == producer["provider_dlls"]
-            && aggregate["output"] == command["output"]
-            && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
-            && sha(&command["plan"]["producer_proof_sha256"])? == canonical_sha(&build)?
-            && sha(&lock["cpu_lock_sha256"])? == input.cpu_lock.sha256
+        sha(&lock["cpu_lock_sha256"])? == input.cpu_lock.sha256
             && sha(&build["cuda_inventory_sha256"])? == input.cuda_inventory.sha256
             && sha(&lock["cudnn"]["extraction_receipt_sha256"])? == input.cudnn_inventory.sha256,
-        "proof/source/aggregate closure mismatch"
+        "incremental inherited source inventories differ"
     );
     ensure!(
         input.aggregate_archive.sha256 == sha(&aggregate["output"]["sha256"])?,
@@ -363,7 +419,11 @@ pub(in crate::arbiter::runtime::cuda) fn project(
     );
     if let Some(validated) = &checkpointed {
         ensure!(
-            validated.static_core_build == input.producer_receipt.sha256
+            validated.static_core_build
+                == incremental
+                    .as_ref()
+                    .map(|v| v.history.parent_producer_sha256)
+                    .unwrap_or(input.producer_receipt.sha256)
                 && validated.build == build
                 && validated.producer == producer,
             "shared checkpoint interpretation differs"
@@ -395,6 +455,12 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             validated.provider_dlls.len() == 2,
             "shared checkpoint provider roster differs"
         );
+    }
+    if let Some(derived) = &incremental {
+        components[0].source_changes.extend([
+            derived.history.patch_sha256,
+            derived.history.source_after_sha256,
+        ]);
     }
     if let Some(change) = producer.get("changed_source_after_sha256") {
         components[0].source_changes.push(sha(change)?);
@@ -593,7 +659,9 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         target: "x86_64-pc-windows-msvc".into(),
         ort_version: "1.30.0".into(),
         static_core_build: input.producer_receipt.sha256,
-        producer_script_sha256: if checkpointed.is_some() {
+        producer_script_sha256: if incremental.is_some() {
+            sha(&actual_build["producer_source"]["sha256"])?
+        } else if checkpointed.is_some() {
             sha(&build["producer_source"]["sha256"])?
         } else {
             sha(&build["producer_script_sha256"])?
@@ -611,6 +679,7 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             Sha256::digest(serde_json::to_vec(&producer["configure_argv"])?).into(),
         ),
         checkpoint_history: checkpointed.as_ref().map(|v| v.history.clone()),
+        incremental_history: incremental.as_ref().map(|v| v.history.clone()),
         historical_failed_parent: if checkpointed.is_some() {
             Some(sha(&producer["original_failed_build"]["sha256"])?)
         } else {

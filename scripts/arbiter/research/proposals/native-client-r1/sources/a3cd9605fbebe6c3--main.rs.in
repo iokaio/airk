@@ -1,0 +1,2 @@
+extern crate ort;
+fn main() { let _builder = ort::init(); }

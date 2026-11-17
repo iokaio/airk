@@ -1,0 +1,212 @@
+{
+  "schema": "airk.source-disposition/1",
+  "files": [
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/official-payload/{app}/Examples/MyDll/C#/MyDll.cs",
+      "source_sha256": "9e28bead7c5361312e8428401b04fccb738bcdb9b7facd73a3b2b9596808cd76",
+      "source_bytes": 843,
+      "disposition": "upstream_research_input",
+      "reason": "upstream Inno Setup compiler payload example; not authored campaign implementation",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/comparison.json",
+          "sha256": "87ad8a538b58ec70a5a64ca10036cf87b57eaa9d66ca81023c190c33c2976288",
+          "bytes": 17006
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/verification-evidence.json",
+          "sha256": "a142dab2da0cd9ee8e62d8d5e629a0f522a64d317fa52c35912df0074f8b46a3",
+          "bytes": 13131
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/downloads.json",
+          "sha256": "ba0b247368b326677c7e9e813dad9bbc5d3ed78c637702654be575fad931c279",
+          "bytes": 2042
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/jrsoftware/issrc",
+        "revision": "is-6_7_1",
+        "path": "Examples/MyDll/C#/MyDll.cs"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/official-payload/{app}/Examples/MyDll/C#/Properties/AssemblyInfo.cs",
+      "source_sha256": "298fd8c4feed0b5aa00d38bb67baa547cab1dc2f58710c5ff9e180a8530a1222",
+      "source_bytes": 1422,
+      "disposition": "upstream_research_input",
+      "reason": "upstream Inno Setup compiler payload example; not authored campaign implementation",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/comparison.json",
+          "sha256": "87ad8a538b58ec70a5a64ca10036cf87b57eaa9d66ca81023c190c33c2976288",
+          "bytes": 17006
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/verification-evidence.json",
+          "sha256": "a142dab2da0cd9ee8e62d8d5e629a0f522a64d317fa52c35912df0074f8b46a3",
+          "bytes": 13131
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/downloads.json",
+          "sha256": "ba0b247368b326677c7e9e813dad9bbc5d3ed78c637702654be575fad931c279",
+          "bytes": 2042
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/jrsoftware/issrc",
+        "revision": "is-6_7_1",
+        "path": "Examples/MyDll/C#/Properties/AssemblyInfo.cs"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/official-payload/{app}/Examples/MyDll/C/MyDll.c",
+      "source_sha256": "46b8532187053872f0e10822bd1d3692b6c33ca06b14463036901fbc3c0d9b8b",
+      "source_bytes": 155,
+      "disposition": "upstream_research_input",
+      "reason": "upstream Inno Setup compiler payload example; not authored campaign implementation",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/comparison.json",
+          "sha256": "87ad8a538b58ec70a5a64ca10036cf87b57eaa9d66ca81023c190c33c2976288",
+          "bytes": 17006
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/verification-evidence.json",
+          "sha256": "a142dab2da0cd9ee8e62d8d5e629a0f522a64d317fa52c35912df0074f8b46a3",
+          "bytes": 13131
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/downloads.json",
+          "sha256": "ba0b247368b326677c7e9e813dad9bbc5d3ed78c637702654be575fad931c279",
+          "bytes": 2042
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/jrsoftware/issrc",
+        "revision": "is-6_7_1",
+        "path": "Examples/MyDll/C/MyDll.c"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/official-payload/{app}/Examples/MyDll/C/MyDll.def",
+      "source_sha256": "0e885b880199a19c38fe3eae6f17443bb568c1596bd5fe05951c73a09589e90e",
+      "source_bytes": 20,
+      "disposition": "upstream_research_input",
+      "reason": "upstream Inno Setup compiler payload example; not authored campaign implementation",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/comparison.json",
+          "sha256": "87ad8a538b58ec70a5a64ca10036cf87b57eaa9d66ca81023c190c33c2976288",
+          "bytes": 17006
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/verification-evidence.json",
+          "sha256": "a142dab2da0cd9ee8e62d8d5e629a0f522a64d317fa52c35912df0074f8b46a3",
+          "bytes": 13131
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/compiler-provenance-r1/downloads.json",
+          "sha256": "ba0b247368b326677c7e9e813dad9bbc5d3ed78c637702654be575fad931c279",
+          "bytes": 2042
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/jrsoftware/issrc",
+        "revision": "is-6_7_1",
+        "path": "Examples/MyDll/C/MyDll.def"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/before/onnxruntime/core/platform/windows/env.cc",
+      "source_sha256": "39a86497a24d8d836d0470afe76728db477a84c894ab47202c1f096cc5b82af8",
+      "source_bytes": 49058,
+      "disposition": "upstream_research_input",
+      "reason": "unchanged ONNX Runtime 1.30.0 upstream f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7; exact before_sha256 in source-change-inventory-r2.json",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/source-change-inventory-r2.json",
+          "sha256": "e748c293edb25c88c6ea1433b4cf1e6061ad7981ff48cad833502012f96d0b30",
+          "bytes": 985
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/preparation.json",
+          "sha256": "8d789932ad42890955d8f2d8edaf36a7886d0a2064ce1e6c0a4bd8f1b8572a89",
+          "bytes": 4901
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/microsoft/onnxruntime",
+        "revision": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+        "path": "onnxruntime/core/platform/windows/env.cc"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/before/onnxruntime/core/providers/cuda/cudnn_loader.cc",
+      "source_sha256": "041554e7d74f599982563fb9119b26d63f3507899d8e3253399308f599847124",
+      "source_bytes": 6437,
+      "disposition": "upstream_research_input",
+      "reason": "unchanged ONNX Runtime 1.30.0 upstream f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7; exact before_sha256 in source-change-inventory-r2.json",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/source-change-inventory-r2.json",
+          "sha256": "e748c293edb25c88c6ea1433b4cf1e6061ad7981ff48cad833502012f96d0b30",
+          "bytes": 985
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/preparation.json",
+          "sha256": "8d789932ad42890955d8f2d8edaf36a7886d0a2064ce1e6c0a4bd8f1b8572a89",
+          "bytes": 4901
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/microsoft/onnxruntime",
+        "revision": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+        "path": "onnxruntime/core/providers/cuda/cudnn_loader.cc"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/before/onnxruntime/core/providers/cuda/cufft_loader.cc",
+      "source_sha256": "cc815da353e6a0f99f9f6a05cb6cb4f8f5574732b827c1fd80af0e56529040fe",
+      "source_bytes": 6064,
+      "disposition": "upstream_research_input",
+      "reason": "unchanged ONNX Runtime 1.30.0 upstream f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7; exact before_sha256 in source-change-inventory-r2.json",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/source-change-inventory-r2.json",
+          "sha256": "e748c293edb25c88c6ea1433b4cf1e6061ad7981ff48cad833502012f96d0b30",
+          "bytes": 985
+        },
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/preparation.json",
+          "sha256": "8d789932ad42890955d8f2d8edaf36a7886d0a2064ce1e6c0a4bd8f1b8572a89",
+          "bytes": 4901
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/microsoft/onnxruntime",
+        "revision": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+        "path": "onnxruntime/core/providers/cuda/cufft_loader.cc"
+      }
+    },
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r11/powershell-7.6.10-Process.cs",
+      "source_sha256": "067c3de3e11e39f930b84e23e151ed73c2501c3cb6add0c1e41845d0b4ff3fbf",
+      "source_bytes": 111991,
+      "disposition": "upstream_research_input",
+      "reason": "Microsoft PowerShell 7.6.10 upstream implementation inspected as evidence; not authored campaign source",
+      "evidence": [
+        {
+          "path": "artifacts/v190/final-plan/exec-20261116T052942Z/gpu-runtime-strategy-proposal-r1/gpu-provision-owner-proposal-r11/primary-source.json",
+          "sha256": "a20f18a0e179f65c3e1386c7fe81e4c5aab209c0b0aaf58fee8e04c27eae1804",
+          "bytes": 883
+        }
+      ],
+      "upstream": {
+        "repository": "https://github.com/PowerShell/PowerShell",
+        "revision": "v7.6.10",
+        "path": "src/Microsoft.PowerShell.Commands.Management/commands/management/Process.cs"
+      }
+    }
+  ]
+}

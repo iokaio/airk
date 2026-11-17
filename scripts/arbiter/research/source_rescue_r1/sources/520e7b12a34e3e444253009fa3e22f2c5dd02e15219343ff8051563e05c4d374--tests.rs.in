@@ -1,0 +1,244 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Pure original-clock/state controls; no CUDA device/session/proof is fabricated.
+use super::*;
+use std::cell::Cell;
+#[test]
+fn retained_population_uses_one_original_cutoff_and_publishes_only_complete_rosters() -> Result<()>
+{
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(120);
+    let now = Cell::new(start);
+    let calls = Cell::new(0);
+    let proofs = population(
+        [Stage::Focus, Stage::Context],
+        deadline,
+        || now.get(),
+        || true,
+        |stage, original| {
+            assert_eq!(original, deadline);
+            calls.set(calls.get() + 1);
+            now.set(start + Duration::from_secs(if stage == Stage::Focus { 35 } else { 115 }));
+            Ok(if stage == Stage::Focus { 12 } else { 3 })
+        },
+    )?;
+    assert_eq!(calls.get(), 2);
+    assert_eq!(
+        proofs,
+        BTreeMap::from([(Stage::Focus, 12), (Stage::Context, 3)])
+    );
+    Ok(())
+}
+#[test]
+fn late_retention_or_revoked_authority_stops_before_another_roster_without_clock_renewal() {
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(120);
+    let now = Cell::new(start);
+    let calls = Cell::new(0);
+    assert!(
+        population(
+            [Stage::Focus, Stage::Context],
+            deadline,
+            || now.get(),
+            || true,
+            |_, original| {
+                assert_eq!(original, deadline);
+                calls.set(calls.get() + 1);
+                now.set(deadline);
+                Ok(12)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 1);
+    now.set(start);
+    calls.set(0);
+    let live = Cell::new(true);
+    assert!(
+        population(
+            [Stage::Focus, Stage::Context],
+            deadline,
+            || now.get(),
+            || live.get(),
+            |_, _| {
+                calls.set(calls.get() + 1);
+                live.set(false);
+                Ok(12)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 1);
+    calls.set(0);
+    assert!(
+        population(
+            [Stage::Focus],
+            deadline,
+            || start,
+            || false,
+            |_, _| {
+                calls.set(1);
+                Ok(12)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+}
+#[test]
+fn original_native_refusal_is_preserved_and_duplicate_stage_cannot_dispatch_twice() {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let calls = Cell::new(0);
+    let failed = population(
+        [Stage::Focus, Stage::Context],
+        deadline,
+        Instant::now,
+        || true,
+        |_, _| -> Result<usize> {
+            calls.set(calls.get() + 1);
+            anyhow::bail!("actual first refusal");
+        },
+    );
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("actual first refusal")
+    );
+    assert_eq!(calls.get(), 1);
+    calls.set(0);
+    assert!(
+        population(
+            [Stage::Focus, Stage::Focus],
+            deadline,
+            Instant::now,
+            || true,
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Ok(12)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 1);
+}
+fn configuration() -> NativeConfiguration {
+    use airk_core::arbiter::device::*;
+    let mut document = DeviceConfiguration::disabled(
+        Sha256Digest::from_bytes([1; 32]),
+        Incarnation::from_bytes([2; 16]),
+        DeviceCatalogBinding {
+            catalog: Sha256Digest::from_bytes([3; 32]),
+            source: Sha256Digest::from_bytes([4; 32]),
+        },
+    );
+    document.focus.device_policy = DevicePolicy::Cpu;
+    NativeConfiguration::Device {
+        document,
+        selected: BTreeMap::new(),
+    }
+}
+#[test]
+fn explicit_cpu_never_schedules_retained_gpu_acceptance_and_missing_proof_never_grants_ready() {
+    let required = BTreeSet::from([Stage::Focus, Stage::Context]);
+    let config = configuration();
+    assert!(targets_for(&config, Stage::Focus, &required).is_empty());
+    assert_eq!(
+        targets_for(&config, Stage::Context, &required),
+        [Stage::Focus, Stage::Context]
+    );
+    let state = State {
+        requires: required,
+        ..State::default()
+    };
+    assert!(!state.current(Stage::Focus, Some(&config)));
+    assert!(!state.current(Stage::Context, Some(&config)));
+    assert!(state.captured(Some(&config)).is_empty());
+}
+#[test]
+fn actual_charge_identity_changes_joint_generation_but_metadata_never_holds_its_release()
+-> Result<()> {
+    use std::{
+        future::Future,
+        task::{Context as TaskContext, Poll, Waker},
+    };
+    let resources = airk_kernel::service_resources::Resources::new(
+        airk_core::service_resources::ResourceConfiguration::default(),
+        8,
+        Some(64 << 30),
+    )?;
+    let charge = Arc::new(resources.reserve_optional(
+        Incarnation::from_bytes([71; 16]),
+        1,
+        Some(8 << 30),
+    )?);
+    let release = charge.release_observer();
+    let profile = Sha256Digest::from_bytes([72; 32]);
+    let fact = |charge: &Arc<Reservation>| ResidentFact {
+        stage: Stage::Context,
+        profile,
+        device: None,
+        charge: Arc::downgrade(charge),
+        requires: false,
+    };
+    let mut state = State::default();
+    state.replace_facts(vec![fact(&charge)])?;
+    assert_eq!(state.generation, 1);
+    for _ in 0..20 {
+        state.replace_facts(vec![fact(&charge)])?;
+    }
+    assert_eq!(
+        state.generation, 1,
+        "borrowing one actual peak is not a new residency"
+    );
+    drop(charge);
+    let mut wait = Box::pin(release.wait());
+    assert!(
+        matches!(
+            wait.as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ),
+        "metadata Weak must not retain the host charge"
+    );
+    let other = Arc::new(resources.reserve_optional(
+        Incarnation::from_bytes([73; 16]),
+        1,
+        Some(8 << 30),
+    )?);
+    state.replace_facts(vec![fact(&other)])?;
+    assert_eq!(
+        state.generation, 2,
+        "same profile cannot hide a distinct actual charge owner"
+    );
+    Ok(())
+}
+#[test]
+fn product_adapter_policy_skips_unsupported_metadata_and_selects_only_maximum_dedicated_sm86() {
+    let rank = super::super::device::product_adapter_rank;
+    assert_eq!(
+        rank(8, 6, true, 16 << 30, 2),
+        Some((std::cmp::Reverse(16 << 30), 2))
+    );
+    assert!(rank(8, 9, true, 24 << 30, 0).is_none());
+    assert!(rank(8, 6, false, 24 << 30, 0).is_none());
+    assert!(rank(8, 6, true, 0, 0).is_none());
+    assert!(rank(8, 6, true, 16 << 30, -1).is_none());
+    assert!(rank(8, 6, true, 24 << 30, 3) < rank(8, 6, true, 16 << 30, 0));
+    assert!(rank(8, 6, true, 16 << 30, 0) < rank(8, 6, true, 16 << 30, 2));
+}
+
+#[test]
+fn retained_roster_refusal_keeps_its_actual_profile_and_original_cause_through_contexts() {
+    let failed = Sha256Digest::from_bytes([93; 32]);
+    let error = anyhow::Error::new(ResidentRefusal {
+        profile: failed,
+        cause: anyhow::anyhow!("actual independent numeric refusal"),
+    })
+    .context("current other-model management operation constrained");
+    assert_eq!(failed_profile(&error), Some(failed));
+    assert!(format!("{error:#}").contains("actual independent numeric refusal"));
+    assert_eq!(
+        failed_profile(&anyhow::anyhow!("source authority changed")),
+        None
+    );
+}

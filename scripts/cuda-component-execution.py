@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import datetime
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -18,6 +19,8 @@ SID = 'S-1-5-21-3678370870-3858642417-826968105-1002'
 ANCHOR = Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z')
 SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_original_context_fp32_t17_component'
 SCHEMA = 'airk.private.cuda-component-plan/1'
+GRAPH_SCHEMA = 'airk.private.cuda-graph-metadata-diagnostic-plan/1'
+GRAPH_SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_load_only_graph_metadata_diagnostic'
 PLACEMENT_SCHEMA = 'airk.private.cuda-placement-diagnostic-plan/1'
 PLACEMENT_SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_load_only_placement_diagnostic'
 DIAGNOSTIC_SCHEMA = 'airk.private.cuda-runtime-diagnostic-plan/1'
@@ -29,10 +32,14 @@ BOUNDS = {'schema': 'airk.arbiter.gpu-probe-reservation/1', 'host_limit_bytes': 
 PROOFS = {'native_result': 16 << 20, 'operations': 1 << 20, 'stdout': 64 << 20}
 DIAGNOSTIC_PROOFS = {'native_result': 16 << 20, 'stdout': 64 << 20}
 NEW_SOURCE_KEYS = (
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/tests.rs',
     'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs',
     'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs',
 )
 SOURCE_KEYS = (
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/tests.rs',
     'crates/airk-retrieval/src/arbiter/runtime.rs',
     'crates/airk-retrieval/src/arbiter/runtime/cuda.rs',
     'crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md',
@@ -277,13 +284,61 @@ def execution_mode(plan):
     identity = (plan.get('schema'), plan.get('selector'))
     if identity == (SCHEMA, SELECTOR):
         return False
+    if identity == (GRAPH_SCHEMA, GRAPH_SELECTOR):
+        return 'graph'
     if identity == (PLACEMENT_SCHEMA, PLACEMENT_SELECTOR):
         return 'placement'
     require(identity == (DIAGNOSTIC_SCHEMA, DIAGNOSTIC_SELECTOR), 'exact Context17 component or runtime diagnostic schema/selector pair required')
     return True
 
 
-def preflight(plan, b, *, before):
+def graph_deadline(deadline):
+    if deadline is not None:
+        require(finite(deadline) and time.monotonic() < deadline, 'original graph provenance deadline expired')
+
+
+def bind_graph_hash_deadline(b, deadline):
+    # b is a fresh privately loaded owner module; no shared hashlib/Path mutation.
+    if deadline is None or not hasattr(b, 'digest'):
+        return
+    def bounded_digest(path):
+        graph_deadline(deadline)
+        value = hashlib.sha256()
+        with Path(path).open('rb') as stream:
+            while True:
+                graph_deadline(deadline)
+                block = stream.read(4 << 20)
+                graph_deadline(deadline)
+                if not block:
+                    break
+                value.update(block)
+        return value.hexdigest()
+    b.digest = bounded_digest
+
+
+def verify_graph_provenance(plan, b, *, deadline=None):
+    graph_deadline(deadline)
+    bind_graph_hash_deadline(b,deadline)
+    require(execution_mode(plan) == 'graph', 'graph provenance requires explicit graph mode')
+    require(plan.get('graph_preserver') == b.pin(ROOT / 'scripts/preserve-cuda-test-images.py'),
+            'maintained graph provenance owner required')
+    owner = b.load(b.pinned(plan['graph_preserver']), 'component_graph_preservation_owner')
+    packet = b.read(b.pinned(plan['image_packet']))
+    binding = packet.get('static_graph_binding')
+    require(isinstance(binding, dict), 'fresh static graph image binding absent')
+    owner.verify_graph_binding(binding, plan['descriptor'], plan['native_image'], plan['native_build_receipt'],
+                               **({} if deadline is None else {'deadline':deadline}))
+    graph_deadline(deadline)
+    rows = [binding[key] for key in ['environment','source_roster','archive','producer','manifest',
+                                     'runtime_producer','cargo_json','preserver_source']] + binding['source_pins']
+    for row in rows:
+        graph_deadline(deadline)
+        b.pinned(row)
+    graph_deadline(deadline)
+    return rows
+
+
+def preflight(plan, b, *, before, deadline=None):
     execution_mode(plan)
     require(plan.get('human_sid') == SID and plan.get('limits') == LIMITS,
             'exact human identity and original bounds required')
@@ -295,6 +350,7 @@ def preflight(plan, b, *, before):
     if before:
         require(not Path(plan['output_root']).exists(), 'fresh output already exists')
     b.source_image(plan)
+    graph_pins = verify_graph_provenance(plan,b,deadline=deadline) if execution_mode(plan) == 'graph' else []
     require(set(SOURCE_KEYS) <= set(plan['required_native_sources']), 'component native source roster omitted')
     for path, sha in plan['required_native_sources'].items():
         require(b.digest(b.regular(ROOT / path)) == sha, 'frozen native source differs: ' + path)
@@ -308,6 +364,7 @@ def preflight(plan, b, *, before):
     required = [plan[k] for k in ['wrapper', 'custody_owner', 'contract', 'parent_python', 'powershell', 'checked_guard',
                                  'metadata_receipt', 'image_packet', 'native_build_receipt', 'native_image',
                                  'request', 'native_input', 'profile', 'descriptor', 'output_guard', 'output_guard_lock']]
+    required += graph_pins
     required += outputs + plan['runtime_files'] + [b.pin(Path(plan['ownership_helper_root']) / n) for n in b.HELPERS]
     native, profile, fixture = input_facts(plan, b)
     required += [b.pin(path) for path in native['files'].values()]
@@ -322,8 +379,8 @@ def preflight(plan, b, *, before):
     return parent, owner, native, profile, fixture
 
 
-def prepare(args, *, diagnostic=False, placement=False):
-    require(not (diagnostic and placement), 'one execution mode required')
+def prepare(args, *, diagnostic=False, placement=False, graph=False):
+    require(sum([diagnostic, placement, graph]) <= 1, 'one execution mode required')
     b = base()
     metadata_pin = b.pin(args.metadata_receipt)
     require(metadata_pin['sha256'] == args.metadata_receipt_sha256, 'reviewed metadata receipt differs')
@@ -343,8 +400,8 @@ def prepare(args, *, diagnostic=False, placement=False):
     out = Path(args.output_root)
     require(out.is_absolute() and out.parent == ANCHOR, 'canonical private direct-child output required')
     plan = {k: old[k] for k in ['repository_root', 'ownership_helper_root', 'output_guard', 'output_guard_lock']}
-    plan.update(schema=PLACEMENT_SCHEMA if placement else DIAGNOSTIC_SCHEMA if diagnostic else SCHEMA, human_sid=SID,
-                selector=PLACEMENT_SELECTOR if placement else DIAGNOSTIC_SELECTOR if diagnostic else SELECTOR, limits=LIMITS,
+    plan.update(schema=GRAPH_SCHEMA if graph else PLACEMENT_SCHEMA if placement else DIAGNOSTIC_SCHEMA if diagnostic else SCHEMA, human_sid=SID,
+                selector=GRAPH_SELECTOR if graph else PLACEMENT_SELECTOR if placement else DIAGNOSTIC_SELECTOR if diagnostic else SELECTOR, limits=LIMITS,
                 wrapper=b.pin(__file__), custody_owner=b.pin(ROOT / 'scripts/cuda-native-execution.py'),
                 contract=b.pin(ROOT / 'scripts/cuda-component-execution/CONTRACT.md'),
                 metadata_receipt=metadata_pin, image_packet=packet_pin, native_build_receipt=build_pin,
@@ -354,6 +411,8 @@ def prepare(args, *, diagnostic=False, placement=False):
                 output_root=str(out), private_census=str(out / 'private-census'),
                 parent_python=b.pin(sys.executable), powershell=b.pin(args.powershell),
                 checked_guard=b.pin(ROOT / 'scripts/dev/assert-human-execution.ps1'))
+    plan['ownership_helper_root'] = str(b.MAINTAINED_HELPER_ROOT)
+    if graph: plan['graph_preserver'] = b.pin(ROOT / 'scripts/preserve-cuda-test-images.py')
     plan['runtime_files'] = b.census(plan['runtime_root'])
     old_build = b.read(b.pinned(old['native_build_receipt']), 32 << 20)
     plan['required_native_sources'] = rebind_native_sources(
@@ -366,6 +425,7 @@ def prepare(args, *, diagnostic=False, placement=False):
     seals[receipt['plan']['path']] = receipt['plan']['sha256']
     rows = [v for v in plan.values() if isinstance(v, dict) and set(v) == {'path', 'bytes', 'sha256'}]
     rows += receipt['outputs'] + plan['runtime_files']
+    if graph: rows += verify_graph_provenance(plan,b)
     native, _, fixture = input_facts(plan, b)
     rows += [b.pin(p) for p in native['files'].values()]
     rows += [b.pin(native['source_manifest']['path']), b.pin(native['numeric_fixture']['path']), b.pin(fixture['reference_producer']['path'])]
@@ -457,11 +517,20 @@ def validate_diagnostic(value, plan, pid, native, profile):
 
 
 def validate_placement_diagnostic(value, plan, pid, native, profile):
-    require(execution_mode(plan) == 'placement', 'exact placement diagnostic plan required')
-    require(value.get('schema') == 'airk.private.cuda-placement-diagnostic/1'
-            and value.get('diagnostic_complete') is True and value.get('outcome') == 'placement_observed',
+    validate_session_diagnostic(value, plan, pid, native, profile, graph=False)
+
+
+def validate_graph_diagnostic(value, plan, pid, native, profile):
+    validate_session_diagnostic(value, plan, pid, native, profile, graph=True)
+    validate_graph_metadata(value.get('graph_metadata'), value['placement'])
+
+
+def validate_session_diagnostic(value, plan, pid, native, profile, *, graph):
+    require(execution_mode(plan) == ('graph' if graph else 'placement'), 'exact session diagnostic plan required')
+    require(value.get('schema') == ('airk.private.cuda-graph-metadata-diagnostic/1' if graph else 'airk.private.cuda-placement-diagnostic/1')
+            and value.get('diagnostic_complete') is True and value.get('outcome') == ('graph_metadata_observed' if graph else 'placement_observed'),
             'complete native placement diagnostic absent')
-    require(value.get('operation_scope') == 'Disposable session creation and final placement observation only; no Scorer, forward, hybrid policy or qualification is returned',
+    require(value.get('operation_scope') == ('Disposable session creation and final graph metadata observation only; no Scorer, forward, hybrid policy or qualification is returned' if graph else 'Disposable session creation and final placement observation only; no Scorer, forward, hybrid policy or qualification is returned'),
             'placement operation scope differs')
     for key in ['session_load_dispatched', 'session_created', 'strict_production_unchanged']:
         exact(value.get(key), True, 'placement diagnostic fact absent: ' + key)
@@ -528,7 +597,11 @@ def validate_placement_diagnostic(value, plan, pid, native, profile):
     rows = logs.get('rows')
     require(isinstance(rows, list) and len(rows) <= 65536 and logs['retained'] == len(rows)
             and logs['selected'] == logs['retained'] + logs['omitted'] and logs['seen'] >= logs['selected']
-            and logs['omitted'] == 0 and logs.get('truncated') is False, 'placement logs incomplete')
+            and type(logs.get('truncated')) is bool and (logs['omitted'] == 0 or logs['truncated']), 'placement log counters inconsistent')
+    if graph:
+        exact(value.get('selected_logs_complete'), not logs['truncated'], 'graph selected-log completeness differs')
+    else:
+        require(logs['omitted'] == 0 and logs['truncated'] is False, 'placement logs incomplete')
     total = 0
     for row in rows:
         require(isinstance(row, dict) and isinstance(row.get('location'), str) and isinstance(row.get('message'), str),
@@ -537,6 +610,153 @@ def validate_placement_diagnostic(value, plan, pid, native, profile):
         require(size <= 4096, 'placement log row cap')
         total += size
     require(total == logs['bytes'] and total <= 65536, 'placement log byte coverage differs')
+
+
+def validate_graph_metadata(value, placement):
+    """Validate bounded native observations; this creates no placement policy."""
+    def unsigned(v, limit=(1 << 64) - 1):
+        require(type(v) is int and 0 <= v <= limit, 'graph unsigned integer bound')
+        return v
+    def integer(v):
+        require(type(v) is int and -(1 << 63) <= v < (1 << 63), 'graph signed integer bound')
+        return v
+    def text(v):
+        require(isinstance(v, str) and len(v.encode('utf-8')) <= 4096, 'graph UTF8 span bound')
+        return len(v.encode('utf-8'))
+    require(isinstance(value, dict) and value.get('schema') == 'airk.private.ort-final-graph-metadata/1'
+            and value.get('complete') is True and value.get('failure', 'missing') is None,
+            'complete native graph metadata absent')
+    require(type(value.get('shim_status')) is int and value['shim_status'] == 0
+            and type(value.get('ort_error_code')) is int and value['ort_error_code'] == 0, 'graph collector status')
+    require(0 < unsigned(value.get('encoded_bytes'), 8 << 20), 'graph native encoded size absent')
+    # Native serde_json owns exact encoded_bytes. Independent serialization is a
+    # second size bound, not a claim of identical cross-language float spelling.
+    require(len(json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')) <= 8 << 20,
+            'graph independent encoded size bound')
+    reported = value.get('reported_counts')
+    require(isinstance(reported, list) and len(reported) == 6, 'graph counters absent')
+    for n in reported: unsigned(n)
+    rows = value.get('rows')
+    require(isinstance(rows, list) and 0 < len(rows) <= 4194304, 'graph record bound')
+    fields = {
+        'graph': {'graph','parent_graph','parent_node','attribute','outer_bindings'},
+        'node': {'graph','node','name','domain','op','ep','version'},
+        'value': {'graph','value','name','element_type','rank','type_state','provenance','producer'},
+        'dimension': {'graph','value','index','number','symbol'},
+        'edge': {'graph','node','value','role','slot'},
+        'attribute': {'graph','node','index','name','attribute_type','count','readable','reason'},
+        'attribute_element': {'graph','node','attribute','index','element_kind','value'},
+        'constant': {'graph','value','element_type','count','readable','reason','device'},
+        'constant_element': {'graph','value','index','element_bytes','integer'},
+        'end': {'graph'},
+    }
+    counts = [0] * 6
+    stack, graph_count, nodes, values, slots, outputs, inputs, attributes, next_attributes = [], 0, {}, {}, {}, {}, set(), {}, {}
+    for row in rows:
+        require(isinstance(row, dict) and row.get('kind') in fields, 'unknown graph record')
+        kind = row['kind']
+        require(set(row) == fields[kind] | {'kind'}, 'graph record fields differ')
+        graph = unsigned(row['graph'])
+        if kind != 'graph': require(stack and stack[-1] == graph, 'graph record scope/order')
+        spans = []
+        if kind == 'graph':
+            spans = [row['attribute']]
+            require(graph == graph_count and graph_count < 4096 and len(stack) <= 32, 'graph identity/depth bound')
+            if row['parent_graph'] is None and row['parent_node'] is None:
+                require(graph == 0 and not stack and row['attribute'] == '' and row['outer_bindings'] == 'not_applicable', 'graph root binding')
+            else:
+                parent = unsigned(row['parent_graph']); node = unsigned(row['parent_node'])
+                require(stack and stack[-1] == parent and (parent,node) in nodes and row['attribute']
+                        and row['outer_bindings'] == 'unresolved', 'graph child binding')
+            graph_count += 1; stack.append(graph)
+        elif kind == 'node':
+            node = unsigned(row['node']); key = (graph,node)
+            spans = [row[k] for k in ['name','domain','op','ep']]
+            require(key not in nodes and counts[0] < 65536 and row['op'] and row['ep'] and integer(row['version']) > 0, 'graph node identity')
+            nodes[key] = (graph,row['name'],row['domain'],row['op'],row['ep']); counts[0] += 1
+        elif kind == 'value':
+            key = (graph,unsigned(row['value'])); spans = [row['name'],row['provenance']]
+            require(key not in values and counts[1] < 262144 and row['name'], 'graph value identity')
+            if row['rank'] is not None: unsigned(row['rank'],16)
+            if row['element_type'] is not None: integer(row['element_type'])
+            if row['producer'] is not None: unsigned(row['producer'])
+            require(row['type_state'] in ['tensor','unsupported_non_tensor','unknown']
+                    and (row['type_state'] == 'tensor' or (row['rank'] is None and row['element_type'] is None)), 'graph type state')
+            require(row['provenance'] in ['immutable_session_initializer','overridable_initializer_unread','node_output','graph_input','unresolved_outer_or_internal'], 'graph provenance')
+            values[key] = {'row':row,'dims':0,'constant':None}; counts[1] += 1
+        elif kind == 'dimension':
+            key = (graph,unsigned(row['value'])); require(key in values, 'dimension before graph value')
+            v = values[key]; index = unsigned(row['index'])
+            require(v['row']['rank'] is not None and index < v['row']['rank'] and index == v['dims']
+                    and not (row['number'] is not None and row['symbol'] is not None), 'graph dimension order')
+            if row['number'] is not None: require(integer(row['number']) >= 0, 'negative dimension')
+            if row['symbol'] is not None: require(row['symbol'], 'empty dimension symbol'); spans = [row['symbol']]
+            v['dims'] += 1
+        elif kind == 'edge':
+            role = unsigned(row['role'],5); slot = unsigned(row['slot']); node,value_id = row['node'],row['value']
+            require(counts[2] < 524288 and (role < 3) == (node is not None), 'graph edge role')
+            if node is not None: require((graph,unsigned(node)) in nodes, 'graph edge node missing')
+            if value_id is not None: require((graph,unsigned(value_id)) in values, 'graph edge value missing')
+            else: require(role < 3, 'graph boundary value missing')
+            key = (graph,node,role); require(slot == slots.get(key,0), 'graph edge slot order'); slots[key] = slot + 1
+            if role == 2 and value_id is not None:
+                require((graph,value_id) not in outputs, 'graph value multiple producers'); outputs[(graph,value_id)] = node
+            if role == 3: inputs.add((graph,value_id))
+            counts[2] += 1
+        elif kind == 'attribute':
+            node = unsigned(row['node']); index = unsigned(row['index']); count = unsigned(row['count']); atype = integer(row['attribute_type'])
+            spans = [row['name'],row['reason']]; key = (graph,node)
+            require(key in nodes and row['name'] and index < 64 and index == next_attributes.get(key,0), 'graph attribute owner/order/bound')
+            next_attributes[key] = index + 1
+            require(type(row['readable']) is bool, 'graph attribute readable flag')
+            if row['readable']: require(count <= 64 and atype in [1,2,3,6,7,8]
+                    and (atype not in [1,2,3] or count == 1) and row['reason'] == 'read', 'graph readable attribute')
+            else: require(row['reason'] in ['large_array_unread','unsupported_attribute_unread'], 'graph unread attribute reason')
+            attributes[(graph,node,index)] = {'row':row,'seen':0}
+        elif kind == 'attribute_element':
+            key = (graph,unsigned(row['node']),unsigned(row['attribute'])); require(key in attributes, 'graph attribute element owner')
+            a = attributes[key]; header = a['row']; index = unsigned(row['index']); element_kind = unsigned(row['element_kind'],3)
+            expected = {2:1,7:1,1:2,6:2,3:3,8:3}.get(header['attribute_type'])
+            require(header['readable'] and index == a['seen'] and index < header['count'] and element_kind == expected, 'graph attribute payload order/type')
+            if element_kind == 1: integer(row['value'])
+            elif element_kind == 2: require(type(row['value']) in [int,float] and math.isfinite(row['value']), 'graph nonfinite attribute')
+            else: spans = [row['value']]
+            a['seen'] += 1
+        elif kind == 'constant':
+            key = (graph,unsigned(row['value'])); require(key in values, 'graph constant owner')
+            v = values[key]; count = unsigned(row['count']); element = integer(row['element_type']); spans = [row['reason'],row['device']]
+            require(v['row']['provenance'] == 'immutable_session_initializer' and v['constant'] is None and type(row['readable']) is bool, 'graph constant provenance')
+            if row['readable']:
+                require(count <= 64 and element in [6,7,9] and row['reason'] == 'read' and row['device'] == 'CPU'
+                        and v['row']['element_type'] == element, 'graph readable constant')
+            else: require(row['reason'] in ['not_tensor','non_CPU_unread','unsupported_type_unread','large_constant_unread','constant_payload_budget_unread'], 'graph unread constant reason')
+            v['constant'] = {'row':row,'seen':0}
+        elif kind == 'constant_element':
+            key = (graph,unsigned(row['value'])); require(key in values and values[key]['constant'] is not None, 'graph constant payload owner')
+            c = values[key]['constant']; header = c['row']; index = unsigned(row['index']); width = unsigned(row['element_bytes'],8); val = integer(row['integer'])
+            require(header['readable'] and index == c['seen'] and index < header['count']
+                    and width == {6:4,7:8,9:1}.get(header['element_type']) and counts[4] + width <= 1 << 20, 'graph constant payload bound/order')
+            require((header['element_type'] != 6 or -(1 << 31) <= val < (1 << 31))
+                    and (header['element_type'] != 9 or val in [0,1]), 'graph constant value bound')
+            c['seen'] += 1; counts[4] += width
+        else: stack.pop()
+        counts[3] += sum(text(span) for span in spans); counts[5] += 1
+        require(counts[3] <= 8 << 20, 'graph text budget')
+    require(not stack and graph_count > 0 and nodes, 'graph scope did not close')
+    for key,v in values.items():
+        row = v['row']; require(row['rank'] is None or row['rank'] == v['dims'], 'graph missing dimension')
+        if row['producer'] is not None:
+            require((key[0],row['producer']) in nodes and outputs.get(key) == row['producer'], 'graph producer/output mismatch')
+        if row['provenance'] == 'node_output': require(row['producer'] is not None, 'graph output producer absent')
+        if row['provenance'] == 'immutable_session_initializer': require(v['constant'] is not None, 'graph initializer header absent')
+        if row['provenance'] == 'graph_input': require(key in inputs, 'graph input boundary absent')
+        if v['constant'] is not None:
+            c = v['constant']; require(not c['row']['readable'] or c['seen'] == c['row']['count'], 'graph constant payload incomplete')
+    require(all(values[key]['row']['producer'] == node for key,node in outputs.items()), 'graph output edge/producer mismatch')
+    require(all(not a['row']['readable'] or a['seen'] == a['row']['count'] for a in attributes.values()), 'graph attribute payload incomplete')
+    require(counts == reported, 'graph reported counters differ')
+    expected = [(n['subgraph_index'],n['name'],n['domain'],n['op'],n['ep']) for n in placement['nodes']]
+    require(sorted(nodes.values()) == sorted(expected), 'graph metadata/placement full node cross-map differs')
 
 
 def validate_native(value, plan, pid, native, profile, fixture):
@@ -741,22 +961,23 @@ def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
         receipt['failure'] = receipt.get('failure') or {'type': 'TimeoutError', 'message': 'original component deadline expired'}
 
 
-def run(args, *, diagnostic=False, placement=False):
-    require(not (diagnostic and placement), 'one execution mode required')
+def run(args, *, diagnostic=False, placement=False, graph=False):
+    require(sum([diagnostic, placement, graph]) <= 1, 'one execution mode required')
     started = time.monotonic()
     started_utc = datetime.datetime.now(datetime.timezone.utc)
     b = base()
     original_deadline = min(started_utc + datetime.timedelta(seconds=120), b.CAMPAIGN)
     deadline = started + (original_deadline - started_utc).total_seconds()
+    if graph: bind_graph_hash_deadline(b,deadline)
     plan_pin = b.pin(args.plan)
     require(plan_pin['sha256'] == args.plan_sha256, 'reviewed component plan differs')
     plan = b.read(plan_pin['path'])
-    require(execution_mode(plan) == ('placement' if placement else diagnostic), 'reviewed invocation mode differs from plan')
-    proofs = DIAGNOSTIC_PROOFS if diagnostic or placement else PROOFS
+    require(execution_mode(plan) == ('graph' if graph else 'placement' if placement else diagnostic), 'reviewed invocation mode differs from plan')
+    proofs = DIAGNOSTIC_PROOFS if diagnostic or placement or graph else PROOFS
     require(plan['parent_python'] == b.pin(sys.executable), 'actual parent interpreter differs')
     guard(plan, deadline=deadline)
     require(token_owner(ctypes.c_void_p(-1)) == SID, 'parent token default owner differs')
-    parent, owner, native, profile, fixture = preflight(plan, b, before=True)
+    parent, owner, native, profile, fixture = preflight(plan, b, before=True,deadline=deadline if graph else None)
     require(parent.worker.windows_sid() == SID and time.monotonic() < deadline, 'parent identity/original deadline refused')
     output_guard = b.load(plan['output_guard']['path'], 'component_protected_output_guard')
     lock = b.read(plan['output_guard_lock']['path'])
@@ -767,7 +988,7 @@ def run(args, *, diagnostic=False, placement=False):
     policy = output_guard.identity_and_parent(cpu, out, policy_lock)
     mkdir(plan, out, deadline=deadline)
     mkdir_siblings(plan, [out / 'temp', out / 'private-census'], deadline=deadline)
-    paths = {'native_result': out / 'native-result.json', 'stdout': out / 'stdout-stderr.log'} if diagnostic or placement else {
+    paths = {'native_result': out / 'native-result.json', 'stdout': out / 'stdout-stderr.log'} if diagnostic or placement or graph else {
         'native_result': out / 'native-result.json', 'operations': out / 'native-result.operations.jsonl',
         'stdout': out / 'stdout-stderr.log'}
     guard_many(plan, [*paths.values(), out / 'stdin.txt', out / 'execution.json'], deadline=deadline)
@@ -779,7 +1000,7 @@ def run(args, *, diagnostic=False, placement=False):
                AIRK_PRIVATE_CENSUS_BASE=plan['private_census'], AIRK_CUDA_QUALIFICATION_INPUT=plan['request']['path'],
                AIRK_CUDA_QUALIFICATION_INPUT_SHA256=plan['request']['sha256'], AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths['native_result']))
     argv = [plan['native_image']['path'], '--exact', plan['selector'], '--ignored', '--nocapture', '--test-threads=1']
-    receipt = {'schema': 'airk.private.owned-cuda-placement-diagnostic/1' if placement else 'airk.private.owned-cuda-runtime-diagnostic/1' if diagnostic else 'airk.private.owned-cuda-component/1',
+    receipt = {'schema': 'airk.private.owned-cuda-graph-metadata-diagnostic/1' if graph else 'airk.private.owned-cuda-placement-diagnostic/1' if placement else 'airk.private.owned-cuda-runtime-diagnostic/1' if diagnostic else 'airk.private.owned-cuda-component/1',
                'plan': plan_pin, 'command': argv,
                'started_utc': started_utc.isoformat(), 'original_deadline': original_deadline.isoformat(),
                'original_deadline_monotonic': deadline,
@@ -787,6 +1008,8 @@ def run(args, *, diagnostic=False, placement=False):
                'output_policy': policy, 'input_seals': dict(plan['input_seals'], **{plan_pin['path']: plan_pin['sha256']}),
                'whole_phase_deadline_not_refreshed': True, 'complete': False, 'failure': None,
                'post_input_drift': [], 'qualification': False, 'product_admission': False}
+    if graph:
+        receipt.update(diagnostic_only=True, graph_metadata_observed=False, selected_logs_complete=None, component_pass=False, model_pass=False)
     if placement:
         receipt.update(diagnostic_only=True, placement_observed=False, component_pass=False, model_pass=False)
     if diagnostic:
@@ -814,7 +1037,11 @@ def run(args, *, diagnostic=False, placement=False):
             receipt[label] = b.pin(path)
             require(receipt[label]['bytes'] <= proofs[label], 'native output cap exceeded')
         value = b.read(paths['native_result'])
-        if placement:
+        if graph:
+            validate_graph_diagnostic(value, plan, receipt['owned']['owned_leader_pid'], native, profile)
+            receipt['graph_metadata_observed'] = True
+            receipt['selected_logs_complete'] = value['selected_logs_complete']
+        elif placement:
             validate_placement_diagnostic(value, plan, receipt['owned']['owned_leader_pid'], native, profile)
             receipt['placement_observed'] = True
         elif diagnostic:
@@ -843,6 +1070,7 @@ def run(args, *, diagnostic=False, placement=False):
                 receipt['final_input_errors'].append({'path': path, 'type': type(error).__name__, 'message': str(error)})
         try:
             require(b.census(plan['runtime_root']) == plan['runtime_files'], 'final runtime roster drift')
+            if graph: verify_graph_provenance(plan,b,deadline=deadline)
             guard_many(plan, [out, *out.rglob('*')], True, deadline=deadline)
         except BaseException as error:
             receipt['final_input_errors'].append({'type': type(error).__name__, 'message': str(error)})
@@ -862,6 +1090,8 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare', action='store_true')
     modes.add_argument('--execute-reviewed-component', action='store_true')
+    modes.add_argument('--prepare-graph-diagnostic', action='store_true')
+    modes.add_argument('--execute-reviewed-graph-diagnostic', action='store_true')
     modes.add_argument('--prepare-placement-diagnostic', action='store_true')
     modes.add_argument('--execute-reviewed-placement-diagnostic', action='store_true')
     modes.add_argument('--prepare-runtime-diagnostic', action='store_true')
@@ -879,13 +1109,16 @@ def main():
     require(base().digest(__file__) == args.approved_script_sha256, 'reviewed maintained script SHA required')
     diagnostic = args.prepare_runtime_diagnostic or args.execute_reviewed_runtime_diagnostic
     placement = args.prepare_placement_diagnostic or args.execute_reviewed_placement_diagnostic
-    preparing = args.prepare or args.prepare_runtime_diagnostic or args.prepare_placement_diagnostic
-    result = prepare(args, diagnostic=diagnostic, placement=placement) if preparing else run(args, diagnostic=diagnostic, placement=placement)
+    graph = args.prepare_graph_diagnostic or args.execute_reviewed_graph_diagnostic
+    preparing = args.prepare or args.prepare_runtime_diagnostic or args.prepare_placement_diagnostic or args.prepare_graph_diagnostic
+    result = prepare(args, diagnostic=diagnostic, placement=placement, graph=graph) if preparing else run(args, diagnostic=diagnostic, placement=placement, graph=graph)
     summary = result if preparing else {'complete': result['complete'], 'elapsed_seconds': result['elapsed_seconds']}
     if diagnostic and not preparing:
         summary.update(diagnostic_only=True, runtime_admitted=result['runtime_admitted'], component_pass=False, model_pass=False)
     if placement and not preparing:
         summary.update(diagnostic_only=True, placement_observed=result['placement_observed'], component_pass=False, model_pass=False)
+    if graph and not preparing:
+        summary.update(diagnostic_only=True, graph_metadata_observed=result['graph_metadata_observed'], selected_logs_complete=result['selected_logs_complete'], component_pass=False, model_pass=False)
     print(json.dumps(summary))
 
 

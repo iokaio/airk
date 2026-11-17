@@ -1,0 +1,452 @@
+// SPDX-License-Identifier: Apache-2.0
+//! One Rust-owned experimental descriptor builder. Never release authority.
+use airk_core::{
+    arbiter::context_action::{ContextReason, RelevanceHypothesis, calibration::*},
+    arbiter::*,
+    identity::{Sha256Digest, framed_digest},
+};
+use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+/// The existing Core asset type is reused; no second Profile/asset DTO exists.
+pub struct AssetInput {
+    pub asset: Asset,
+    pub path: PathBuf,
+}
+pub enum CalibrationInput {
+    NumericRawOnly,
+    SuppliedUnqualified(AssetInput),
+}
+pub struct ProfileInput {
+    pub model: ModelChoice,
+    pub profile_id: String,
+    pub assets: Vec<AssetInput>,
+    pub cpu_fit: CpuFit,
+    pub memory_reservation_bytes: u64,
+    pub peak_disk_bytes: u64,
+    pub maximum_candidates: usize,
+    pub calibration: CalibrationInput,
+}
+pub struct PreparedProfile {
+    pub profile: Profile,
+    pub files: BTreeMap<String, PathBuf>,
+    pub numeric_raw_only: bool,
+}
+
+fn sha(bytes: &[u8]) -> Sha256Digest {
+    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
+}
+
+/// Caller supplies already reviewed identities; actual bytes are reauthenticated.
+fn authenticate(input: &AssetInput) -> Result<()> {
+    ensure!(
+        input.asset.bytes > 0 && input.asset.bytes <= 16_u64 << 30,
+        "experimental asset byte bound"
+    );
+    if matches!(input.asset.role, AssetRole::Model | AssetRole::Tokenizer) {
+        ensure!(
+            input.asset.bytes <= 64 << 20,
+            "experimental model/tokenizer byte bound"
+        );
+    }
+    if matches!(
+        input.asset.role,
+        AssetRole::Compiler | AssetRole::Calibration
+    ) {
+        ensure!(
+            input.asset.bytes <= 64 << 10,
+            "experimental compiler/calibration byte bound"
+        );
+    }
+    let metadata = fs::symlink_metadata(&input.path)?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() == input.asset.bytes,
+        "experimental asset type or length differs"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "experimental asset reparse point refused"
+        );
+    }
+    let mut stream = fs::File::open(&input.path)?;
+    let digest = hash_bounded(&mut stream, input.asset.bytes)?;
+    ensure!(
+        stream.metadata()?.len() == input.asset.bytes && digest == input.asset.sha256,
+        "experimental asset hash or final length differs"
+    );
+    Ok(())
+}
+fn hash_bounded(reader: impl Read, expected: u64) -> Result<Sha256Digest> {
+    let mut stream = reader.take(expected.checked_add(1).context("asset bound overflow")?);
+    let mut hash = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = vec![0_u8; 4 << 20];
+    loop {
+        let count = stream.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        hash.update(&buffer[..count]);
+    }
+    ensure!(total == expected, "experimental streamed length differs");
+    Ok(Sha256Digest::from_bytes(hash.finalize().into()))
+}
+fn verified_small(input: &AssetInput, maximum: u64) -> Result<Vec<u8>> {
+    ensure!(
+        input.asset.bytes <= maximum,
+        "small experimental asset byte limit"
+    );
+    authenticate(input)?;
+    let mut bytes = Vec::with_capacity(usize::try_from(input.asset.bytes)?);
+    fs::File::open(&input.path)?
+        .take(input.asset.bytes + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 == input.asset.bytes && sha(&bytes) == input.asset.sha256,
+        "consumed small asset bytes differ from authenticated identity"
+    );
+    Ok(bytes)
+}
+
+fn abi(focus: bool) -> ScoreAbi {
+    let mut inputs = ["input_ids", "attention_mask", "position_ids"]
+        .into_iter()
+        .map(|name| TensorContract {
+            name: name.into(),
+            element: TensorType::Int64,
+            axes: vec![
+                if focus { "batch" } else { "batch_1" }.into(),
+                "tokens".into(),
+            ],
+        })
+        .collect::<Vec<_>>();
+    if !focus {
+        inputs.extend([
+            TensorContract {
+                name: "decision_positions".into(),
+                element: TensorType::Int64,
+                axes: vec!["batch_1".into()],
+            },
+            TensorContract {
+                name: "candidate_positions".into(),
+                element: TensorType::Int64,
+                axes: vec!["batch_1".into(), "options".into()],
+            },
+            TensorContract {
+                name: "option_mask".into(),
+                element: TensorType::Bool,
+                axes: vec!["batch_1".into(), "options".into()],
+            },
+        ]);
+    }
+    ScoreAbi {
+        readout: if focus {
+            Readout::FocusYesNo
+        } else {
+            Readout::DecisionSymbol
+        },
+        inputs,
+        output: TensorContract {
+            name: if focus { "logits" } else { "scores" }.into(),
+            element: TensorType::Float32,
+            axes: vec![
+                if focus { "batch" } else { "batch_1" }.into(),
+                if focus { "labels" } else { "options" }.into(),
+            ],
+        },
+    }
+}
+
+fn structural_calibration(profile: &Profile, policy: Sha256Digest) -> JointCalibration {
+    JointCalibration {
+        schema: CALIBRATION_SCHEMA.into(),
+        class_support: None,
+        model: profile.model,
+        compiler: profile.compiler,
+        task_policy: policy,
+        score_abi: profile.abi.clone(),
+        assets: trained_assets(profile),
+        // Structural input for raw-score collection only; never a fitted rule.
+        rules: vec![JointRule {
+            action: ContextActionClass::Read,
+            allowed_gaps: vec![Gap::Unsupported],
+            allowed_reasons: vec![ContextReason::AdditionalEvidenceMayHelp],
+            allowed_roles: vec![EvidenceRole::Unknown],
+            allowed_relevance: vec![RelevanceHypothesis::Uncertain],
+            minimum_raw_margin: f32::MAX,
+        }],
+    }
+}
+fn trained_assets(profile: &Profile) -> BTreeMap<String, JointAssetBinding> {
+    profile
+        .assets
+        .iter()
+        .filter(|asset| {
+            matches!(
+                asset.role,
+                AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
+            )
+        })
+        .map(|asset| {
+            (
+                asset.name.clone(),
+                JointAssetBinding {
+                    role: asset.role.clone(),
+                    sha256: asset.sha256,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Build only an unqualified native evaluation descriptor. Resource inputs are
+/// declared experiment reservations; this function does not claim measured fit.
+pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
+    ensure!(
+        !output.exists()
+            && input.profile_id.starts_with("private-")
+            && input.profile_id.len() <= 128,
+        "fresh private experimental profile output/identity required"
+    );
+    let stage = input
+        .model
+        .stage()
+        .context("historical model is not a selected stage")?;
+    input.cpu_fit.validate()?;
+    let focus = stage == Stage::Focus;
+    if focus {
+        ensure!(
+            input.cpu_fit.minimum_physical_cores == 4 && input.cpu_fit.intra_threads == 4,
+            "selected Focus baseline requires the reviewed CPU4 tier"
+        );
+    }
+    ensure!(
+        (1..=if focus { 64 } else { 8 }).contains(&input.maximum_candidates)
+            && input.memory_reservation_bytes > 0
+            && input.peak_disk_bytes > 0
+            && input.assets.len() <= 126,
+        "experimental resource/cardinality bounds required"
+    );
+    ensure!(
+        focus || input.maximum_candidates == 8,
+        "canonical Context compiler requires all eight native option slots"
+    );
+    let mut names = BTreeSet::new();
+    for item in &input.assets {
+        ensure!(
+            names.insert(item.asset.name.clone())
+                && !matches!(
+                    item.asset.role,
+                    AssetRole::Compiler | AssetRole::Calibration
+                )
+                && !matches!(
+                    item.asset.name.as_str(),
+                    "compiler.json"
+                        | "numeric-raw-only-calibration.json"
+                        | "focus-relevance-metadata.json"
+                        | "supplied-calibration.json"
+                ),
+            "duplicate or constructor-owned experimental asset"
+        );
+    }
+    for role in [AssetRole::Model, AssetRole::Tokenizer] {
+        ensure!(
+            input
+                .assets
+                .iter()
+                .filter(|item| item.asset.role == role)
+                .count()
+                == 1,
+            "singleton model/tokenizer required"
+        );
+    }
+    for role in [
+        AssetRole::ExternalWeights,
+        AssetRole::Notice,
+        AssetRole::Fixture,
+    ] {
+        ensure!(
+            input.assets.iter().any(|item| item.asset.role == role),
+            "complete trained/notice/probe closure required"
+        );
+    }
+    for item in &input.assets {
+        authenticate(item)?;
+    }
+    let tokenizer = input
+        .assets
+        .iter()
+        .find(|item| item.asset.role == AssetRole::Tokenizer)
+        .context("tokenizer")?;
+    let tokenizer_bytes = verified_small(tokenizer, 64 << 20)?;
+    let compiler_bytes = if focus {
+        crate::arbiter::compiler::focus::compiler_profile(&tokenizer_bytes)?
+    } else {
+        crate::arbiter::compiler::qwen::compiler_profile(&tokenizer_bytes)?
+    };
+    let (task, policy) = if focus {
+        (
+            Task::FocusRank,
+            crate::arbiter::compiler::focus::policy_digest()?,
+        )
+    } else {
+        (
+            Task::ContextAction,
+            crate::arbiter::context_action::policy_digest()?,
+        )
+    };
+    let mut files = input
+        .assets
+        .iter()
+        .map(|item| (item.asset.name.clone(), item.path.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut profile = Profile {
+        stage: Some(stage),
+        task_policies: BTreeMap::from([(task, policy)]),
+        qualified_targets: vec![],
+        cpu_fit: Some(input.cpu_fit),
+        downloads: vec![],
+        model: input.model,
+        profile_id: input.profile_id,
+        manifest: Sha256Digest::from_bytes([0; 32]),
+        runtime: RUNTIME.into(),
+        compiler: sha(&compiler_bytes),
+        calibration: Sha256Digest::from_bytes([0; 32]),
+        policy: if focus {
+            policy
+        } else {
+            crate::arbiter::compiler::qwen::policy_digest()?
+        },
+        qualification: None,
+        tasks: BTreeSet::from([task]),
+        abi: abi(focus),
+        max_tokens: if focus { 512 } else { 2048 },
+        max_candidates: input.maximum_candidates,
+        memory_reservation_bytes: input.memory_reservation_bytes,
+        peak_disk_bytes: input.peak_disk_bytes,
+        assets: input.assets.iter().map(|item| item.asset.clone()).collect(),
+    };
+    let numeric_raw_only = matches!(&input.calibration, CalibrationInput::NumericRawOnly);
+    let (calibration_name, calibration_bytes) = if focus {
+        ensure!(
+            numeric_raw_only,
+            "Focus cannot consume a Context/learned-decision calibration"
+        );
+        #[derive(serde::Serialize)]
+        struct RelevanceMetadata {
+            schema: &'static str,
+            model: ModelChoice,
+            compiler: Sha256Digest,
+            task_policy: Sha256Digest,
+            score_abi: ScoreAbi,
+            assets: BTreeMap<String, JointAssetBinding>,
+            readout_order: [&'static str; 2],
+            readout_tokens: [u32; 2],
+            interpretation: &'static str,
+            learned_probability_calibration: bool,
+            release_qualified: bool,
+        }
+        let metadata = RelevanceMetadata {
+            schema: "airk.private.focus-relevance-metadata/1",
+            model: profile.model,
+            compiler: profile.compiler,
+            task_policy: policy,
+            score_abi: profile.abi.clone(),
+            assets: trained_assets(&profile),
+            readout_order: ["no", "yes"],
+            readout_tokens: [2152, 9693],
+            interpretation: "Uncalibrated relative relevance: exp(yes-max)/(exp(no-max)+exp(yes-max)); no action/sufficiency confidence",
+            learned_probability_calibration: false,
+            release_qualified: false,
+        };
+        (
+            "focus-relevance-metadata.json",
+            serde_json::to_vec_pretty(&metadata)?,
+        )
+    } else {
+        match input.calibration {
+            CalibrationInput::NumericRawOnly => (
+                "numeric-raw-only-calibration.json",
+                serde_json::to_vec_pretty(&structural_calibration(&profile, policy))?,
+            ),
+            CalibrationInput::SuppliedUnqualified(item) => {
+                ensure!(
+                    item.asset.role == AssetRole::Calibration,
+                    "supplied calibration role differs"
+                );
+                authenticate(&item)?;
+                (
+                    "supplied-calibration.json",
+                    verified_small(&item, 64 << 10)?,
+                )
+            }
+        }
+    };
+    profile.calibration = sha(&calibration_bytes);
+    for (name, role, bytes) in [
+        ("compiler.json", AssetRole::Compiler, &compiler_bytes),
+        (calibration_name, AssetRole::Calibration, &calibration_bytes),
+    ] {
+        profile.assets.push(Asset {
+            name: name.into(),
+            role,
+            bytes: bytes.len() as u64,
+            sha256: sha(bytes),
+        });
+    }
+    profile
+        .assets
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    let logical = profile
+        .assets
+        .iter()
+        .try_fold(0_u64, |total, asset| total.checked_add(asset.bytes))
+        .context("asset size overflow")?;
+    ensure!(
+        profile.peak_disk_bytes >= logical,
+        "declared disk reservation below actual logical assets"
+    );
+    profile.validate()?;
+    super::validate_selected_policies(&profile)?;
+    if !focus {
+        JointCalibration::parse_and_validate(&calibration_bytes, &profile, policy)?;
+    }
+    // Test-support identity only, explicitly distinct from a qualified release.
+    profile.manifest = framed_digest(
+        b"airk.private.selected-stage-evaluation-profile/1",
+        &[&serde_json::to_vec(&profile)?],
+    );
+    fs::create_dir(output)?;
+    fs::write(output.join("compiler.json"), &compiler_bytes)?;
+    fs::write(output.join(calibration_name), &calibration_bytes)?;
+    fs::write(
+        output.join("experimental-profile.json"),
+        serde_json::to_vec_pretty(&profile)?,
+    )?;
+    files.insert("compiler.json".into(), output.join("compiler.json"));
+    files.insert(calibration_name.into(), output.join(calibration_name));
+    fs::write(
+        output.join("asset-files.private.json"),
+        serde_json::to_vec_pretty(&files)?,
+    )?;
+    Ok(PreparedProfile {
+        profile,
+        files,
+        numeric_raw_only,
+    })
+}
+
+#[cfg(test)]
+mod tests;

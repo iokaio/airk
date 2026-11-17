@@ -104,3 +104,8 @@ native model/profile/wire/digest format changes. Passing conversion still requir
 independent whole-DAG and publisher-byte validation, original/matching-half
 numerical checks, actual native placement/kernel completion, resources, task/CAL,
 and product acceptance under their separate exact identities.
+
+Fresh preparation now seals the byte-identical maintained ownership primitives
+under scripts/cuda-native-execution/helpers. Historical artifact source copies
+and old plans retain their original identities; no conversion is rerun or
+qualified by this source relocation.

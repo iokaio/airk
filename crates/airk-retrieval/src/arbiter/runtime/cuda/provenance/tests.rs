@@ -105,6 +105,7 @@ fn fixture() -> (PublicRuntimeProvenance, Vec<manifest::RuntimeFile>) {
             legal_inventory_sha256: hash(18),
             legal_owner_sha256: hash(19),
             checkpoint_history: None,
+            incremental_history: None,
             historical_failed_parent: Some(hash(20)),
             aggregate: Aggregate {
                 file: PublicFile {
@@ -312,6 +313,7 @@ fn legacy_public_bytes_omit_checkpoint_history() -> Result<()> {
     let (value, native) = fixture();
     let raw = serde_json::to_vec(&value)?;
     assert!(!String::from_utf8_lossy(&raw).contains("checkpoint_history"));
+    assert!(!String::from_utf8_lossy(&raw).contains("incremental_history"));
     validate_description(&value, value.static_core_build, &native)?;
     Ok(())
 }
@@ -368,5 +370,123 @@ fn public_checkpoint_history_is_path_free_descriptive_and_strict() -> Result<()>
         .sections
         .swap(0, 1);
     assert!(validate_description(&value, value.static_core_build, &native).is_err());
+    Ok(())
+}
+
+fn incremental_fixture() -> Result<(PublicRuntimeProvenance, Vec<manifest::RuntimeFile>)> {
+    let (mut value, native) = fixture();
+    value
+        .components
+        .iter_mut()
+        .find(|c| c.name == "onnxruntime")
+        .unwrap()
+        .source_changes
+        .extend([hash(44), hash(43)]);
+    let failed = "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026".parse()?;
+    value.historical_failed_parent = Some(failed);
+    value.checkpoint_history = Some(CheckpointHistory {
+        mode: "checkpointed-warm".into(),
+        qualification: false,
+        cold_build_qualified: false,
+        approved_plan_sha256: "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97"
+            .parse()?,
+        failed_ancestry: vec![failed],
+        sections: vec![
+            CheckpointSectionHistory {
+                section_id: "flash-remainder".into(),
+                section_index: 0,
+                receipt_sha256: hash(31),
+            },
+            CheckpointSectionHistory {
+                section_id: "llm-remainder".into(),
+                section_index: 1,
+                receipt_sha256: hash(32),
+            },
+            CheckpointSectionHistory {
+                section_id: "final-provider-all-closure".into(),
+                section_index: 2,
+                receipt_sha256: hash(33),
+            },
+        ],
+    });
+    value.incremental_history = Some(IncrementalHistory {
+        mode: "incremental-finalgraph".into(),
+        parent_producer_sha256: "f9fac8eb2fe1a1cb5191118124503782792ca6d3aff14d02326167cd7276b178"
+            .parse()?,
+        parent_build_proof_sha256: hash(40),
+        parent_aggregate_sha256: "042c970193bf3d2fc7c80f53b055f74130c653d561f7735142fc01b01cebac00"
+            .parse()?,
+        recipe_sha256: hash(41),
+        source_before_sha256: hash(42),
+        source_after_sha256: hash(43),
+        patch_sha256: hash(44),
+        new_object_sha256: hash(45),
+        new_session_sha256: hash(46),
+        aggregate_sha256: value.aggregate.file.sha256,
+        qualification: false,
+        cold_build_qualified: false,
+    });
+    Ok((value, native))
+}
+#[test]
+fn public_incremental_history_is_path_free_and_preserves_parent_history() -> Result<()> {
+    let (v, native) = incremental_fixture()?;
+    validate_description(&v, v.static_core_build, &native)?;
+    let bytes = serde_json::to_vec(&v)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(
+        value["incremental_history"]["mode"],
+        "incremental-finalgraph"
+    );
+    assert!(
+        value["incremental_history"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|k| !k.contains("path"))
+    );
+    assert_eq!(value["checkpoint_history"]["mode"], "checkpointed-warm");
+    let roundtrip: PublicRuntimeProvenance = serde_json::from_slice(&bytes)?;
+    assert_eq!(serde_json::to_vec(&roundtrip)?, bytes);
+    Ok(())
+}
+#[test]
+fn public_incremental_history_never_relabels_parent_build_or_aggregate() -> Result<()> {
+    let (v, native) = incremental_fixture()?;
+    let mut changed = v.clone();
+    changed.static_core_build = changed
+        .incremental_history
+        .as_ref()
+        .unwrap()
+        .parent_producer_sha256;
+    assert!(validate_description(&changed, changed.static_core_build, &native).is_err());
+    let mut changed = v.clone();
+    changed
+        .incremental_history
+        .as_mut()
+        .unwrap()
+        .aggregate_sha256 = hash(89);
+    assert!(validate_description(&changed, changed.static_core_build, &native).is_err());
+    let mut changed = v;
+    changed.checkpoint_history = None;
+    assert!(validate_description(&changed, changed.static_core_build, &native).is_err());
+    Ok(())
+}
+#[test]
+fn public_incremental_history_refuses_fabricated_qualification_and_unknown_fields() -> Result<()> {
+    let (v, native) = incremental_fixture()?;
+    let mut changed = v.clone();
+    changed.incremental_history.as_mut().unwrap().qualification = true;
+    assert!(validate_description(&changed, changed.static_core_build, &native).is_err());
+    let mut changed = v.clone();
+    changed
+        .incremental_history
+        .as_mut()
+        .unwrap()
+        .cold_build_qualified = true;
+    assert!(validate_description(&changed, changed.static_core_build, &native).is_err());
+    let mut raw = serde_json::to_value(&v)?;
+    raw["incremental_history"]["approved"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PublicRuntimeProvenance>(raw).is_err());
     Ok(())
 }

@@ -257,6 +257,25 @@ fn emit_cuda_component_probe_request() -> Result<()> {
                         "AIRK_CUDA_CHECKPOINTED_PROOF_SHA256",
                     )?),
                 },
+                incremental_proof: match std::env::var_os("AIRK_CUDA_INCREMENTAL_PROOF") {
+                    None => {
+                        ensure!(
+                            std::env::var_os("AIRK_CUDA_INCREMENTAL_PROOF_SHA256").is_none(),
+                            "incremental proof hash requires explicit proof path"
+                        );
+                        None
+                    }
+                    Some(_) => {
+                        ensure!(
+                            std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF").is_none(),
+                            "conflicting producer proof modes"
+                        );
+                        Some(env_pin(
+                            "AIRK_CUDA_INCREMENTAL_PROOF",
+                            "AIRK_CUDA_INCREMENTAL_PROOF_SHA256",
+                        )?)
+                    }
+                },
                 custody_copies: match std::env::var_os("AIRK_CUDA_METADATA_CUSTODY") {
                     None => {
                         ensure!(
@@ -687,6 +706,7 @@ fn historical_assembly_request_omits_new_checkpoint_authority_and_requires_expli
         producer_name: "producer.json".into(),
         producer_sha256: Sha256Digest::from_bytes([1; 32]),
         checkpointed_proof: None,
+        incremental_proof: None,
         custody_copies: Vec::new(),
         historical_tool_copies: Vec::new(),
         module_names: vec![],
@@ -695,6 +715,7 @@ fn historical_assembly_request_omits_new_checkpoint_authority_and_requires_expli
     };
     let mut json = serde_json::to_value(&assembly)?;
     assert!(json.get("checkpointed_proof").is_none());
+    assert!(json.get("incremental_proof").is_none());
     json["checkpointed_proof"] =
         serde_json::json!({"path":"literal-proof.json","sha256":Sha256Digest::from_bytes([2;32])});
     let decoded: RuntimeAssemblyInput = serde_json::from_value(json.clone())?;
@@ -1561,4 +1582,515 @@ fn placement_diagnostic_partial_capture_or_unproven_teardown_refuses() {
             "mutation {mutation}"
         );
     }
+}
+
+// This additive selector preserves the existing placement-mode wire and success rules.
+const GRAPH_DIAGNOSTIC_BYTES: usize = 16 << 20;
+fn bounded_graph_diagnostic_json(receipt: &Value, maximum: usize) -> Result<Vec<u8>> {
+    ensure!(
+        maximum > 0 && maximum <= GRAPH_DIAGNOSTIC_BYTES,
+        "invalid graph diagnostic byte cap"
+    );
+    struct Bounded {
+        bytes: Vec<u8>,
+        maximum: usize,
+    }
+    impl std::io::Write for Bounded {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if !self
+                .bytes
+                .len()
+                .checked_add(bytes.len())
+                .is_some_and(|n| n <= self.maximum)
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "graph diagnostic output cap",
+                ));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut output = Bounded {
+        bytes: Vec::new(),
+        maximum,
+    };
+    serde_json::to_writer(&mut output, receipt)?;
+    Ok(output.bytes)
+}
+fn flush_graph_diagnostic(file: &mut File, receipt: &Value) -> Result<()> {
+    // Complete bounded serialization precedes seek/write: overflow preserves prior bytes.
+    let bytes = bounded_graph_diagnostic_json(receipt, GRAPH_DIAGNOSTIC_BYTES)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&bytes)?;
+    file.set_len(bytes.len() as u64)?;
+    file.flush()?;
+    file.sync_data()?;
+    Ok(())
+}
+fn graph_diagnostic_logs_complete(snapshot: &cuda::LoadSnapshot) -> bool {
+    !snapshot.logs.truncated && snapshot.logs.omitted == 0
+}
+fn graph_diagnostic_custody(
+    loaded: bool,
+    retained: bool,
+    cleaned: bool,
+    released: bool,
+    poisoned: bool,
+) -> Result<()> {
+    ensure!(loaded, "disposable graph diagnostic returned failure");
+    diagnostic_settlement(true, retained, cleaned, released, poisoned)
+}
+fn graph_diagnostic_evidence(
+    loaded: bool,
+    snapshot: Option<&cuda::LoadSnapshot>,
+    retained: bool,
+    cleaned: bool,
+    released: bool,
+    poisoned: bool,
+) -> Result<()> {
+    graph_diagnostic_custody(loaded, retained, cleaned, released, poisoned)?;
+    snapshot
+        .context("disposable graph observer is absent")?
+        .validate_graph_metadata()
+}
+
+#[test]
+#[ignore = "disposable final graph metadata only: original120s/16GiB/24GiB, actual CUDA lease/device; no scorer or forward"]
+fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
+    let started_ns = airk_process::monotonic::now_ns()?;
+    let started = Instant::now();
+    let execution_user = airk_ipc::endpoint::current_user()?;
+    let default_owner = diagnostic_default_owner()?;
+    ensure!(
+        execution_user == default_owner,
+        "diagnostic default owner differs from execution user"
+    );
+    let (request, request_pin) = request()?;
+    let Request::Probe {
+        schema,
+        gpu_input,
+        runtime_manifest,
+        bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+    } = request
+    else {
+        anyhow::bail!("graph metadata diagnostic requires unchanged native Probe request")
+    };
+    ensure!(schema == SCHEMA, "unknown diagnostic request schema");
+    bounds.validate()?;
+    ensure!(
+        bounds.deadline_ms == 120000
+            && bounds.host_limit_bytes == 16 << 30
+            && bounds.device_limit_bytes == 24 << 30
+            && job_limit_bytes == 24 << 30,
+        "graph metadata diagnostic original bounds differ"
+    );
+    let deadline = started + Duration::from_millis(bounds.deadline_ms);
+    let expires_ns = started_ns
+        .checked_add(bounds.deadline_ms * 1_000_000)
+        .context("diagnostic expiry overflow")?;
+    // Actual source assets are authenticated below before disposable session creation.
+    let (input, profile, files, _) = inputs_from(&gpu_input)?;
+    let capacity_plan = bounds_validate(
+        &bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+        profile.memory_reservation_bytes,
+    )?;
+    ensure!(
+        profile.model == ModelChoice::ContextQwenCompact
+            && profile.device_execution.is_some()
+            && profile.cpu_fit.is_none(),
+        "graph metadata diagnostic requires frozen Compact GPU metadata"
+    );
+    pinned(&runtime_manifest, 128 << 10)?;
+    let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
+    ensure!(
+        manifest.as_path() == Path::new(&runtime_manifest.path),
+        "diagnostic manifest differs from installed runtime locator"
+    );
+    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
+    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
+        preset: ResourcePreset::Throughput,
+        ..ResourceConfiguration::default()
+    })?;
+    let available = airk_kernel::service_resource_observations::available_memory();
+    resources.observe(
+        airk_kernel::service_resource_observations::rss(std::process::id()),
+        available,
+        true,
+    );
+    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
+    let charge =
+        Arc::new(resources.reserve_optional(incarnation, bounds.host_limit_bytes, available)?);
+    let charge_release = charge.release_observer();
+    let (parent, control) = private_control()?;
+    let mut control_parent = Some(parent);
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
+        lease.clone(),
+    )?);
+    let binary = file_hash(&std::env::current_exe()?)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output()?)?;
+    let mut receipt = json!({
+        "schema":"airk.private.cuda-graph-metadata-diagnostic/1", "diagnostic_complete":false,
+        "operation_scope":"Disposable session creation and final graph metadata observation only; no Scorer, forward, hybrid policy or qualification is returned",
+        "outcome":"not_dispatched","qualification":false,"product_admission":false,
+        "session_load_dispatched":false,"session_created":false,"strict_production_unchanged":true,
+        "cpu_fallback_disabled":false,"scorer_returned":false,"forward_dispatched":false,
+        "model_requests_dispatched":false,"operations_journal_created":false,"forward_count_observed":null,
+        "placement":null,"graph_metadata":null,"logs":null,"selected_logs_complete":false,"teardown":null,
+        "request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"source_manifest":input.source_manifest,
+        "runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,
+        "execution_user":execution_user,"default_owner":default_owner,"bounds":bounds,"actual_job":actual_job,
+        "native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resources.snapshot(),
+        "original_expires_monotonic_ns":expires_ns,"error":null,"error_chain":[],"diagnostic_error":null
+    });
+    flush_graph_diagnostic(&mut file, &receipt)?;
+    let mut dispatched = false;
+    let mut observer = None;
+    let run = owner.run(|| -> Result<()> {
+        let mut custody = Custody {
+            scorer: None,
+            device: None,
+            owner: owner.clone(),
+            lease: lease.clone(),
+            charge: Some(charge),
+            control: &mut control_parent,
+            files: Some(files),
+        };
+        ensure!(
+            Instant::now() < deadline,
+            "original graph metadata diagnostic expiry before admission"
+        );
+        verify_files(custody.files.as_ref().unwrap(), &profile)?;
+        let runtime = airk_host::gpu_runtime::admit(lease.clone(), &root, &manifest, deadline)?;
+        ensure!(
+            runtime.manifest_identity() == runtime_manifest.sha256,
+            "diagnostic runtime differs from frozen manifest"
+        );
+        let adapters = runtime.adapters(deadline)?;
+        ensure!(
+            adapters.len() == 1,
+            "graph metadata diagnostic requires one actual adapter"
+        );
+        let device = runtime.device(adapters[0].uuid, deadline)?;
+        custody.device = Some(device.clone());
+        receipt["adapter_before"] = serde_json::to_value(device.observation(deadline)?)?;
+        let catalog =
+            airk_kernel::inference_owner::evaluation_catalog(lease.clone(), vec![profile.clone()])?;
+        let execution = catalog
+            .execution_profile(profile.manifest)?
+            .bind_cuda_probe(device, capacity_plan, deadline)?;
+        observer = Some(execution.cuda_load_observer()?);
+        ensure!(
+            Instant::now() < deadline,
+            "original graph metadata diagnostic expiry before session load"
+        );
+        dispatched = true;
+        receipt["session_load_dispatched"] = json!(true);
+        let result =
+            Scorer::diagnose_cuda_graph_metadata(execution, custody.files.as_ref().unwrap());
+        let post_files = verify_files(custody.files.as_ref().unwrap(), &profile);
+        result.and(post_files)
+    });
+    let admission = run.and_then(std::convert::identity);
+    let snapshot = observer
+        .as_ref()
+        .map(cuda::LoadObserver::snapshot)
+        .transpose();
+    drop(owner);
+    drop(lease);
+    let retained = control_parent.is_none();
+    let cleanup = control_parent
+        .take()
+        .map(tempfile::TempDir::close)
+        .transpose();
+    let cleaned = matches!(&cleanup, Ok(Some(())));
+    let mut released_future = std::pin::pin!(charge_release.wait());
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let released = matches!(
+        std::future::Future::poll(released_future.as_mut(), &mut cx),
+        std::task::Poll::Ready(Ok(()))
+    );
+    let poisoned = cuda::process_poisoned();
+    receipt["session_load_dispatched"] = json!(dispatched);
+    if let Ok(Some(value)) = &snapshot {
+        receipt["session_created"] = json!(value.session_created);
+        receipt["placement"] = serde_json::to_value(&value.placement)?;
+        receipt["logs"] = serde_json::to_value(&value.logs)?;
+        receipt["graph_metadata"] = serde_json::to_value(&value.graph_metadata)?;
+        receipt["selected_logs_complete"] = json!(graph_diagnostic_logs_complete(value));
+        receipt["teardown"] = serde_json::to_value(&value.teardown)?;
+    }
+    receipt["native_control_retained_for_unknown_cuda"] = json!(retained);
+    receipt["native_control_cleanup_observed"] = json!(cleaned);
+    receipt["native_control_cleanup_error"] =
+        json!(cleanup.as_ref().err().map(ToString::to_string));
+    receipt["native_host_charge_release_observed"] = json!(released);
+    receipt["process_cuda_poisoned"] = json!(poisoned);
+    if let Err(error) = &admission {
+        receipt["error"] = json!(format!("{error:#}"));
+        receipt["error_chain"] = json!(error.chain().map(ToString::to_string).collect::<Vec<_>>());
+    }
+    let post = (|| -> Result<()> {
+        ensure!(dispatched, "disposable session load was not dispatched");
+        ensure!(cleanup.is_ok(), "native diagnostic control cleanup failed");
+        let observed = snapshot
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+        graph_diagnostic_evidence(
+            admission.is_ok(),
+            observed.as_ref(),
+            retained,
+            cleaned,
+            released,
+            poisoned,
+        )?;
+        pinned(&request_pin, 1 << 20)?;
+        pinned(&gpu_input, 1 << 20)?;
+        pinned(&input.profile, 1 << 20)?;
+        pinned(&input.source_manifest, 16 << 20)?;
+        pinned(&runtime_manifest, 128 << 10)?;
+        ensure!(
+            Instant::now() < deadline,
+            "original graph metadata diagnostic expiry during postpins"
+        );
+        Ok(())
+    })();
+    let peak = peak_rss();
+    let peak_decision = final_host_peak(peak, bounds.host_limit_bytes);
+    receipt["peak_process_rss_bytes"] = json!(peak);
+    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
+    let final_result = admission.and(post).and(peak_decision.map(|_| ()));
+    receipt["outcome"] = json!(if final_result.is_ok() {
+        "graph_metadata_observed"
+    } else if dispatched {
+        "failed"
+    } else {
+        "not_dispatched"
+    });
+    receipt["diagnostic_complete"] = json!(final_result.is_ok());
+    receipt["diagnostic_error"] = json!(final_result.as_ref().err().map(|e| format!("{e:#}")));
+    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
+    flush_graph_diagnostic(&mut file, &receipt)?;
+    if Instant::now() >= deadline {
+        receipt["diagnostic_complete"] = json!(false);
+        receipt["outcome"] = json!("failed");
+        receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
+        receipt["diagnostic_error"] =
+            json!("original graph metadata diagnostic expiry during final report retention");
+        flush_graph_diagnostic(&mut file, &receipt)?;
+        anyhow::bail!("original graph metadata diagnostic expiry during final report retention");
+    }
+    final_result
+}
+
+#[test]
+fn graph_diagnostic_compact_encoding_preserves_literal_json_and_exact_cap() -> Result<()> {
+    let value = json!({"x":"é\n"});
+    let expected = "{\"x\":\"é\\n\"}".as_bytes();
+    let encoded = bounded_graph_diagnostic_json(&value, expected.len())?;
+    assert_eq!(encoded, expected);
+    assert_eq!(serde_json::from_slice::<Value>(&encoded)?, value);
+    assert!(bounded_graph_diagnostic_json(&value, expected.len() - 1).is_err());
+    Ok(())
+}
+#[test]
+fn graph_diagnostic_encoding_rejects_invalid_or_overflowed_budget() {
+    assert!(bounded_graph_diagnostic_json(&json!(null), 0).is_err());
+    assert!(bounded_graph_diagnostic_json(&json!(null), GRAPH_DIAGNOSTIC_BYTES + 1).is_err());
+    assert!(bounded_graph_diagnostic_json(&json!({"x":"a".repeat(100)}), 16).is_err());
+}
+#[test]
+fn graph_diagnostic_log_disclosure_does_not_relabel_placement_success() {
+    let mut value = synthetic_placement_snapshot();
+    assert!(graph_diagnostic_logs_complete(&value));
+    value.logs.truncated = true;
+    assert!(!graph_diagnostic_logs_complete(&value));
+    assert!(value.validate().is_err());
+    value.logs.truncated = false;
+    value.logs.omitted = 1;
+    assert!(!graph_diagnostic_logs_complete(&value));
+    assert!(value.validate().is_err());
+}
+#[test]
+fn graph_diagnostic_requires_actual_load_and_clean_outer_custody() -> Result<()> {
+    graph_diagnostic_custody(true, false, true, true, false)?;
+    for (loaded, retained, cleaned, released, poisoned) in [
+        (false, false, true, true, false),
+        (true, true, false, false, true),
+        (true, false, false, true, false),
+        (true, false, true, false, false),
+        (true, false, true, true, true),
+    ] {
+        assert!(graph_diagnostic_custody(loaded, retained, cleaned, released, poisoned).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn graph_diagnostic_refuses_missing_snapshot_or_graph_even_with_complete_placement() {
+    assert!(graph_diagnostic_evidence(true, None, false, true, true, false).is_err());
+    let value = synthetic_placement_snapshot();
+    assert!(value.validate().is_ok());
+    assert!(graph_diagnostic_evidence(true, Some(&value), false, true, true, false).is_err());
+}
+
+fn synthetic_graph_snapshot() -> Result<cuda::LoadSnapshot> {
+    use cuda::GraphMetadataRow as R;
+    let mut snapshot = synthetic_placement_snapshot();
+    let mut graph = cuda::GraphMetadataObservation {
+        schema: "airk.private.ort-final-graph-metadata/1",
+        complete: true,
+        shim_status: 0,
+        ort_error_code: 0,
+        reported_counts: [1, 2, 5, 62, 0, 12],
+        encoded_bytes: 0,
+        failure: None,
+        rows: vec![
+            R::Graph {
+                graph: 0,
+                parent_graph: None,
+                parent_node: None,
+                attribute: "".into(),
+                outer_bindings: "not_applicable".into(),
+            },
+            R::Value {
+                graph: 0,
+                value: 0,
+                name: "input".into(),
+                element_type: Some(1),
+                rank: Some(1),
+                type_state: "tensor".into(),
+                provenance: "graph_input".into(),
+                producer: None,
+            },
+            R::Dimension {
+                graph: 0,
+                value: 0,
+                index: 0,
+                number: Some(3),
+                symbol: None,
+            },
+            R::Value {
+                graph: 0,
+                value: 1,
+                name: "shape".into(),
+                element_type: Some(7),
+                rank: Some(1),
+                type_state: "tensor".into(),
+                provenance: "node_output".into(),
+                producer: Some(7),
+            },
+            R::Dimension {
+                graph: 0,
+                value: 1,
+                index: 0,
+                number: Some(1),
+                symbol: None,
+            },
+            R::Edge {
+                graph: 0,
+                node: None,
+                value: Some(0),
+                role: 3,
+                slot: 0,
+            },
+            R::Edge {
+                graph: 0,
+                node: None,
+                value: Some(1),
+                role: 4,
+                slot: 0,
+            },
+            R::Edge {
+                graph: 0,
+                node: None,
+                value: Some(0),
+                role: 5,
+                slot: 0,
+            },
+            R::Node {
+                graph: 0,
+                node: 7,
+                name: "shape".into(),
+                domain: "".into(),
+                op: "Shape".into(),
+                ep: "CPUExecutionProvider".into(),
+                version: 15,
+            },
+            R::Edge {
+                graph: 0,
+                node: Some(7),
+                value: Some(0),
+                role: 0,
+                slot: 0,
+            },
+            R::Edge {
+                graph: 0,
+                node: Some(7),
+                value: Some(1),
+                role: 2,
+                slot: 0,
+            },
+            R::End { graph: 0 },
+        ],
+    };
+    // Only the self-describing encoded length is calculated; expected graph facts are literal.
+    for _ in 0..8 {
+        let size = serde_json::to_vec(&graph)?.len();
+        if size == graph.encoded_bytes {
+            break;
+        }
+        graph.encoded_bytes = size;
+    }
+    snapshot.graph_metadata = Some(graph);
+    Ok(snapshot)
+}
+#[test]
+fn graph_diagnostic_success_keeps_truncated_logs_explicit_without_old_mode_pass() -> Result<()> {
+    let mut snapshot = synthetic_graph_snapshot()?;
+    snapshot.logs.seen = 1;
+    snapshot.logs.selected = 1;
+    snapshot.logs.omitted = 1;
+    snapshot.logs.truncated = true;
+    graph_diagnostic_evidence(true, Some(&snapshot), false, true, true, false)?;
+    assert!(!graph_diagnostic_logs_complete(&snapshot));
+    assert!(
+        placement_diagnostic_evidence(true, Some(&snapshot), false, true, true, false).is_err()
+    );
+    assert!(
+        snapshot
+            .placement
+            .as_ref()
+            .unwrap()
+            .validate_strict()
+            .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn graph_diagnostic_rejects_incomplete_graph_and_node_provider_mismatch() -> Result<()> {
+    let snapshot = synthetic_graph_snapshot()?;
+    graph_diagnostic_evidence(true, Some(&snapshot), false, true, true, false)?;
+    let mut partial = snapshot.clone();
+    partial.graph_metadata.as_mut().unwrap().complete = false;
+    assert!(graph_diagnostic_evidence(true, Some(&partial), false, true, true, false).is_err());
+    let mut changed = snapshot;
+    changed.placement.as_mut().unwrap().nodes[0].ep = "CUDAExecutionProvider".into();
+    assert!(graph_diagnostic_evidence(true, Some(&changed), false, true, true, false).is_err());
+    Ok(())
 }

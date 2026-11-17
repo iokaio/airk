@@ -1,0 +1,19 @@
+{
+  "schema": "airk.research-source-migration/1",
+  "files": [
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/candidate-overlay-preparation-r1/candidate_overlay.py",
+      "destination": "scripts/arbiter/training/focus_lora_r8/support/candidate_overlay.py",
+      "original_sha256": "add068e2e435863a0f2dcc0ea06739c03605fe8f6e5f86b8966aba78b3d47372",
+      "maintained_sha256": "37a81f133375815293467ca0fd8c8f925bdba1ca6d78b82bb819d20cee50c229",
+      "transformations": [
+        "explicit maintained reference dependency/private output/test paths; normalize line endings to LF"
+      ],
+      "historical_receipts_reused": false,
+      "spdx_only_sha256": "add068e2e435863a0f2dcc0ea06739c03605fe8f6e5f86b8966aba78b3d47372",
+      "original_bytes": 33450,
+      "maintained_bytes": 33878
+    }
+  ],
+  "data_weights_receipts_included": false
+}

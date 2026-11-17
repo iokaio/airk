@@ -6,6 +6,8 @@ import io
 import json
 from pathlib import Path
 import unittest
+import struct
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('preserve_cuda_images', Path(__file__).resolve().parents[1]/'preserve-cuda-test-images.py')
@@ -243,6 +245,134 @@ class RuntimePolicyBatchControls(unittest.TestCase):
             with patch.object(m.Path,'resolve',return_value=root), patch.object(m.Path,'is_dir',return_value=True), patch.object(m.Path,'iterdir',side_effect=lambda:iter([path])), patch.object(m,'pin',return_value=custody()['pin']), patch.object(m,'identity',side_effect=[old,changed]), patch.object(m,'regular'), patch.object(m,'runtime_policies',return_value=[custody()['policy']]):
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     m.runtime_census(root,'frozen')
+
+
+class IncrementalPreservation(unittest.TestCase):
+    def setUp(self):
+        self.runtime=m.USER_ROOT/'fresh-runtime'
+        self.producer={'path':str(m.USER_ROOT/'fresh-producer/gpu-incremental-build-receipt.json'),'bytes':100,'sha256':'b'*64}
+        self.archive={'path':str(m.USER_ROOT/'fresh-producer/aggregate/onnxruntime.lib'),'bytes':1000,'sha256':'c'*64}
+        self.manifest={'schema':'airk.native.cuda-runtime-manifest/1','ort_version':'1.30.0','static_core_build':'b'*64,
+                       'producer_name':'gpu-incremental-build-receipt.json','producer_bytes':100,'producer_sha256':'b'*64}
+        self.manifest_pin={'path':str(self.runtime/'airk-cuda-runtime.json'),'bytes':200,'sha256':'d'*64}
+        self.runtime_producer=dict(self.producer,path=str(self.runtime/self.manifest['producer_name']))
+
+    def test_actual_incremental_cargo_link_path_and_old_mode_separate(self):
+        rows=cargo();rows[1]['linked_paths']=['native='+str(Path(self.archive['path']).parent)]
+        self.assertEqual(len(m.cargo_rows(encoded(rows),Path(self.archive['path']))[1]),2)
+        with self.assertRaises(ValueError):m.cargo_rows(encoded(rows))
+        with self.assertRaises(ValueError):m.cargo_rows(encoded(cargo()),Path(self.archive['path']))
+
+    def test_fresh_manifest_matches_actual_raw_producer(self):
+        with patch.object(m,'pin',return_value=self.runtime_producer):
+            actual=m.validate_graph_manifest(self.manifest,self.manifest_pin,self.runtime,{'producer':self.producer})
+        self.assertEqual(actual,self.runtime_producer)
+
+    def test_old_wrong_or_retagged_producer_refuses(self):
+        for key,bad in [('static_core_build',m.OLD_PRODUCER),('producer_sha256','f'*64),('producer_bytes',99),
+                        ('producer_name','../producer.json'),('schema','wrong')]:
+            with self.subTest(key=key):
+                changed=dict(self.manifest);changed[key]=bad
+                with patch.object(m,'pin',return_value=self.runtime_producer),self.assertRaises(ValueError):
+                    m.validate_graph_manifest(changed,self.manifest_pin,self.runtime,{'producer':self.producer})
+        with patch.object(m,'pin',return_value=dict(self.runtime_producer,sha256='f'*64)),self.assertRaises(ValueError):
+            m.validate_graph_manifest(self.manifest,self.manifest_pin,self.runtime,{'producer':self.producer})
+
+    def test_verifier_source_roster_is_exact_and_path_closed(self):
+        names=['scripts/cuda-runtime-environment.py','scripts/cuda-static-runtime.py','scripts/cuda-static-aggregate.py',
+               'scripts/cuda-static-incremental.py','scripts/cuda-static-archive.py','scripts/cuda-static-checkpointed.py',
+               'scripts/cuda-static-continuation-r12.py',
+               'scripts/cuda-static-runtime/verification/checkpoint_sections.py',
+               'scripts/cuda-static-runtime/verification/materialized.py',
+               'scripts/cuda-component-execution.py','scripts/provision-static-onnx-runtime.py','scripts/static-onnx-runtime-lock.json']
+        data={name:'a'*64 for name in names}
+        with patch.object(m,'exact_pin',side_effect=lambda path,sha:{'path':str(path),'bytes':10,'sha256':sha}),patch.object(Path,'read_bytes',return_value=json.dumps(data).encode()):
+            _,pins=m.source_roster(Path('C:/literal/roster.json'),'a'*64)
+            self.assertEqual({x['path'] for x in pins},{str(m.ROOT/name) for name in names})
+        data['scripts/foreign.py']='a'*64
+        with patch.object(m,'exact_pin',return_value={'bytes':10}),patch.object(Path,'read_bytes',return_value=json.dumps(data).encode()),self.assertRaises(ValueError):
+            m.source_roster(Path('C:/literal/roster.json'),'a'*64)
+
+    def test_environment_calls_dedicated_verifier(self):
+        proof={'schema':'airk.cuda-static-build-proof/3','new_aggregate':self.archive,'build_receipt':self.producer}
+        aggregate={'schema':'airk.cuda-static-aggregate-proof/1'}
+        environment={'LIBONNXRUNTIME_NO_PKG_CONFIG':'1','ORT_SKIP_DOWNLOAD':'1','ORT_PREFER_DYNAMIC_LINK':'0',
+                     'ORT_LIB_LOCATION':str(Path(self.archive['path']).parent),'ORT_LIB_PROFILE':'Release'}
+        value={'schema':'airk.cuda-static-environment/5','build':proof,'aggregate':aggregate}
+        calls=[]
+        def verify(*args,**kwargs):
+            calls.append((args,kwargs))
+            return {'gpu_build':proof,'gpu_aggregate':aggregate,'environment':environment,'activation_pins_available':False}
+        owner=SimpleNamespace(verify_handoff=verify)
+        spec=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module:None))
+        rows={self.archive['path']:self.archive,self.producer['path']:self.producer}
+        patches=[patch.object(m,'source_roster',return_value=({'path':'roster','bytes':1,'sha256':'a'*64},[])),
+                 patch.object(m,'exact_pin',return_value={'path':'environment','bytes':100,'sha256':'a'*64}),
+                 patch.object(Path,'read_bytes',return_value=json.dumps(value).encode()),
+                 patch.object(m.importlib.util,'spec_from_file_location',return_value=spec),
+                 patch.object(m.importlib.util,'module_from_spec',return_value=owner),patch.object(m,'pin',side_effect=lambda path,**kwargs:rows[path])]
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for item in patches:stack.enter_context(item)
+            result=m.verify_environment(m.USER_ROOT/'environment.json','a'*64,Path('roster'),'a'*64)
+            self.assertEqual(result['proof'],proof);self.assertEqual(len(calls),1)
+            with patch.object(m.time,'monotonic',return_value=1):
+                m.verify_environment(m.USER_ROOT/'environment.json','a'*64,Path('roster'),'a'*64,deadline=120)
+            self.assertEqual(calls[-1][1],{'deadline':120})
+            def refusal(*args):raise ValueError('raw producer invalid')
+            owner.verify_handoff=refusal
+            with self.assertRaisesRegex(ValueError,'raw producer invalid'):m.verify_environment(m.USER_ROOT/'environment.json','a'*64,Path('roster'),'a'*64)
+
+    def image(self):
+        data=bytearray(2560);data[:2]=b'MZ';struct.pack_into('<I',data,60,128);data[128:132]=b'PE\0\0'
+        struct.pack_into('<HH',data,132,0x8664,1);struct.pack_into('<H',data,148,240);struct.pack_into('<H',data,152,0x20b)
+        struct.pack_into('<I',data,260,16);struct.pack_into('<II',data,264,0x1100,0x100)
+        struct.pack_into('<IIII',data,400,2048,0x1000,2048,512);struct.pack_into('<I',data,428,0x60000020)
+        struct.pack_into('<IIIII',data,788,2,2,0x1130,0x1140,0x1150)
+        struct.pack_into('<II',data,816,0x1000,0x1010);struct.pack_into('<II',data,832,0x1160,0x11a0);struct.pack_into('<HH',data,848,0,1)
+        for offset,name in [(864,b'airk_ort_collect_final_placement_v1'),(928,b'airk_ort_collect_final_graph_metadata_v1')]:data[offset:offset+len(name)+1]=name+b'\0'
+        return data
+
+    def exports(self,data):
+        with patch.object(Path,'open',side_effect=lambda *a,**k:io.BytesIO(data)),patch.object(Path,'stat',return_value=SimpleNamespace(st_size=len(data))):
+            return m.exported_collectors(Path('C:/literal/image.exe'))
+
+    def test_actual_pe_has_both_static_collectors(self):
+        self.assertEqual(self.exports(self.image()),['airk_ort_collect_final_graph_metadata_v1','airk_ort_collect_final_placement_v1'])
+
+    def test_forwarded_missing_or_nonexecutable_collector_refuses(self):
+        for mutation in ['forwarded','missing','data','ordinal']:
+            data=self.image()
+            if mutation=='forwarded':struct.pack_into('<I',data,820,0x1100)
+            elif mutation=='missing':data[928]=ord('x')
+            elif mutation=='data':struct.pack_into('<I',data,428,0x40000040)
+            else:struct.pack_into('<H',data,850,3)
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):self.exports(data)
+
+
+
+class OriginalProvenanceDeadline(unittest.TestCase):
+    def test_environment_refuses_expired_before_source_load(self):
+        with patch.object(m.time,'monotonic',return_value=2),patch.object(m,'source_roster') as read:
+            with self.assertRaises(ValueError):m.verify_environment('env','sha','roster','sha',deadline=2)
+            read.assert_not_called()
+    def test_binding_refuses_expired_before_pin(self):
+        with patch.object(m.time,'monotonic',return_value=2),patch.object(m,'pin') as read:
+            with self.assertRaises(ValueError):m.verify_graph_binding({}, {}, {}, {},deadline=2)
+            read.assert_not_called()
+    def test_pe_refuses_expired_before_read(self):
+        with patch.object(m.time,'monotonic',return_value=2),patch.object(m,'pe') as read:
+            with self.assertRaises(ValueError):m.exported_collectors('image',deadline=2)
+            read.assert_not_called()
+    def test_hash_checks_deadline_after_each_chunk(self):
+        reads=[]
+        with patch.object(m.time,'monotonic',return_value=1) as clock:
+            class Stream(io.BytesIO):
+                def read(self,*args):
+                    reads.append(args);clock.return_value=2;return b'data'
+            with patch.object(Path,'open',return_value=Stream()):
+                with self.assertRaises(ValueError):m.digest('input',deadline=2)
+        self.assertEqual(reads,[(4<<20,)])
 
 
 if __name__ == '__main__': unittest.main()

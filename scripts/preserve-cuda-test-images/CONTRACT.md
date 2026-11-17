@@ -67,3 +67,47 @@ There is no policy cache across phases: the initial census and both complete
 reopen censuses remain, as do both full native-source passes. Creation audits,
 copy-only semantics and all non-runtime policy observations are unchanged.
 The read-only census API is now `runtime_census(runtime, reviewed_guard_sha256)`.
+
+## Explicit incremental final-graph preservation
+
+The additive --incremental-finalgraph mode authenticates a fresh /5 environment
+through its dedicated verifier and canonical /3 producer proof, not through
+caller hashes alone. It binds the actual new aggregate, actual CargoJSON static
+link row, fresh native manifest/static_core_build and producer bytes, and the
+collector exported from each actual preserved image. A bounded reviewed source
+roster authenticates verifier code before import; it supplements rather than
+replaces revalidation of the producer chain. The legacy mode retains its exact
+fixed environment/archive/manifest and validation behavior.
+
+The packet carries static_graph_binding with the revalidated environment/proof,
+aggregate, raw producer, manifest, verifier-source and Cargo link identities.
+Graph plan preflight reopens those inputs and reruns dedicated verification.
+Historical producer f9fac and old aggregate042c cannot authorize this mode.
+All create-only copy, same-user ownership, unchanged-input and complete-runtime
+census checks remain. No native image or model is executed by preservation.
+
+New mode CLI adds --incremental-finalgraph --incremental-environment PATH
+--incremental-environment-sha256 SHA --provenance-source-roster PATH
+--provenance-source-roster-sha256 SHA --manifest-sha256 SHA. The source roster is
+an exact path-to-SHA dictionary for PROVENANCE_OWNERS; paths are fixed maintained
+owners, not caller-selected executable locations. The manifest is the reviewed
+native-emitted airk-cuda-runtime.json in the actual runtime being extended.
+verify_graph_binding reopens the same producer environment, actual CargoJSON,
+raw producer, manifest, aggregate and image exports before and after preservation
+and during graph plan preflight/final observation. No cached provenance result
+can replace these reads. PE exports must resolve to executable nonforwarded code;
+export presence alone does not qualify a model or prove native diagnostic success.
+
+Graph execution passes its one original monotonic120s cutoff through preflight,
+final provenance observation, the preserver, environment/5 and incremental/3
+verifier. No graph call may substitute a new300s/600s verifier operation. Input
+hashing and PE export-table reads check the same cutoff during streaming reads;
+expired deep verification refuses before dispatch or final diagnostic completion.
+A full parent recensus that cannot fit this bound is a readiness blocker, not
+permission to widen it or claim that the graph operation passed.
+
+The parent mirrors the native metadata bounds: fewer than64 attributes per node,
+and exactly one element for readable scalar attribute types1,2,3. The exact
+maintained provenance roster also includes verification/checkpoint_sections.py
+and verification/materialized.py. Historical raw producer/metadata identities
+remain unchanged; source introductions and current verifier pins are explicit.

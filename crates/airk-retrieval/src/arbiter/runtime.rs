@@ -390,6 +390,8 @@ enum OpenMode {
     Execution,
     #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
     PlacementDiagnostic,
+    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+    GraphMetadataDiagnostic,
 }
 impl Scorer {
     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
@@ -428,6 +430,17 @@ impl Scorer {
     ) -> Result<()> {
         cuda::diagnostic::require_diagnostic_profile(&profile)?;
         match Self::open_internal(profile, source, Ok, OpenMode::PlacementDiagnostic)? {
+            None => Ok(()),
+            Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
+        }
+    }
+    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+    pub fn diagnose_cuda_graph_metadata(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+    ) -> Result<()> {
+        cuda::diagnostic::require_diagnostic_profile(&profile)?;
+        match Self::open_internal(profile, source, Ok, OpenMode::GraphMetadataDiagnostic)? {
             None => Ok(()),
             Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
         }
@@ -577,7 +590,10 @@ impl Scorer {
         }
         builder = configure(builder)?;
         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+        if matches!(
+            _mode,
+            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
+        ) {
             cuda::diagnostic::require_diagnostic_profile(&profile)?;
             builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
         }
@@ -646,7 +662,10 @@ impl Scorer {
             gpu.clone(),
         );
         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+        if matches!(
+            _mode,
+            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
+        ) {
             cuda::diagnostic::session_created(gpu.as_ref().context("diagnostic binding missing")?)?;
         }
         #[cfg(feature = "gpu-cuda")]
@@ -658,7 +677,10 @@ impl Scorer {
             let diagnostic = {
                 #[cfg(feature = "test-support")]
                 {
-                    matches!(_mode, OpenMode::PlacementDiagnostic)
+                    matches!(
+                        _mode,
+                        OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
+                    )
                 }
                 #[cfg(not(feature = "test-support"))]
                 {
@@ -780,8 +802,16 @@ impl Scorer {
             );
         }
         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
-            cuda::diagnostic::finish(session, gpu.as_ref().context("diagnostic binding missing")?)?;
+        if matches!(
+            _mode,
+            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
+        ) {
+            let binding = gpu.as_ref().context("diagnostic binding missing")?;
+            if matches!(_mode, OpenMode::GraphMetadataDiagnostic) {
+                cuda::diagnostic::finish_graph_metadata(session, binding)?;
+            } else {
+                cuda::diagnostic::finish(session, binding)?;
+            }
             return Ok(None);
         }
         Ok(Some(Self {
