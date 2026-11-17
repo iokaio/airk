@@ -7308,3 +7308,158 @@ Primary self-review of the combined exporter/documentation change closes before
 commit. Repository checks pass3614 public files; staged whitespace passes. README,
 documentation index, release1.8.207 and VSIX text retain truthful current-version
 and unqualified-device claims. No artifact/version bump or package retag occurs.
+
+### 2026-11-17 14:44Z — Genuine Focus scoring and one-update gradient milestones
+
+R8 no-site bootstrap correction passes52/52 controls2.976s/process3.204889s.
+Import-only audit authenticates2279 actual physical modules using unchanged
+runtime verification,10.811837s, CUDA uninitialized and no model/tensor/device
+calls; audit7923dc36, source preparation3c0205be. Original failures remain.
+Full13297-seal audit passes0mismatch; parent and child now start -B -S with the
+same absent nonwriting cache prefix. No ambient runtime files are admitted.
+
+Root reviews actual delta/bootstrap controls/import audit then launches fresh
+SCORE planf3eae569. Actual170 forwards/85DEV pairs complete, no refusals or
+failures,36.188355s afterGO/38.513423s total. OriginalPID10792 exits0 naturally,
+Job0/unforced, retained HANDLE exit/close and all final source hashes pass.
+Host committed peak8210210816B, CUDA allocator2475476480/reserved2499805184B.
+Receipt E/f1-score-plan-preparation-r6/score-execution/execution.json SHA
+781fa019d4a00683614148336bcdbd8deeefdc25e6ddb0a2492f4fb4e33d03ab;
+worker result4ed894fc06e542e63238ebb7ca0939bcfbb3a48f277de87ba035ac1de21e97ae.
+These are Torch original-model scoring results, not native ONNX CUDA qualification.
+
+Existing fixedDEV owner authenticates actual SCORE custody and selects
+software_evidence_v1: component-macro AUROC .4803129332541098 -> .5542582689641513;
+all3 component fixed-zero balanced accuracies remain unchanged. Selection
+E/f1-selected-instruction-r1/selection.json SHA
+0bc0b7c4f5462c059a78c85250629645250fd73ec85f995affd937a9b6be2a42.
+Only3 DEV clusters support exploratory pointwise diagnostics, not significance,
+ranking/necessary-evidence quality, teacher transfer, CAL or model promotion.
+
+Fresh original120s probe plan8eb969db retains exact source/runtime/data/selection
+continuity and first32 fixed draws (29eligible code +3 publisher replay).
+Root verifies plan/continuity/limits/absent paths and launches. Actual1 optimizer
+step,32 forwards/backwards, finite loss/gradients/weights and discarded probe
+adapter pass. Mean full-vocabulary CE1.66195525880903. OriginalPID30620 exits0
+naturally, Job0/unforced, retained HANDLE exit/close and all final hashes pass;
+41.304089s total/38.998334s afterGO. Host8624095232B, CUDA allocator2638148608/
+reserved2730491904B, below original16GiB/8GiB. Receipt
+E/f2-probe-plan-preparation-r1/probe-execution/execution.json SHA
+00ada698df0347172cc0a425a8639a5d25018dffa0b4c5ae5cfee459c05366dc;
+worker d1c70efaedda72292cbf16e5a042ac195bae2e4da073eff99594ee34c72ca7a1.
+Full445-draw/14-update training remains a fresh measured proposal, original600s,
+not an inferred pass. Output custody/export/numerical/task/quality remain separate.
+### 2026-11-17 — Restart checkpoint requested; training retained and source frozen
+
+The user requests a coherent stopping point for a VS Code restart, then an
+explicit pause until told to resume. No new model run or build starts after that
+request. Original T0/deadline remain2026-11-16T05:29:42.2081757Z /
+2026-11-19T05:29:42.2081757Z; pausing does not silently extend that deadline.
+Counts remain2 passed/11 in_progress/5 blocked. Next critical-path self-check is
+on resume (previous active-work schedule16:30Z). No final1.9/release claim.
+
+Genuine FULLTRAIN plan7f6ddb2e passes184.8031231s (182.3799015s afterGO),
+originalPID16096 exit0/natural/unforced/emptyJob/retainedHANDLE+closure; final
+source hashes all pass. Exactly14updates445forward445backward calls, merged
+full checkpoint, no failure. Host8662089728B; CUDA allocator2674848768 /
+reserved2730491904B within original16GiB/8GiB; original600s unchanged.
+Receipt E/f2-training-plan-preparation-r1/train-execution/execution.json SHA
+09b0d14df5934e033372ae3a9a10c057a2e874c685d97cd639fc71dbbd200c03;
+worker d605ab339cdb5158e84626f96328583042e7e084231264f5555a2d5910faaa47.
+
+Metadata-only custody E/f2-trained-checkpoint-custody-r1/manifest.json SHA
+2d02dbac98a1f15732ba7cfa8995670ec54bb516c689198c8c62fa2dee504f9b;
+header comparison6d3a05348ead617ce0c6f9fbc78c9505d99a685022630c07caccd802eb1f771e.
+Fresh merged-full-checkpoint has3files; model.safetensors2383141336B SHA
+4374eab207d735245521011b18eb69d8d2c2009fa5e9053ad35b541317105644,
+plus config.json/generation_config.json. Both original and merged contain310
+keys/595776512parameters; original BF16 expands exactly to merged F32 storage,
+physical lm_head alias omitted with tie_word_embeddings=true. Header proof is
+not payload equality, actual reload or quality. No tokenizer output: retain
+original tokenizer/compiler pins. Checkpoints/data/receipts are private ignored
+outputs, not backed up by commits. Preserve the entire retained research set.
+
+Source-only checkpoint sections (no actual model/export/native/GPU/Cargo run):
+- Maintained FP16 reference/whole-DAG gate:44/44 CPU controls PASS1.570s,
+  process4.1769171s; receipt E/gpu-fp16-maintained-reference-controls-r3/receipt.json
+  SHA94060b4cd73ee412fd031471e40fe00a7b4832de10bae5afe3f7edfffd69dd63.
+  Independent review closes whole graph/Constant/Cast/protected-island and
+  publisher-derived byte gate; actual selected-model half comparisons remain.
+- Focus comparison owner:31/31 grouped PASS (13new +18existing census),
+  receipt E/focus-comparison-maintained-tests-r1/receipt.json0404096b.
+  Independent and primary source review close. BOTH arms will freshly score85DEV
+  with selectedF1 and45publisher-replay (260forwards); exact198non-target BF16->F32
+  bits/112allowed targets, loaded310/tiedhead/mathconfig/teardown required.
+  No comparison plan or actual comparison has been created/run.
+- Focus FP32 exporter: initial16-controls omit external Constant files; independent
+  review catches P1 before any actual conversion. Corrected source89143000 and
+  contract74a4c851 now authenticate all199 original external files, copy87
+  unchanged files including mask Constant, preserve intentional-inf bytes and
+  complete original ModelProto math/ABI, stream112target transposes.19/19 cheap
+  controls PASS. Corrective independent review closes; actual export unrun.
+- Maintained GPU tooling/builder/package/sign/installer source: exact helperfe4c
+  and complete NN0 final callback/SHA/last-clock proof corrections. Independent
+  review catches P1 nested-notice assumption; corrected consumer retains actual
+  Rust direct-child airk-cuda-notice-* names/bytes. Current combined138PASS /
+  3existing Mac-only skips across141 test identities; failures remain in old
+  receipts. Corrective independent review closes. E/gpu-direct-legal-projection-fix-r1/
+  review.json26cdc34a; combined25source-mapf104c29f. No actual build, signing,
+  installer, product/2 projection or scientific-to-product transfer passed.
+
+Owner/access checkpoint and mandatory next-session rule:
+- Effective TYAI\tdotn AND defaultTokenOwner SID1002 match active session1 System
+  Explorer owner1002/quser. Earlier scoped audit finds22/22 new public files and
+  the sampled new training/custody outputs owned by1002. No new foreign-owned
+  creation observed in that scope. Source agents separately verify their files.
+- User explicitly reaffirms ONLY that account, NEVER new files owned otherwise,
+  and authorizes changing existing foreign repository ownership to tdotn.
+  Root normal-token icacls ownership sample fails AccessDenied5 with bytes/DACL
+  unchanged. User now handles existing owner/access repair through Windows UI.
+  A sampled R135 file becomes human-owned but still has protected sandbox1012-only
+  DACL and OpenRead fails at the last observation; whole repair remains UNVERIFIED.
+  Permission metadata may change legitimately; reobserve before future custody.
+- Automatic review still rejects NEW private GPU component-runner code after
+  three create-new attempts, interpreting tracked-file exception as excluding
+  private ignored artifacts. No files created, no alternate account/path/writer
+  or ACL workaround used. GPU authorization is acknowledged by the reviewer;
+  model native17 execution remains0. Existing bc55/af6 source-bound firstFP32
+  image/metadata are preserved; do not retag Torch training as ONNX GPU proof.
+- Permanent checked execution helper was designed but NOT implemented/tested;
+  user asks to stop for restart before its first file write. First resume priority
+  is implement/review the read-only guard and wire its checks. Mandatory manual
+  effective User+defaultOwner+interactive-logon proof and postcreation owner audits
+  remain required. AGENTS/CLAUDE now explicitly add default-owner/output-parent/
+  postcreation refusal rules, with identical bytes; no sandbox configuration,
+  alternate account or privilege change is performed.
+
+Resume order:
+1. Reverify same-human User+defaultOwner+interactive logon before filesystem work;
+   check user-performed ownership/access repair and finish permanent guard first.
+   Preserve current source/data; do not delete artifacts/.
+2. Read final-plan/ledger, actual TRAIN/custody/selection and source-only contracts.
+   Create a fresh comparison plan with maintained script --prepare using actual
+   TRAIN09b0/custody2d02; review full source/runtime/import closure and original
+   600s/16GiB/8GiB bounds before --launch. No plan/metrics pass is implied here.
+3. Complete first native Compact17 FP32 component owner via reviewed maintained
+   developer-tool ownership; preserve original120s/Process16GiB/Job24GiB/64MiBlog/
+   5cleanup, actualPID/HANDLE/Job/finalsource proofs. Resolve automatic-review
+   restriction without a different account or unreviewed private replacement.
+  128 only after authentic17pass; no Resource20/8192/finalGPU claim from it.
+4. Actual candidate export/reference/native qualification remain separate. G5
+   native proposalR3 is unapplied: preserve current F1cc25/a582 CPUrow+8tests when
+   adding runtime9e->DDE supplement. PreparedG5 count26 including9closedrow;
+   Resource20 native proposal is also unapplied/uncompiled. Hold old F1 source
+   epoch while its remaining comparison consumes sealed current native inputs.
+5. Continue all independent plan gates, truthful CAL/labels/platform/installed
+   blockers and local reviewed DCO milestones. No push/PR/publication authorized.
+Final checkpoint review: primary reviews combined source/callers; independent
+reviews close both caught P1s before any expensive execution. Repository checks
+PASS3639 public files and whitespace PASS. No Cargo/compiler/model process is
+active from this batch; every agent is stopped. Permanent guard remains explicitly
+unimplemented; only strengthened identical agent rules/manual proof are landed.
+
+Final staging exposed one new blank EOF line in test_gpu_owners.py that the
+untracked-file whitespace check had not covered. Corrected only that trailing
+blank line; assertions and test identities are unchanged. Prior test/source-map
+receipts retain their pre-whitespace identities. Final staged and committed
+whitespace checks are rerun explicitly; no model or test replay is needed.

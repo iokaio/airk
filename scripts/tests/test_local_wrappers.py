@@ -31,6 +31,7 @@ def load(name, path):
 vsix = load("local_vsix", ROOT / "scripts/build-local-vsix.py")
 service = load("local_service", ROOT / "scripts/build-local-service-installer.py")
 fixtures = load("universal_fixtures", Path(__file__).with_name("test_package_extension.py"))
+native_options = load("local_native_options", ROOT / "scripts/package-native.py")
 # Commands a build-only wrapper must never construct (install, publish, trust or service control).
 FORBIDDEN = re.compile(r"--install-extension|vsce\b.*\bpublish|publish\.cjs|\bgh\b|release (?:create|upload)"
                        r"|Start-Process|sc(?:\.exe)? (?:start|create)|Import-Certificate|certutil|__airk_role|airk(?:\.exe)? setup|install\.sh",
@@ -221,7 +222,7 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
             pass
 
         scripts = {"sign-native": Signer, "build-admin-assets": Admin, "build-service-runtime": Runtime,
-                   "split_receipts": fixtures.package.receipts}
+                   "split_receipts": fixtures.package.receipts, "package-native": native_options}
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(service, "OUTPUT", Path(temporary)), \
                 patch.object(service, "prerequisites", lambda iscc: None), \
@@ -277,7 +278,7 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
                 raise RuntimeError("Azure CLI sign-in required")
 
         scripts = {"build-admin-assets": Admin, "build-service-runtime": Runtime,
-                   "local_signing": LocalSigning, "split_receipts": fixtures.package.receipts}
+                   "local_signing": LocalSigning, "split_receipts": fixtures.package.receipts, "package-native": native_options}
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(service, "OUTPUT", Path(temporary)), \
                 patch.object(service, "prerequisites", lambda iscc: None), \
@@ -304,7 +305,7 @@ class LocalServiceInstallerWrapper(unittest.TestCase):
         class Signer:
             pass
         with patch.object(service, "prerequisites", lambda iscc: None), \
-                patch.object(service, "load_script", lambda name: Signer if name == "sign-native" else fixtures.package.receipts), \
+                patch.object(service, "load_script", lambda name: native_options if name == "package-native" else Signer if name == "sign-native" else fixtures.package.receipts), \
                 patch.object(service.tomllib, "loads", lambda text: {"workspace": {"package": {"version": "1.8.23"}}}), \
                 patch("sys.argv", ["build-local-service-installer.py", "--force-build", "--unsigned"]):
             with self.assertRaisesRegex(SystemExit, "predates the split"):

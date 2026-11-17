@@ -147,7 +147,7 @@ def local_component(receipt):
         raise ValueError("Local signing component differs from the pinned Windows policy")
 
 
-def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool", *, allow_local=False):
+def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool", *, allow_local=False, cuda=None):
     package = pair_package()
     receipt_path = directory / "signing.json"
     receipt = package.bounded_json(receipt_path, 65_536)
@@ -200,6 +200,10 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
         observed = verify_copied_launcher(runtime, signed["version"], components[launcher], signtool)
         if receipt.get("copied_launcher") != observed:
             raise ValueError("Signed pair lacks matching standalone launcher evidence")
+    if cuda is not None:
+        original_build = package.bounded_json(source / "airk-build.json", 65_536)
+        package.validate_runtime(source, original["version"], target, original_build["source"], cuda=cuda)
+        package.validate_runtime(runtime, signed["version"], target, original_build["source"], cuda=cuda)
     return runtime, receipt
 
 
@@ -252,12 +256,12 @@ def stapled_app_ticket(components):
             and len({value["id"] for value in receipts}) == 1)
 
 
-def prepare_pair(source, output, target):
+def prepare_pair(source, output, target, *, cuda=None):
     package = pair_package()
     source = source.resolve(strict=True)
     original_build = json.loads((source / "airk-build.json").read_text(encoding="utf-8"))
     original_install = json.loads((source / "airk-install.json").read_text(encoding="utf-8"))
-    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"])
+    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
     output = output.resolve()
     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
         raise ValueError("Signing output must be a fresh directory inside artifacts/")
@@ -275,14 +279,14 @@ def prepare_pair(source, output, target):
     return source, runtime, executables, files
 
 
-def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool", *, local=False):
+def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool", *, local=False, cuda=None):
     if local and target != "x86_64-pc-windows-msvc":
         raise ValueError("Local Artifact Signing pairs require the Windows target")
     package = pair_package()
     runtime = output / "runtime"
     original_build = json.loads((source / "airk-build.json").read_text(encoding="utf-8"))
     original_install = json.loads((source / "airk-install.json").read_text(encoding="utf-8"))
-    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"])
+    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
     pending = json.loads((output / "pair-signing.pending.json").read_text(encoding="utf-8"))
     if pending != {"schema": 1, "source": str(source), "target": target, "source_install_sha256": files["airk-install.json"]}:
         raise ValueError("Signing source differs from prepared pair")
@@ -331,7 +335,7 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     if "apple" in target and package.runtime_builder().standalone_launcher_version(original_install["version"]):
         launcher = package.runtime_builder().launcher_name("macos", original_install["version"])
         receipt["copied_launcher"] = verify_copied_launcher(runtime, original_install["version"], components[launcher], signtool)
-    package.validate_runtime(runtime, original_install["version"], target, original_build["source"])
+    package.validate_runtime(runtime, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
     if package.inventory(source) != files:
         raise ValueError("Tested source changed during signing")
     (output / "signing.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -341,7 +345,7 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
 def sign_pair(args):
     """Sign both staged copies, then seal their exact new installer identities."""
     output = args.output.resolve()
-    source, runtime, executables, _ = prepare_pair(args.runtime_dir, output, args.target)
+    source, runtime, executables, _ = prepare_pair(args.runtime_dir, output, args.target, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
     if "apple" in args.target and (runtime / "AIRK.app/Contents/CodeResources").exists() and not args.notarize:
         raise ValueError("Re-signing a stapled app requires explicit --notarize to replace its ticket")
     commit = run(["git", "rev-parse", "HEAD"]).strip()
@@ -387,7 +391,7 @@ def sign_pair(args):
                 run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
                 for receipt in components.values():
                     receipt["notarization"] = {"id": result["id"], "status": "Accepted", "stapled": True, "scope": "AIRK.app"}
-    finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool)
+    finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
 
 
 def sign_local_pair(args):
@@ -399,7 +403,7 @@ def sign_local_pair(args):
     adapter = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(adapter)
     output = args.output.resolve()
-    source, runtime, _executables, _files = prepare_pair(args.runtime_dir, output, args.target)
+    source, runtime, _executables, _files = prepare_pair(args.runtime_dir, output, args.target, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
     commit = run(["git", "rev-parse", "HEAD"]).strip()
     lock_digest = digest(ROOT / "Cargo.lock")
     tool = adapter.signtool_path() if args.signtool == "signtool" else Path(args.signtool)
@@ -414,7 +418,7 @@ def sign_local_pair(args):
         (destination.parent / "signing.json").write_text(json.dumps(component, indent=2) + "\n", encoding="utf-8")
         shutil.copyfile(destination, runtime / name)
         components[name] = component
-    finish_pair(source, output, args.target, components, commit, lock_digest, str(tool), local=True)
+    finish_pair(source, output, args.target, components, commit, lock_digest, str(tool), local=True, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
 
 
 def main():
@@ -431,7 +435,11 @@ def main():
     parser.add_argument("--notarize", action="store_true")
     parser.add_argument("--keychain-profile")
     parser.add_argument("--keychain", type=Path, help="Explicit existing Apple signing/notary keychain (for isolated CI keychains)")
+    pair_package().add_cuda_arguments(parser)
     args = parser.parse_args()
+    args.cuda_context = pair_package().cuda_from_args(args, pair_package().runtime_builder())
+    if args.cuda_context is not None and not args.runtime_dir:
+        parser.error("Optional CUDA signing requires an explicit tested runtime pair")
     windows = "windows" in args.target
     if platform.system() != ("Windows" if windows else "Darwin"):
         parser.error("Sign and verify on the intended native OS")

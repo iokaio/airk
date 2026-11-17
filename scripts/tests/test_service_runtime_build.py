@@ -682,5 +682,354 @@ class SplitPairBuildTests(unittest.TestCase):
             self.assertFalse(destination.exists())
 
 
+class GpuServiceRuntimeBuildTests(unittest.TestCase):
+    def builder(self):
+        specification = importlib.util.spec_from_file_location(
+            "gpu_runtime_builder", Path(__file__).resolve().parents[1] / "build-service-runtime.py")
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module
+
+    def handoff(self, root):
+        return {"environment": {"LIBONNXRUNTIME_NO_PKG_CONFIG": "1", "ORT_SKIP_DOWNLOAD": "1",
+                "ORT_PREFER_DYNAMIC_LINK": "0", "ORT_LIB_LOCATION": str(root / "gpu-aggregate"),
+                "ORT_LIB_PROFILE": "Release"},
+                "static_ort": {"build_receipt_sha256": "a" * 64, "target": "x86_64-pc-windows-msvc",
+                    "static_link_closure_sha256": "b" * 64, "static_link_supplement_sha256": None,
+                    "static_link_recovery_sha256": None, "verified_inputs_sha256": "c" * 64},
+                "activation_pins_available": False}
+
+    def test_gpu_handoff_requires_supported_host_before_any_proof_or_cargo(self):
+        builder = self.builder()
+        for system, machine in [("Linux", "x86_64"), ("Darwin", "arm64"), ("Windows", "arm64")]:
+            with self.subTest(system=system, machine=machine), \
+                 mock.patch.object(builder.platform, "system", return_value=system), \
+                 mock.patch.object(builder.platform, "machine", return_value=machine), \
+                 mock.patch.object(builder, "load_script") as load, \
+                 mock.patch.object(builder.subprocess, "run") as child:
+                with self.assertRaisesRegex(RuntimeError, "only on Windows x86_64"):
+                    builder.cuda_handoff(Path("not-opened"), "a" * 64)
+                load.assert_not_called()
+                child.assert_not_called()
+
+    def test_gpu_handoff_refuses_absent_or_nonliteral_pin_before_owner(self):
+        builder = self.builder()
+        for pin in [None, "", "A" * 64, "a" * 63, "not-a-pin"]:
+            with self.subTest(pin=pin), \
+                 mock.patch.object(builder.platform, "system", return_value="Windows"), \
+                 mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+                 mock.patch.object(builder, "load_script") as load:
+                with self.assertRaisesRegex(RuntimeError, "explicit reviewed CUDA"):
+                    builder.cuda_handoff(Path("not-opened"), pin)
+                load.assert_not_called()
+
+    def test_gpu_handoff_preserves_maintained_refusal_and_never_runs_cargo(self):
+        builder = self.builder()
+        owner = mock.Mock()
+        owner.verify_handoff.side_effect = ValueError("original incomplete producer/aggregate")
+        with mock.patch.object(builder.platform, "system", return_value="Windows"), \
+             mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+             mock.patch.object(builder, "load_script", return_value=owner) as load, \
+             mock.patch.object(builder.subprocess, "run") as child:
+            with self.assertRaisesRegex(ValueError, "original incomplete producer"):
+                builder.cuda_handoff(Path("environment.json"), "a" * 64)
+            self.assertEqual(load.call_args.args, ("cuda-runtime-environment",))
+            child.assert_not_called()
+
+    def test_gpu_handoff_uses_only_exact_five_static_values_and_current_target(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            bad_values = [("ORT_SKIP_DOWNLOAD", "0"), ("ORT_PREFER_DYNAMIC_LINK", "1"),
+                          ("LIBONNXRUNTIME_NO_PKG_CONFIG", "0"), ("ORT_LIB_PROFILE", "Debug"),
+                          ("ORT_LIB_LOCATION", "relative"), ("UNREVIEWED_EXTRA", "1")]
+            for field, bad in bad_values + [(None, "aarch64-apple-darwin")]:
+                value = self.handoff(root)
+                if field is None:
+                    value["static_ort"]["target"] = bad
+                else:
+                    value["environment"][field] = bad
+                owner = mock.Mock()
+                owner.verify_handoff.return_value = value
+                with self.subTest(field=field), \
+                     mock.patch.object(builder.platform, "system", return_value="Windows"), \
+                     mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+                     mock.patch.object(builder, "load_script", return_value=owner):
+                    with self.assertRaisesRegex(RuntimeError, "environment or target differs"):
+                        builder.cuda_handoff(root / "environment.json", "a" * 64)
+
+    def test_gpu_environment_is_child_only_and_drops_ambient_activation_claims(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            value = self.handoff(root)
+            before_value = builder.json.dumps(value, sort_keys=True)
+            owner = mock.Mock()
+            owner.verify_handoff.return_value = value
+            ambient = {"PATH": "original-user-path", "ORT_LIB_LOCATION": "original-cpu-input",
+                       "AIRK_APPROVED_CUDA_MANIFEST_SHA256": "d" * 64,
+                       "AIRK_STATIC_CUDA_BUILD_SHA256": "e" * 64}
+            with mock.patch.dict(builder.os.environ, ambient, clear=True), \
+                 mock.patch.object(builder.platform, "system", return_value="Windows"), \
+                 mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+                 mock.patch.object(builder, "load_script", return_value=owner):
+                verified, child = builder.cuda_handoff(root / "environment.json", "f" * 64)
+                owner.verify_handoff.assert_called_once_with(root / "environment.json", "f" * 64, builder.ROOT)
+                self.assertEqual(dict(builder.os.environ), ambient)
+                self.assertEqual(child["PATH"], "original-user-path")
+                self.assertEqual(child["ORT_LIB_LOCATION"], str(root / "gpu-aggregate"))
+                self.assertNotIn("AIRK_APPROVED_CUDA_MANIFEST_SHA256", child)
+                self.assertNotIn("AIRK_STATIC_CUDA_BUILD_SHA256", child)
+                self.assertEqual(builder.json.dumps(verified, sort_keys=True), before_value)
+                self.assertEqual(set(verified["static_ort"]), {"build_receipt_sha256", "target",
+                    "static_link_closure_sha256", "static_link_supplement_sha256",
+                    "static_link_recovery_sha256", "verified_inputs_sha256"})
+
+    def test_paired_cargo_cpu_default_and_explicit_gpu_match_exact_tree_features(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            for name in ["airk.exe", "airkctl.exe"]:
+                (root / name).write_bytes(b"synthetic command-selection image; never executed")
+            events = "\n".join(builder.json.dumps({"reason": "compiler-artifact",
+                      "target": {"name": name}, "executable": str(root / (name + ".exe"))})
+                      for name in ["airk", "airkctl"])
+            for gpu, features in [(False, "airk-cli/local-inference"), (True, "airk-cli/gpu-cuda")]:
+                child = {"proof": "child-only"} if gpu else None
+                with self.subTest(gpu=gpu), \
+                     mock.patch.object(builder.subprocess, "run", return_value=mock.Mock(stdout=events)) as cargo, \
+                     mock.patch.object(builder.subprocess, "check_output", return_value="0airkctl v1\n1airk-core v1\n") as tree:
+                    if gpu:
+                        builder.cargo_pair("debug", features=features, environment=child)
+                        builder.check_lightweight_dependencies(unified=True, features=features, environment=child)
+                    else:
+                        builder.cargo_pair("debug")
+                        builder.check_lightweight_dependencies(unified=True)
+                    build_args = cargo.call_args.args[0]
+                    tree_args = tree.call_args.args[0]
+                    self.assertEqual(build_args[build_args.index("--features") + 1], features)
+                    self.assertEqual(tree_args[tree_args.index("--features") + 1], features)
+                    self.assertIn("--locked", build_args)
+                    self.assertIn("--timings", build_args)
+                    self.assertEqual(cargo.call_count, 1)
+                    self.assertEqual(cargo.call_args.kwargs.get("env"), child)
+                    self.assertEqual(tree.call_args.kwargs.get("env"), child)
+
+    def test_gpu_unification_does_not_admit_inference_into_airkctl(self):
+        builder = self.builder()
+        with mock.patch.object(builder.subprocess, "check_output", return_value="0airkctl v1\n1ort v2\n"):
+            with self.assertRaisesRegex(RuntimeError, "airkctl includes inference"):
+                builder.check_lightweight_dependencies(unified=True, features="airk-cli/gpu-cuda",
+                                                       environment={"proof": "child-only"})
+
+
+class GpuShippingRuntimeBuildTests(unittest.TestCase):
+    builder = GpuServiceRuntimeBuildTests.builder
+    handoff = GpuServiceRuntimeBuildTests.handoff
+    def native(self, root):
+        files = {"airk-cuda-runtime.json": "d" * 64,
+                 "onnxruntime_providers_cuda.dll": "e" * 64,
+                 "onnxruntime_providers_shared.dll": "f" * 64,
+                 "airk-cuda-build-provenance.json": "1" * 64,
+                 "airk-cuda-notice-cuda-license.txt": "2" * 64,
+                 "airk-cuda-notice-cudnn-license.txt": "7" * 64,
+                 "airk-cuda-notice-onnxruntime-license.txt": "8" * 64}
+        return {"files": files, "source_root": root,
+                "native_projection": {"path": str(root / "projection.json"), "bytes": 123, "sha256": "3" * 64},
+                "native_execution_receipt": {"path": str(root / "execution.json"), "bytes": 456, "sha256": "4" * 64},
+                "static_core_build": "a" * 64,
+                "descriptor": {"name": "airk-cuda-runtime.json", "bytes": 20, "sha256": "d" * 64},
+                "activation": False, "qualification": False}
+
+    def prepare(self, builder, root, handoff, native):
+        public = mock.Mock()
+        public.require_native_activation_projection.return_value = native
+        with mock.patch.object(builder, "cuda_handoff", return_value=(handoff, {"PATH": "original"})), \
+             mock.patch.object(builder, "load_script", return_value=public):
+            result = builder.prepare_cuda_inputs(root / "environment.json", "5" * 64,
+                root / "projection.json", "3" * 64, root / "execution.json", "4" * 64)
+        return result, public
+
+    def test_native_projection_binds_actual_static_build_and_exact_child_compile_pins(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            handoff, native = self.handoff(root), self.native(root)
+            result, public = self.prepare(builder, root, handoff, native)
+            public.require_native_activation_projection.assert_called_once_with(
+                root / "projection.json", "3" * 64, handoff,
+                native_execution_receipt=(root / "execution.json", "4" * 64), repo_root=builder.ROOT)
+            self.assertEqual(result["environment"], {"PATH": "original",
+                "AIRK_STATIC_CUDA_BUILD_SHA256": "a" * 64,
+                "AIRK_APPROVED_CUDA_MANIFEST_SHA256": "d" * 64})
+            expected_keys = {"build_receipt_sha256", "target", "static_link_closure_sha256",
+                "static_link_supplement_sha256", "static_link_recovery_sha256", "verified_inputs_sha256"}
+            self.assertEqual(set(result["static_ort"]), expected_keys)
+            for key in expected_keys - {"verified_inputs_sha256"}:
+                self.assertEqual(result["static_ort"][key], handoff["static_ort"][key])
+            original = result["static_ort"]["verified_inputs_sha256"]
+            self.assertNotEqual(original, handoff["static_ort"]["verified_inputs_sha256"])
+            native["files"]["airk-cuda-notice-cuda-license.txt"] = "6" * 64
+            changed, _ = self.prepare(builder, root, handoff, native)
+            self.assertNotEqual(changed["static_ort"]["verified_inputs_sha256"], original)
+
+    def test_native_projection_refuses_mixed_build_unbound_receipt_and_activation_claims(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            for mutation in ["static_core_build", "projection", "execution", "descriptor", "activation", "qualification"]:
+                native = self.native(root)
+                if mutation == "projection":
+                    native["native_projection"]["sha256"] = "7" * 64
+                elif mutation == "execution":
+                    native["native_execution_receipt"]["sha256"] = "7" * 64
+                elif mutation == "descriptor":
+                    native["descriptor"]["name"] = "unreviewed-runtime.json"
+                elif mutation in ("activation", "qualification"):
+                    native[mutation] = True
+                else:
+                    native[mutation] = "7" * 64
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(RuntimeError, "same-build input pins"):
+                    self.prepare(builder, root, self.handoff(root), native)
+
+    def test_reverification_refuses_static_or_native_proof_drift(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            handoff, native = self.handoff(root), self.native(root)
+            value, _ = self.prepare(builder, root, handoff, native)
+            public = mock.Mock()
+            public.reverify_native_projection.return_value = native
+            with mock.patch.object(builder, "cuda_handoff", return_value=(handoff, {})), \
+                 mock.patch.object(builder, "load_script", return_value=public):
+                self.assertEqual(builder.verify_static_inputs(value), value["static_ort"])
+                public.reverify_native_projection.return_value = {**native, "static_core_build": "8" * 64}
+                with self.assertRaisesRegex(RuntimeError, "projection changed"):
+                    builder.verify_static_inputs(value)
+            with mock.patch.object(builder, "cuda_handoff", return_value=({**handoff, "unreviewed": True}, {})):
+                with self.assertRaisesRegex(RuntimeError, "build/aggregate inputs changed"):
+                    builder.verify_static_inputs(value)
+
+    def test_exact_owned_staging_rejects_roster_or_file_drift(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "airk-cuda-runtime.json").write_bytes(b"native owned test descriptor bytes")
+            native = {"files": {"airk-cuda-runtime.json": builder.digest(root / "airk-cuda-runtime.json")}}
+            value = {"projection": native, "handoff": {"genuine_owner_boundary": "synthetic control"}}
+            public = mock.Mock()
+            public.stage_native_projection.return_value = dict(native["files"])
+            with mock.patch.object(builder, "load_script", return_value=public):
+                builder.stage_cuda_projection(value, root)
+                public.stage_native_projection.return_value = {}
+                with self.assertRaisesRegex(RuntimeError, "staging roster differs"):
+                    builder.stage_cuda_projection(value, root)
+                public.stage_native_projection.return_value = dict(native["files"])
+                (root / "airk-cuda-runtime.json").write_bytes(b"actual bytes drift")
+                with self.assertRaisesRegex(RuntimeError, "Staged native CUDA bytes changed"):
+                    builder.stage_cuda_projection(value, root)
+
+    def main_args(self, root):
+        return ["builder", "--destination", str(root / "output"), "--admin-inventory", str(root / "admin.json"),
+                "--cuda-environment", str(root / "environment.json"), "--cuda-environment-sha256", "5" * 64,
+                "--cuda-projection", str(root / "projection.json"), "--cuda-projection-sha256", "3" * 64,
+                "--cuda-native-execution-receipt", str(root / "execution.json"),
+                "--cuda-native-execution-receipt-sha256", "4" * 64]
+
+    def test_main_optin_routes_exact_paired_feature_environment_and_qualification_owner(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.9.0"\n')
+            (root / "admin.json").write_text("{}")
+            for name in ["airk.exe", "airkctl.exe"]:
+                (root / name).write_bytes(b"synthetic artifact for argv-only control; never executed")
+            child = {"PATH": "original", "AIRK_STATIC_CUDA_BUILD_SHA256": "a" * 64,
+                     "AIRK_APPROVED_CUDA_MANIFEST_SHA256": "d" * 64}
+            cuda = {"environment": child, "static_ort": {"opaque": "same owned six-field value"}}
+            with mock.patch.object(builder, "ROOT", root), \
+                 mock.patch.object(builder.platform, "system", return_value="Windows"), \
+                 mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+                 mock.patch.object(builder, "load_script"), \
+                 mock.patch.object(builder, "source_identity", return_value={"sha256": "e" * 64, "files": 1}), \
+                 mock.patch.object(builder, "prepare_cuda_inputs", return_value=cuda) as prepare, \
+                 mock.patch.object(builder, "verify_static_inputs", side_effect=AssertionError("CPU verifier must not be called")), \
+                 mock.patch.object(builder, "check_lightweight_dependencies") as tree, \
+                 mock.patch.object(builder, "cargo_binary", side_effect=AssertionError("separate CPU build must not run")), \
+                 mock.patch.object(builder, "cargo_pair", return_value=(root / "airk.exe", root / "airkctl.exe")) as cargo, \
+                 mock.patch.object(builder, "qualify_staged_runtime") as qualify, \
+                 mock.patch.object(sys, "argv", self.main_args(root)):
+                builder.main()
+                prepare.assert_called_once_with(root / "environment.json", "5" * 64,
+                    root / "projection.json", "3" * 64, root / "execution.json", "4" * 64)
+                cargo.assert_called_once_with("debug", features="airk-cli/gpu-cuda", environment=child)
+                tree.assert_called_once_with(unified=True, features="airk-cli/gpu-cuda", environment=child)
+                self.assertIs(qualify.call_args.kwargs["cuda"], cuda)
+                self.assertEqual((root / "output/airk.exe").read_bytes(), (root / "airk.exe").read_bytes())
+
+    def test_main_native_proof_refusal_prevents_cargo_and_publication(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.9.0"\n')
+            (root / "admin.json").write_text("{}")
+            with mock.patch.object(builder, "ROOT", root), \
+                 mock.patch.object(builder.platform, "system", return_value="Windows"), \
+                 mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+                 mock.patch.object(builder, "load_script"), \
+                 mock.patch.object(builder, "source_identity", return_value={"sha256": "e" * 64, "files": 1}), \
+                 mock.patch.object(builder, "prepare_cuda_inputs", side_effect=ValueError("actual native custody is incomplete")), \
+                 mock.patch.object(builder, "cargo_pair") as cargo, \
+                 mock.patch.object(builder, "cargo_binary") as separate, \
+                 mock.patch.object(sys, "argv", self.main_args(root)):
+                with self.assertRaisesRegex(ValueError, "actual native custody"):
+                    builder.main()
+                cargo.assert_not_called()
+                separate.assert_not_called()
+                self.assertFalse((root / "output").exists())
+
+    def test_main_partial_gpu_flags_refuse_before_any_owner_or_output(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with mock.patch.object(builder, "load_script") as owner, \
+                 mock.patch.object(builder, "cargo_pair") as cargo, \
+                 mock.patch.object(sys, "argv", ["builder", "--destination", str(root / "output"),
+                                                 "--cuda-environment", str(root / "environment.json")]):
+                with self.assertRaisesRegex(SystemExit, "All six explicit CUDA"):
+                    builder.main()
+                owner.assert_not_called()
+                cargo.assert_not_called()
+                self.assertFalse((root / "output").exists())
+
+    def test_gpu_verifier_sources_enter_exact_source_seal_without_neighbor_directory(self):
+        builder = self.builder()
+        names = ["scripts/cuda-runtime-environment.py", "scripts/cuda-package-provenance.py",
+                 "scripts/cuda-native-execution.py", "scripts/cuda-static-runtime.py",
+                 "scripts/cuda-static-archive.py", "scripts/cuda-static-aggregate.py",
+                 "scripts/cuda-static-continuation.py", "scripts/cuda-static-continuation-r12.py",
+                 "scripts/cuda-static-checkpointed.py"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "scripts").mkdir()
+            for name in names:
+                (root / name).write_bytes(b"original source-seal fixture")
+            neighbor = root / "scripts/not-an-input.py"
+            neighbor.write_bytes(b"unrelated neighboring file")
+            with mock.patch.object(builder, "ROOT", root), \
+                 mock.patch.object(builder.subprocess, "check_output", return_value=b"\0".join(n.encode() for n in names)) as listing:
+                original = builder.source_identity()
+                for name in names:
+                    self.assertIn(name, listing.call_args.args[0])
+                self.assertNotIn("scripts", listing.call_args.args[0])
+                neighbor.write_bytes(b"unrelated changed neighbor")
+                self.assertEqual(builder.source_identity(), original)
+                for name in names:
+                    path = root / name
+                    path.write_bytes(b"changed declared verifier source")
+                    self.assertNotEqual(builder.source_identity(), original)
+                    path.write_bytes(b"original source-seal fixture")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -123,7 +123,37 @@ def write_archive(stage, archive, expected, executable):
     verify_archive(archive, expected, executable)
 
 
-def validate_runtime(runtime, version, target, source):
+def add_cuda_arguments(parser):
+    for name in ("cuda-environment", "cuda-projection", "cuda-native-execution-receipt"):
+        parser.add_argument("--" + name, type=Path)
+        parser.add_argument("--" + name + "-sha256")
+
+
+def cuda_from_args(args, builder):
+    values = tuple(getattr(args, name, None) for name in (
+        "cuda_environment", "cuda_environment_sha256", "cuda_projection", "cuda_projection_sha256",
+        "cuda_native_execution_receipt", "cuda_native_execution_receipt_sha256"))
+    if any(value is not None for value in values) and not all(value is not None for value in values):
+        raise ValueError("All six explicit CUDA input pins are required")
+    if not any(value is not None for value in values):
+        return None
+    if getattr(args, "target", "x86_64-pc-windows-msvc") != "x86_64-pc-windows-msvc":
+        raise ValueError("Optional CUDA package context requires Windows x64")
+    return builder.prepare_cuda_inputs(*values)
+
+
+def validate_cuda_payload(builder, cuda, runtime, target, build, files):
+    if target != "x86_64-pc-windows-msvc":
+        raise ValueError("Optional CUDA package target differs")
+    if builder.reverify_cuda_inputs(cuda) != build["static_ort"]:
+        raise ValueError("Packaged native static/source proof differs from the same CUDA inputs")
+    builder.verify_cuda_staged(cuda, runtime)
+    for name, digest in cuda["projection"]["files"].items():
+        if files.get(name) != digest:
+            raise ValueError("Exact native optional payload differs: " + name)
+
+
+def validate_runtime(runtime, version, target, source, *, cuda=None):
     files = inventory(runtime)
     install = bounded_json(runtime / "airk-install.json")
     pair = bounded_json(runtime / "airk-runtime.json", 4096)
@@ -181,7 +211,10 @@ def validate_runtime(runtime, version, target, source):
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
-    if builder.single_image_version(version):
+    if cuda is not None:
+        validate_cuda_payload(builder, cuda, runtime, target, build, files)
+        allowed.update(cuda["projection"]["files"])
+    elif builder.single_image_version(version):
         static_notices = bounded_json(runtime / "notices/static-onnx-runtime/inventory.json")
         allowed.update(builder.static_notice_inventory(static_notices, target, files))
     inference_assets = builder.inference_assets(operating_system, architecture, version) if builder.int8_version(version) else {}
@@ -268,6 +301,7 @@ def main():
     parser.add_argument("--local-artifact-signing", action="store_true", help="Explicitly consume a Windows local-signing pair; never hosted release provenance")
     parser.add_argument("--source-manifest", type=Path, help="Reuse verified CI compiler metadata for signed repackaging")
     parser.add_argument("--signtool", default="signtool")
+    add_cuda_arguments(parser)
     args = parser.parse_args()
     if args.local_artifact_signing and (args.target != "x86_64-pc-windows-msvc" or not args.signed_dir):
         parser.error("Local Artifact Signing packaging requires the Windows target and --signed-dir")
@@ -282,10 +316,11 @@ def main():
         metadata = json.loads(capture("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"))
         version = next(p["version"] for p in metadata["packages"] if p["name"] == "airk-cli")
     builder = runtime_builder()
+    cuda = cuda_from_args(args, builder)
     runtime = args.runtime_dir.resolve(strict=True)
     if runtime.is_symlink() or not runtime.is_dir():
         raise SystemExit("Expected an immutable tested runtime pair directory")
-    files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
+    files, executables = validate_runtime(runtime, version, args.target, builder.source_identity(), **({"cuda": cuda} if cuda is not None else {}))
     signing = None
     if args.signed_dir:
         specification = importlib.util.spec_from_file_location("airk_signing", ROOT / "scripts/sign-native.py")
@@ -293,9 +328,9 @@ def main():
         specification.loader.exec_module(signer)
         arguments = (args.signed_dir.resolve(strict=True), runtime, args.target,
                      capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
-        runtime, signing = (signer.read_verified_pair(*arguments, allow_local=True) if args.local_artifact_signing
-                            else signer.read_verified_pair(*arguments))
-        files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
+        runtime, signing = (signer.read_verified_pair(*arguments, allow_local=True, **({"cuda": cuda} if cuda is not None else {})) if args.local_artifact_signing
+                            else signer.read_verified_pair(*arguments, **({"cuda": cuda} if cuda is not None else {})))
+        files, executables = validate_runtime(runtime, version, args.target, builder.source_identity(), **({"cuda": cuda} if cuda is not None else {}))
     executable = executables[0]
     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()
     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
@@ -358,6 +393,10 @@ def main():
         bundled_model = model_report["bundled_model"]
     if model_smoke is not None and model_smoke["profile"] != selected:
         raise SystemExit("Archived inference probe selected a different CPU model profile")
+    if cuda is not None:
+        builder.reverify_cuda_inputs(cuda)
+        builder.verify_cuda_staged(cuda, runtime)
+        builder.verify_cuda_staged(cuda, smoke)
     common = {
         "version": version, "target": args.target,
         "commit": capture("git", "rev-parse", "HEAD"),

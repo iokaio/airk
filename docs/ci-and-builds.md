@@ -557,3 +557,61 @@ exact worker count in its canonical argv; verification accepts only these two
 counts and compares the entire command, including targets/order, with no extra
 flags. This throughput choice does not change artifact-size, lifetime, cleanup,
 retry or qualification bounds and does not rehabilitate earlier failed runs.
+
+
+## Explicit Windows CUDA runtime builds
+
+The ordinary runtime builder keeps its CPU feature and static-input route. The
+optional Windows x86_64 route requires all three explicit path/SHA pairs:
+`--cuda-environment` / `--cuda-environment-sha256`, `--cuda-projection` /
+`--cuda-projection-sha256`, and `--cuda-native-execution-receipt` /
+`--cuda-native-execution-receipt-sha256`. Partial or unsupported-host inputs refuse
+before Cargo. Run it only as the existing single Cargo owner, after the checked
+Admin inventory and bundled-model prerequisites.
+
+The maintained CUDA environment owner reopens the genuine completed producer and
+aggregate. The native-output consumer reopens the actual Rust-emitted
+`airk.native.cuda-package-projection/1` and its genuine source/image/input/output,
+original deadline and settled-process custody. That native factory validates the
+held descriptor, same-build provider/SDK files and complete public legal roster.
+The builder does not decode or manufacture a RuntimeManifest or qualification.
+A provider-only stage or a failed/partial producer is insufficient.
+
+The selected native pair is built once with `airk-cli/gpu-cuda`; airkctl's normal
+closure is checked under that same feature resolution and remains inference-free.
+Only the Cargo child receives the five verified static ORT values and the exact
+native descriptor/static-build compile identities. Ambient activation pins are
+removed before the actual pinned native output supplies them. No user/global
+PATH, environment, ACL or system installation changes occur. The core remains
+static; import checks continue to forbid a second dynamic ORT core.
+
+The exact native-emitted public roster, including its legal notices, is staged
+through its owning consumer and rechecked through final payload sealing. CPU
+static-notice staging remains unchanged for CPU builds. No private producer
+receipt, local source path, indexed state or model fixture is distributable.
+The existing C7 outer receipts and six opaque `static_ort` fields are unchanged.
+For the GPU path, `verified_inputs_sha256` additionally binds the original GPU
+static projection, actual native projection/execution receipt, descriptor and
+complete file hashes under `airk.gpu-runtime-build-inputs/1`. Other five fields
+retain the genuine maintained GPU projection values.
+
+All six flags must refer to actual reviewed inputs; there are no default proof
+hashes. For example, after assigning these variables from genuine retained
+outputs, the existing command becomes:
+
+```powershell
+python scripts/build-service-runtime.py --profile debug --destination $freshRuntime `
+  --admin-inventory $checkedAdminInventory `
+  --cuda-environment $cudaEnvironment --cuda-environment-sha256 $cudaEnvironmentSha `
+  --cuda-projection $nativeProjection --cuda-projection-sha256 $nativeProjectionSha `
+  --cuda-native-execution-receipt $nativeExecution --cuda-native-execution-receipt-sha256 $nativeExecutionSha
+```
+
+A compiled/sealed pair is a candidate, not model/device/product qualification.
+The completed actual checkpoint proof, maintained native execution adapter,
+actual native public projection and exact package consumer must exist before
+that route succeeds. Full model/numeric/placement/resource/coexistence, missing
+optional-library CPU behavior, real transports and signed package/installed
+acceptance retain their own gates. Existing local-installer and container CPU
+commands do not silently switch to GPU; their future GPU consumption must use
+these same owning proof/roster checks.

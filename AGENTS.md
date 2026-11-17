@@ -24,6 +24,14 @@ only when it retains the same logged-in user's identity.
   operations, receipts, installer tests and artifacts. Use only tools whose
   execution identity has been established; a verified shell does not establish
   the identity of a separate tool process.
+- On Windows, also verify the token's default file-owner SID
+  (`WindowsIdentity.Owner`) equals the verified human user's SID before any
+  mutation. A matching effective user alone is insufficient. Check every
+  intended output parent and its inherited access policy before writing; refuse
+  foreign-owned or inaccessible output parents. Audit newly created files for
+  that same owner before consuming, staging or claiming a pass. Unverified
+  direct-edit tools are unavailable for writes. All child processes retain the
+  verified user and default owner; never set a different owner on new files.
 - Child processes, background jobs, delegated agents, build/test runners,
   installers and services started for tests must retain that identity. Give
   delegated agents this rule explicitly. Never launch a process under another
@@ -307,6 +315,24 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   content edits may proceed while preserving each existing owner and ACL exactly.
   This does not authorize writing foreign-owned ignored artifacts, caches or
   private state, or changing ownership/access policy.
+- Restart checkpoint requested on 17 November 2026. Read the final restart
+  checkpoint in docs/simplify/one-process-ledger.md before resuming. No new model
+  run or native build was started after the pause request. The permanent checked
+  execution helper is unfinished; mandatory manual effective-user, default-owner
+  and interactive-logon proof remains required before all writes. Complete and
+  review the helper before further campaign implementation on resume.
+- The user explicitly authorizes repairing foreign ownership in this repository
+  to TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. The user is
+  handling existing owner/access repair through the Windows UI. This supersedes
+  the earlier ownership-preservation restriction for that repair only. No
+  alternate account, new sandbox account, global permission change or agent-led
+  access-policy workaround is authorized. Reobserve affected metadata before
+  consuming historical custody; retain the original receipts unchanged.
+- Retained training data, checkpoints, calibration/reference inputs and receipts
+  under artifacts/ are not disposable Cargo caches. The current Cargo target is
+  target/; an explicitly selected artifacts/v190/p10-target clean affects that
+  target only. Never delete all artifacts/ as a build cleanup. Preserve exact
+  research outputs and use reviewed build-output cleanup when space requires it.
 - Build target for this execution: target/ (human-owned warm checkout target).
   The designated artifacts/v190/p10-target root is foreign-owned and remains
   preserved. Do not clean targets or share them across concurrent checkouts.

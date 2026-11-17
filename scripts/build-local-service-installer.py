@@ -105,7 +105,7 @@ def default_iscc():
     return machine if machine.is_file() or not os.environ.get("LOCALAPPDATA") or not user.is_file() else user
 
 
-def stage(layout, airk, airkctl, version, signing, verified_notices=None):
+def stage(layout, airk, airkctl, version, signing, verified_notices=None, *, cuda=None):
     (layout / "bin").mkdir(parents=True)
     (layout / "service").mkdir()
     shutil.copy2(airkctl, layout / "bin/airkctl.exe")
@@ -119,6 +119,9 @@ def stage(layout, airk, airkctl, version, signing, verified_notices=None):
     else:
         subprocess.run([sys.executable, str(ROOT / "scripts/license-notices.py"), "--output",
                         str(notices / "dependencies"), "--release"], cwd=ROOT, check=True)
+    if cuda is not None:
+        load_script("cuda-package-provenance").stage_native_projection(
+            cuda["projection"], layout / "service", cuda["handoff"])
     files = {item.relative_to(layout).as_posix(): {"sha256": digest(item), "bytes": item.stat().st_size}
              for item in sorted(layout.rglob("*")) if item.is_file()}
     inventory = {"schema": INVENTORY_SCHEMA, "version": version, "channel": "stable", "target": TARGET,
@@ -199,13 +202,13 @@ def signed_installer(steps, signer, iscc, layout, compiled, artifact, run):
 
 
 
-def verified_runtime(directory, version, source, static_inputs, admin_block):
+def verified_runtime(directory, version, source, static_inputs, admin_block, *, cuda=None):
     """Use the canonical complete C7 validator; never reconstruct missing metadata."""
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Expected an existing tested runtime directory without redirection")
     directory = directory.resolve(strict=True)
     package = load_script("package-native")
-    files, executables = package.validate_runtime(directory, version, TARGET, source)
+    files, executables = package.validate_runtime(directory, version, TARGET, source, **({"cuda": cuda} if cuda is not None else {}))
     if tuple(executables) != ("airk.exe", "airkctl.exe"):
         raise ValueError("Tested Windows runtime must contain its exact service/client pair")
     build = package.bounded_json(directory / "airk-build.json", 65_536)
@@ -234,7 +237,15 @@ def main():
     parser.add_argument("--unsigned", action="store_true",
                         help="Label the payload and installer unsigned instead of stopping without signing access")
     parser.add_argument("--iscc", type=Path, default=default_iscc())
+    load_script("package-native").add_cuda_arguments(parser)
     args = parser.parse_args()
+    cuda_requested = any(getattr(args, name) is not None for name in (
+        "cuda_environment", "cuda_environment_sha256", "cuda_projection", "cuda_projection_sha256",
+        "cuda_native_execution_receipt", "cuda_native_execution_receipt_sha256"))
+    if cuda_requested and args.runtime_dir is None:
+        parser.error("Optional CUDA installer inputs require --runtime-dir consume mode")
+    cuda = (load_script("package-native").cuda_from_args(args, load_script("build-service-runtime"))
+            if cuda_requested else None)
     if args.runtime_dir is not None:
         if args.admin_inventory is None:
             parser.error("--runtime-dir requires --admin-inventory")
@@ -268,19 +279,19 @@ def main():
             admin_inventory = package.bounded_json(args.admin_inventory, 1 << 20)
         admin_block = admin.block_from_inventory(admin_inventory)
         source = steps.call("source-inputs", runtime.source_identity)
-        static_inputs = steps.call("static-ort-inputs", runtime.verify_static_inputs)
+        static_inputs = steps.call("static-ort-inputs", (lambda: runtime.verify_static_inputs(cuda)) if cuda is not None else runtime.verify_static_inputs)
         if args.runtime_dir is None:
             steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
             airk, airkctl = steps.call("native", lambda: runtime.cargo_pair(profile))
         else:
             consumed = steps.call("tested-runtime", lambda: verified_runtime(
-                args.runtime_dir, version, source, static_inputs, admin_block))
+                args.runtime_dir, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {})))
             receipt["input_runtime"] = runtime_input_receipt(consumed)
             profile = consumed["build"]["profile"]
             # Pin fresh complete copies before signing; the original remains read-only.
             copied = run / "tested-runtime"
             shutil.copytree(Path(consumed["directory"]), copied)
-            pinned = verified_runtime(copied, version, source, static_inputs, admin_block)
+            pinned = verified_runtime(copied, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
             if pinned["files"] != consumed["files"] or pinned["build"] != consumed["build"]:
                 raise RuntimeError("Tested runtime changed while its private signing input was copied")
             airk, airkctl = copied / "airk.exe", copied / "airkctl.exe"
@@ -303,10 +314,10 @@ def main():
         shutil.copy2(airkctl, qualified / "airkctl.exe")
         build = steps.call("runtime-qualification", lambda: runtime.qualify_staged_runtime(
             qualified, version, "windows", "x86_64", profile, source, static_inputs,
-            admin_inventory, admin_block))
+            admin_inventory, admin_block, **({"cuda": cuda} if cuda is not None else {})))
         airk, airkctl = qualified / "airk.exe", qualified / "airkctl.exe"
         inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing,
-                                                       verified_notices=qualified / "notices"))
+                                                       verified_notices=qualified / "notices", **({"cuda": cuda} if cuda is not None else {})))
         if (inventory["files"]["service/airk.exe"]["sha256"] != build["runtime"]["airk_sha256"]
                 or inventory["files"]["bin/airkctl.exe"]["sha256"] != build["runtime"]["airkctl_sha256"]
                 or inventory["admin_assets"] != {key: admin_block[key] for key in ("inventory_sha256", "bundle_sha256")}):
@@ -324,12 +335,12 @@ def main():
                                                                artifact, run)
             receipt["signing"] = {"provenance": "local", "claim": signing, "artifacts": signer.receipts,
                                   "uninstaller_unsigned_sha256": unsigned_uninstaller}
-        if (runtime.source_identity() != source or runtime.verify_static_inputs() != static_inputs
+        if (runtime.source_identity() != source or (runtime.verify_static_inputs(cuda) if cuda is not None else runtime.verify_static_inputs()) != static_inputs
                 or admin.block_from_inventory(admin_inventory) != admin_block):
             raise RuntimeError("Runtime inputs changed during installer packaging")
         if consumed is not None:
-            final_input = verified_runtime(args.runtime_dir, version, source, static_inputs, admin_block)
-            final_copy = verified_runtime(copied, version, source, static_inputs, admin_block)
+            final_input = verified_runtime(args.runtime_dir, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
+            final_copy = verified_runtime(copied, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
             if (final_input != consumed or final_copy["files"] != consumed["files"]
                     or final_copy["build"] != consumed["build"]):
                 raise RuntimeError("Tested runtime changed during installer packaging")

@@ -138,3 +138,17 @@ git commit -s
 ```
 
 The sign-off belongs to the authorized human contributor. Do not invent author identities or add agent signatures. Disclose borrowed material and review all submitted code. Community participation follows the [code of conduct](CODE_OF_CONDUCT.md); sensitive reports follow [SECURITY.md](SECURITY.md).
+
+
+### Optional Windows CUDA runtime
+
+The CPU runtime build remains the default. The opt-in Windows x86_64 GPU builder
+requires the genuine maintained static environment, exact Rust-emitted public
+runtime projection and the actual native emission's source/image/input/output
+and settled-process receipt, each caller-pinned by SHA-256. All inputs are
+required; partial/failed/provider-only evidence cannot enable that build.
+See [the explicit CUDA runtime route](docs/ci-and-builds.md#explicit-windows-cuda-runtime-builds).
+It preserves the one static core, lightweight CLI and existing C7 receipt shapes.
+Compilation/sealing does not establish model, device, product, installed or
+release qualification. No system/user installation or global environment change
+is performed by the builder.

@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 spec = importlib.util.spec_from_file_location("native_signing",Path(__file__).parents[1]/"sign-native.py")
 signing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signing)
+package_options = signing.pair_package()
 
 
 class SigningContracts(unittest.TestCase):
@@ -208,7 +209,7 @@ class SigningContracts(unittest.TestCase):
                          "--identity", "Developer ID Application: Fixture (ABCDEFGHIJ)",
                          "--team-id", "ABCDEFGHIJ", "--notarize", "--keychain-profile", "airk-notary",
                          "--keychain", str(keychain)]
-            with patch.object(signing, "ROOT", root), patch.object(signing.platform, "system", return_value="Darwin"), \
+            with patch.object(signing, "ROOT", root), patch.object(signing, "pair_package", return_value=package_options), patch.object(signing.platform, "system", return_value="Darwin"), \
                     patch.object(sys, "argv", arguments), patch.object(signing, "verify", return_value={}), \
                     patch.object(signing, "run", side_effect=run) as command:
                 signing.main()
@@ -240,7 +241,7 @@ class SigningContracts(unittest.TestCase):
                 return "fixture-commit"
             arguments = ["sign-native.py", "--target", "aarch64-apple-darwin", "--output", str(output),
                          "--identity", identity, "--team-id", "ABCDEFGHIJ"]
-            with patch.object(signing, "ROOT", root), patch.object(signing.platform, "system", return_value="Darwin"), \
+            with patch.object(signing, "ROOT", root), patch.object(signing, "pair_package", return_value=package_options), patch.object(signing.platform, "system", return_value="Darwin"), \
                     patch.object(sys, "argv", arguments), patch.object(signing, "verify", return_value={}), \
                     patch.object(signing, "run", side_effect=command):
                 signing.main()
