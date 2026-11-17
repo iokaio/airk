@@ -6,6 +6,7 @@ use airk_core::{
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -24,10 +25,14 @@ pub use custody::{
     decode_metadata_custody, encode_historical_tool_custody, encode_metadata_custody,
     validate_custody_compatibility, validate_historical_tool_custody, validate_metadata_custody,
 };
+pub(super) mod diagnostic;
+#[cfg(feature = "test-support")]
+pub use diagnostic::{LoadObserver, LoadSnapshot};
 mod eligibility;
 mod manifest;
 mod numeric;
 pub use numeric::compare_reference_scores;
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
 mod provenance;
 pub use eligibility::{DeviceEligibility, EligibilityKey, is_device_eligibility_failure};
 pub use manifest::product_compatibility_policy_digest;
@@ -378,6 +383,7 @@ impl CudaDevice {
             }
         }
     }
+    #[cfg(any(feature = "test-support", all(windows, target_arch = "x86_64")))]
     fn poison(&self) {
         self.poisoned.store(true, Ordering::Release);
         self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -606,7 +612,7 @@ pub(super) struct Binding {
     pub load_deadline: Instant,
     pub evidence: Option<DeviceEvidence>,
     pub host_warm_extra_bytes: Option<u64>,
-    log: Arc<Mutex<(Vec<String>, usize, bool)>>,
+    log: Arc<Mutex<diagnostic::Capture>>,
     admission: Arc<Mutex<eligibility::AdmissionState>>,
     session_alive: Arc<AtomicBool>,
 }
@@ -649,7 +655,7 @@ impl Binding {
             load_deadline: deadline,
             evidence: Some(evidence),
             host_warm_extra_bytes: Some(host),
-            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
+            log: Arc::new(Mutex::new(diagnostic::Capture::default())),
             admission: Arc::new(Mutex::new(admission)),
             session_alive: Arc::new(AtomicBool::new(true)),
         })
@@ -673,7 +679,7 @@ impl Binding {
             load_deadline: deadline,
             evidence: None,
             host_warm_extra_bytes: None,
-            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
+            log: Arc::new(Mutex::new(diagnostic::Capture::default())),
             admission: Arc::new(Mutex::new(eligibility::AdmissionState::Scientific)),
             session_alive: Arc::new(AtomicBool::new(true)),
         })
@@ -701,13 +707,7 @@ impl Binding {
                 move |_level, _category, _id, location, message| {
                     // Native bounded observations only, never a placement permit.
                     if let Ok(mut sink) = log.lock() {
-                        let entry = format!("{location}: {message}");
-                        if entry.len() > 4096 || sink.1.saturating_add(entry.len()) > 65536 {
-                            sink.2 = true;
-                        } else {
-                            sink.1 += entry.len();
-                            sink.0.push(entry);
-                        }
+                        sink.push(location, message);
                     }
                 },
             ))?)

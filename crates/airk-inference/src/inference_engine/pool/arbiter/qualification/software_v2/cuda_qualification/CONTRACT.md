@@ -66,3 +66,132 @@ setting complete/report retention. Missing/zero/over-original-bound peak refuses
 success even if earlier row peaks passed. The original primary error remains
 primary when this final independent check also refuses. Job commit limits and
 the optional charge do not substitute for this real persistent RSS observation.
+
+## Runtime-only admission diagnostic
+
+The ignored cuda_runtime_only_admission_diagnostic selector consumes the same
+frozen Probe request and metadata/source/manifest pins under the original120s,
+16GiB process/host charge and24GiB Job bounds. It uses the actual same-lease
+NativeInferenceOwner and production runtime admission, including cuInit and
+all mapped-image reconciliation. It never calls adapters, creates a device
+context, evaluation catalog, session, scorer, model operation or operation
+journal. Reading metadata does not open model asset bytes. The installed
+manifest locator and pin must match the frozen request before admission.
+
+Its distinct private airk.private.cuda-runtime-admission-diagnostic/1 result
+reports diagnostic_complete separately from runtime_admitted and an admitted
+or refused outcome. A faithfully diagnosed policy refusal may exit successfully;
+that is not runtime admission, component success, numerical or product
+qualification. The full anyhow error string and every chain element are kept
+unchanged, including the production stage and aggregate module-refusal JSON.
+A separate diagnostic_error reports failures of postpins, final RSS, original
+deadline or custody accounting without overwriting the admission error.
+
+The receipt includes request/native-input/profile/source/manifest identities,
+actual binary hash, PID, execution user and token default-owner SID, bounds,
+actual Job limits, original expiry, actual optional host reservation, resource
+snapshot, final RSS and actual native cleanup/host-release/poison facts. Native
+execution requires matching execution-user/default-owner identities before
+writing. No-model scope fields are explicit false and forward_count_observed
+is null; no absent operation journal is presented as component evidence.
+
+Clean native release requires no retained custody or poison, successful control
+cleanup and observed host-charge release. A refused admission that poisons the
+native process instead retains owner, lease, charge and control root until
+process exit: retained=true, poison=true, cleanup=false, release=false. This
+state may be a complete diagnosis, never a claim of native release. The parent
+must independently prove natural retained-HANDLE exit and empty Job before
+accepting the diagnostic. Inconsistent or failed cleanup facts refuse diagnostic
+completeness. Admitted diagnostics require clean native release.
+
+Postpins, final RSS and final report retention share the original expiry;
+request/profile/source/manifest drift, missing peak or exceeded bounds refuse.
+The parent's original wall watchdog and full retained input seals remain
+mandatory. No retries, changed admission rules or inherited qualification follow.
+
+The receipt operation_scope explicitly limits false operation flags to calls
+made by this diagnostic caller. Production admission includes cuInit; these
+flags do not assert that driver internals allocate nothing, create no internal
+contexts or perform no internal adapter observation.
+
+
+# Disposable CUDA session placement diagnostic
+
+Private test-support only. Normal Scorer open/profiling retains CUDA-only provider
+registration, disable_cpu_ep_fallback=1 and complete strict final placement gate.
+The diagnostic requires a current native evaluation lease, unqualified Compact
+FP32 profile and same admitted device/bounds; it cannot accept release authority.
+It retains exactly the existing graph/external-byte/large-initializer/ABI setup.
+Only its private OpenMode permits disable_cpu_ep_fallback=0 to inspect actual
+partitioning. No CPU exception or hybrid policy is thereby admitted.
+
+A successful diagnostic observes a complete final SessionState map, explicitly
+synchronizes, drops the actual SessionOwner and synchronizes/checks poison and
+pending claims again. It returns data before Scorer construction. No Session,
+Scorer, run callback or executable capability is returned. Failed creation,
+partial placement or uncertain settlement retains error/log/observation evidence
+and existing unknown-work custody; Drop alone never proves release.
+
+An opaque cloned log observer survives consumed ExecutionProfile/Binding failure.
+It carries data only. Existing 65536-byte total and 4096-byte formatted-entry caps
+remain. Selected CPU preference/missing/unsupported-kernel/assignment diagnostics
+retain location and message; seen/selected/retained/omitted/bytes/truncated fields
+make selection and loss explicit. Unselected optimizer noise counts as seen,
+not omitted. Logs never substitute for the final same-core placement collector.
+
+Native ignored selector cuda_load_only_placement_diagnostic returns private
+schema airk.private.cuda-placement-diagnostic/1. It retains actual PID, binary,
+request/profile/source/runtime pins, original120-second expiry, process16GiB,
+Job24GiB, native host reservation, control/host release and poison observations.
+It creates no operation journal and dispatches no forward. Session load is explicit.
+Diagnostic complete requires session creation, full placement, untruncated selected
+logs, observed pre/post teardown synchronization, pending claims zero, no poison,
+actual host/control release and original deadline. Failure never becomes a pass.
+
+The owning source transition explicitly advances current runtime.rs identity
+without rewriting legacy CPU metadata, task/compiler identity or qualification.
+Inverse textual replay of the reviewed runtime delta must reproduce prior9e.
+G5's old9e->DDE supplement must be rebased onto this new source rather than copied.
+This diagnostic grants no execution or precision admission, qualification or
+publication.
+
+## Native placement diagnostic result ownership
+
+The ignored cuda_load_only_placement_diagnostic uses the unchanged frozen Probe
+request, installed manifest locator, unqualified Compact FP32 profile, actual
+native ServiceLease/NativeInferenceOwner, same-device evaluation binding and
+original120s/process16GiB/Job24GiB limits. It authenticates actual model files for
+session construction, observes the admitted adapter and creates the diagnostic
+device context. It never returns a Scorer, dispatches a forward or creates an
+operation journal. Session creation is explicit, not labeled no-model-loading.
+
+Its operation_scope is exactly: Disposable session creation and final placement
+observation only; no Scorer, forward, hybrid policy or qualification is returned.
+The distinct airk.private.cuda-placement-diagnostic/1 receipt sets qualification
+and product_admission false, cpu_fallback_disabled false for this private loader,
+and strict_production_unchanged true. Existing production strict placement stays
+mandatory. A CPU-assigned node may appear as an observation, never admission.
+
+An opaque LoadObserver survives the consuming diagnostic call. Both success and
+failure capture the final available session_created, placement, selected bounded
+logs and teardown observation without inventing missing fields. Success requires
+both diagnose_cuda_placement returning Ok and the owning LoadSnapshot::validate,
+plus actual outer control/host-charge release, no poison, unchanged pins, final
+RSS and original expiry. A failed/partial/truncated/uncertain observation retains
+full error/error_chain and diagnostic_error; it cannot exit as a complete pass.
+Snapshots are data only and do not prove cleanup without the actual owner facts.
+
+Outcome placement_observed is emitted only after all those final proofs pass;
+otherwise it is failed or not_dispatched. session_load_dispatched is set only
+immediately before the actual consuming diagnostic call. The separate parent
+still proves retained-HANDLE exit/empty Job and seals this native result/stdout.
+No row scores, execution identity or forward completion evidence is emitted.
+
+A caught SessionOwner Drop panic poisons the actual device and retains its
+Binding before post-sync. Existing native Custody observes device poison and
+retains owner, lease, host charge, source files and control root. The teardown
+poisoned field reports that device observation. process_cuda_poisoned separately
+reports the actual global loader poison state and may remain false. These are
+not interchangeable proofs: any unknown retained-custody path prevents diagnostic
+completion even when global process_cuda_poisoned is false. Parent process exit
+never relabels that unknown native teardown as an observed native release.

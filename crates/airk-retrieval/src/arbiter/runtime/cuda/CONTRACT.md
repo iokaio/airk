@@ -370,3 +370,222 @@ Owning encode_metadata_custody and encode_historical_tool_custody helpers
 validate the same native types and serialize the existing envelopes under the
 same1MiB cap. Serialization grants no protected-custody or activation proof;
 the held Source revalidates actual pinned copies at consumption.
+
+## Core-owned provider bridge initialization
+
+Before explicitly mapping onnxruntime_providers_cuda.dll, the held native loader
+uses the same pinned OrtApi's CreateCUDAProviderOptions, UpdateCUDAProviderOptions
+with zero entries, and ReleaseCUDAProviderOptions. Create alone does not load the
+provider bridge. In pinned ORT1.30, zero-entry Update invokes the owning
+ProviderLibrary path: initialize the shared DLL and its genuine ProviderHost,
+then load CUDA and initialize its kernel registry. Empty parsing performs no
+device-id validation, factory creation, cudaMalloc, session creation or inference.
+This is a provider initialization operation, not a GPU-fit or execution claim.
+
+Full payload/PE/System32 authentication, baseline capture and restricted DLL search
+precede this call under the existing Attempt custody and original deadline.
+Reconcile every resulting mapping immediately after the API operation, then take
+the loader's existing explicit CUDA module reference and reconcile again. Every
+created options object is released on update error or panic; creation failure
+cannot proceed. Any initialization/reconciliation failure poisons and retains the
+existing held file/module custody until process exit. No fabricated ProviderHost,
+private C++ symbol, second core, ambient search or session-builder bootstrap is used.
+The DLL-load diagnostic retains the attempted absolute module path and OS error.
+This changes native loader behavior/build identity, not runtime-manifest bytes,
+provider DLLs, model formats or numerical/resource bounds. Historical failed
+1114 evidence remains under its original image identity.
+
+
+## Scientific NVIDIA dispatcher companion closure
+
+The reviewed Windows scientific driver row binds System32/nvcuda.dll SHA256
+f654977a2d34156c861a1434bbbbd1e9173b8d28b7e1c3f415bebca404df42be,
+4466920 bytes, to the exact System32-relative companion
+DriverStore/FileRepository/nv_dispwi.inf_amd64_b9ead98da9a85944/nvcuda64.dll,
+SHA256 4cf09882e346099361d9bc1e125d34f076d36bdcf5838da88132e74d1af3d5c6,
+29713128 bytes. This source-owned closure is separate from RuntimeManifest/1
+identity and changes no persisted shape. It never grants product admission;
+product discovery of driver companions remains unimplemented and fail-closed.
+A different scientific dispatcher/package/companion requires a new reviewed row.
+
+Installed oem67.inf equals package nv_dispwi.inf; its copy sections map nvcuda.dll
+from nvcuda_loader64.dll (the exact dispatcher bytes) and include nvcuda64.dll.
+Both files have observed trusted Windows Hardware Compatibility Publisher
+signatures and version32.0.15.9706. Explicit membership in the particular
+NV_DISP.CAT was not verified and is not claimed. Native held-file WinVerifyTrust
+must independently succeed; an observation from PowerShell cannot replace it.
+
+Before baseline capture or any driver/provider load, authenticate both exact
+hashes/sizes, held-file signatures, and exact companion path. Traverse from the
+authenticated System32 anchor through each named directory using retained,
+non-reparse OpenedDirectory handles and check each effective trusted owner/DACL.
+The companion remains in Attempt/LoadedRuntime held-file custody. Recheck the
+original deadline after signature work and before loading; no new clock or limit.
+
+The pinned dispatcher PE imports are exactly advapi32.dll/kernel32.dll, with no
+delay imports. The companion imports exactly advapi32.dll/gdi32.dll/kernel32.dll/
+shlwapi.dll/user32.dll/version.dll, with no delay imports. Authenticate the missing
+explicit System32 imports using existing held-file/security policy, deduplicating
+against manifest-owned files. No other NVIDIA static companion was found. Dynamic
+or future unlisted dependencies still refuse rather than receiving a directory,
+basename-prefix or trusted-signer wildcard. nvcuda64.dll is also a GPU-sensitive
+baseline name: an existing wrong-path/identity mapping cannot bypass admission.
+Unchanged reconciliation requires exact held basename, final path and object ID;
+provider bootstrap ordering and failure retention remain unchanged.
+
+
+## Staged complete mapping refusal diagnostics
+
+Mapping admission remains exact: held approved name/path/object ID, or unchanged
+baseline name/path/object ID/address. No crypto/system image receives new approval.
+Every failed reconciliation reports all unapproved images at that stage rather
+than stopping at the first. The private error-chain JSON schema
+`airk.private.cuda-module-refusal/1` contains stage, unapproved_count,
+reported_count, omitted_count, complete and mismatches. Each mismatch includes
+actual name/final path/address/full native object ID, related baseline and
+approved expectations, and classification new_image, address_reload or
+path_or_identity_drift. Expectations are related by name, path, object ID or
+nonzero address; they remain observations rather than authorization. Rows sort by
+name/path/address/identity for deterministic evidence. Original predicate results
+alone decide admission; diagnostic generation cannot turn failure into success.
+
+Diagnostic encoding is bounded to1MiB independently of the unchanged module
+census bound. If full rows do not fit, the deterministic prefix is retained with
+complete=false and explicit omitted_count; this is incomplete diagnostic evidence
+and remains refusal. Paths and IDs in included rows are never truncated. Initial
+baseline GPU/core refusal uses the same report. Stages identify baseline capture,
+driver load, public provider bridge, each explicit manifest load, post-cuInit,
+runtime recheck, adapter observation, synchronization and final placement.
+
+cuInit is now immediately followed by original-deadline checks and reconciliation
+before LoadedRuntime publication. A newly mapped unapproved image at this boundary
+fails inside the existing Attempt: owned DLL references and held files remain
+retained and the process is poisoned. No runtime/model admission or retry follows.
+The runtime-only diagnostic caller may retain the complete error chain without
+calling adapters, primary-context retention, a provider factory, session or model;
+a diagnostic refusal is never a component/qualification pass.
+
+
+## Exact seven-image scientific cuInit closure
+
+The preceding single-companion policy is extended only for the reviewed
+scientific dispatcher f654977a.../4466920 and exact nv_dispwi package. The first
+runtime-only diagnostic observed six genuinely new images at after-cuInit;
+its complete6/6 report had no omissions and no model/context dispatch. All six
+current held object IDs matched that native report, and native-equivalent
+held-file WinVerifyTrust verify/close returned zero for each. This does not prove
+future context/session/model lazy dependency closure.
+
+Before any native load, the scientific owner authenticates all seven exact
+System32-relative rows below, including the original nvcuda64 companion. Every
+row requires exact path/hash/size, protected retained parent chain and independent
+held-file signature verification under the original deadline. Missing, duplicate,
+partial or changed rows refuse. All seven handles transfer into existing Attempt
+custody together; no row is authorized by a basename, System32 membership, valid
+signature alone or recursive import discovery.
+
+| System32-relative path | Bytes | SHA256 |
+|---|---:|---|
+| DriverStore/FileRepository/nv_dispwi.inf_amd64_b9ead98da9a85944/nvcuda64.dll | 29713128 | 4cf09882e346099361d9bc1e125d34f076d36bdcf5838da88132e74d1af3d5c6 |
+| cryptnet.dll | 265920 | 440af621e97fd5fcb93f06393b8f3fd5af936de550e763380cc1f4c71cd6c795 |
+| drvstore.dll | 1591312 | f2bd8b7cfa74c7f001262ebc1fd909e48e9c377b682fa38952eb104b3130e725 |
+| nvapi64.dll | 5533456 | 08ead220e3c0d1deda35473e7fc24614cf7fcdffec4941213514440312da1750 |
+| DriverStore/FileRepository/nv_dispwi.inf_amd64_b9ead98da9a85944/nvdxgdmal64.dll | 626408 | cd27e222beaa5602190c614f1378f0cefacdc2dd571df3696371ee7c2418a675 |
+| ole32.dll | 1716408 | 83f1f855f2985785a45976a6a5e2aacdc8900f61e373978668f5fa3456f09a66 |
+| wldp.dll | 482720 | 2fd7baf055f1cd968ad1c783f7414d8aaa24ef93dc25fb1eeabc60afa3e5d4ea |
+
+The unchanged installed INF maps nvapi64 to System32 (its package copy is byte
+identical) and nvdxgdmal64 to the same DriverStore package. Both NVIDIA files are
+WHCP-signed; the four Windows files are Microsoft Windows-signed. Direct PE
+static/delay import inspection found no additional NVIDIA dependency. Those
+rosters are observations, not permission to recursively admit Windows imports.
+The existing six explicitly reviewed static nvcuda64 System32 imports retain
+their preceding policy; no new generic System32 allowance is introduced.
+
+In scientific mode only, baseline mappings with any of these seven row basenames
+must match the held approved identity and path. A preexisting shadow OS image
+cannot bypass the exact closure. Product mode never consumes this row; ordinary
+OS baseline policy is unchanged there. nvapi64 and nvdxgdmal64 are additionally
+recognized as GPU-sensitive names for baseline refusal in either mode, without
+granting product driver discovery or authorization. All mapping reconciliation,
+post-cuInit refusal/poisoning and diagnostic completeness semantics remain intact.
+The next validation is runtime-only admission before any model attempt.
+
+
+## Unsupported-platform compilation and pure metadata controls
+
+The Windows x64 runtime constructor remains the only production CUDA descriptor
+constructor. On other production targets RuntimeDescriptor is uninhabited; its
+shared build/product/fit/requirement read signatures remain available and use an
+exhaustive empty match, without fabricating a digest, fit or product decision.
+Windows and unit-test descriptor variants and validation bodies remain unchanged.
+The non-Windows native factory still refuses before reading runtime paths or
+creating a runtime, even with an actual retained native service lease and compute
+scope. A dedicated test retains that real lease and observes the typed refusal
+against absent input paths; it creates no provider, session or model.
+
+Compile platform-only provenance and private descriptor constructors using the
+existing Windows-or-unit-test boundary. This preserves all27 pure provenance,
+projection and checkpoint controls across hosts. Windows-only Device::poison is
+compiled with its three Windows call sites. Shared eligibility/read algorithms,
+policy digest bytes, scientific metadata preparation and unsupported-host public
+refusal APIs remain intact. In particular RuntimeManifest::validate and its
+payload/name helpers remain available with test-support on every host; product
+manifest construction/validation and generic descriptor parsing require Windows
+or unit tests. No dead-code lint suppression or new serialized representation is
+introduced. Normal gpu-cuda library builds without test-support and all-feature
+library/test builds both require scoped Clippy; the latter also runs the retained
+pure metadata/refusal regressions.
+
+RuntimeDescriptor::approved is Windows x64 only, matching its sole native loader
+caller. Cross-host unit controls parse descriptors directly and exercise compiled
+approval through RuntimeManifest::approved; they do not consume the Windows
+descriptor approval wrapper. Its function body and Windows behavior are unchanged.
+
+# Disposable CUDA session placement diagnostic
+
+Private test-support only. Normal Scorer open/profiling retains CUDA-only provider
+registration, disable_cpu_ep_fallback=1 and complete strict final placement gate.
+The diagnostic requires a current native evaluation lease, unqualified Compact
+FP32 profile and same admitted device/bounds; it cannot accept release authority.
+It retains exactly the existing graph/external-byte/large-initializer/ABI setup.
+Only its private OpenMode permits disable_cpu_ep_fallback=0 to inspect actual
+partitioning. No CPU exception or hybrid policy is thereby admitted.
+
+A successful diagnostic observes a complete final SessionState map, explicitly
+synchronizes, drops the actual SessionOwner and synchronizes/checks poison and
+pending claims again. It returns data before Scorer construction. No Session,
+Scorer, run callback or executable capability is returned. Failed creation,
+partial placement or uncertain settlement retains error/log/observation evidence
+and existing unknown-work custody; Drop alone never proves release.
+
+An opaque cloned log observer survives consumed ExecutionProfile/Binding failure.
+It carries data only. Existing 65536-byte total and 4096-byte formatted-entry caps
+remain. Selected CPU preference/missing/unsupported-kernel/assignment diagnostics
+retain location and message; seen/selected/retained/omitted/bytes/truncated fields
+make selection and loss explicit. Unselected optimizer noise counts as seen,
+not omitted. Logs never substitute for the final same-core placement collector.
+
+Native ignored selector cuda_load_only_placement_diagnostic returns private
+schema airk.private.cuda-placement-diagnostic/1. It retains actual PID, binary,
+request/profile/source/runtime pins, original120-second expiry, process16GiB,
+Job24GiB, native host reservation, control/host release and poison observations.
+It creates no operation journal and dispatches no forward. Session load is explicit.
+Diagnostic complete requires session creation, full placement, untruncated selected
+logs, observed pre/post teardown synchronization, pending claims zero, no poison,
+actual host/control release and original deadline. Failure never becomes a pass.
+
+The owning source transition explicitly advances current runtime.rs identity
+without rewriting legacy CPU metadata, task/compiler identity or qualification.
+Inverse textual replay of the reviewed runtime delta must reproduce prior9e.
+G5's old9e->DDE supplement must be rebased onto this new source rather than copied.
+This diagnostic grants no execution or precision admission, qualification or
+publication.
+
+A caught SessionOwner Drop panic means unknown native release even if a later
+synchronization succeeds. Before that observation the diagnostic invokes the
+existing device poison/epoch owner and retains a Binding clone; the native
+Custody then observes actual device poison and retains the owner, lease, charge,
+control and files. Teardown.poisoned records that device state. The separate
+process_cuda_poisoned field remains the actual global runtime-loader observation;
+per-device poison does not fabricate global loader poison. Neither can pass.

@@ -221,3 +221,63 @@ fn publisher_census_row_refuses_old_task_and_preserves_legacy_payload() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result<()> {
+    assert_eq!(
+        source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
+        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
+    );
+    assert_eq!(
+        source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
+        "4af9924dbd953cc6065c4acc4549a079c3adfa10a1f850f5c32ca7dd94674cbe"
+    );
+    assert_eq!(
+        source_sha(include_bytes!("../cuda/modules.rs"))?.to_string(),
+        "171be06a31093b1d93a6b8db0dcbf1408eab375937fd751d2ccd6226dbbbc3a9"
+    );
+    let profile = legacy_focus()?;
+    let before = serde_json::to_vec(&profile)?;
+    let witness = CpuSourceTransition::admit(&profile)?;
+    let record = serde_json::to_value(witness.record(&profile)?)?;
+    assert_eq!(
+        record["current_runtime_source"],
+        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
+    );
+    assert_eq!(
+        record["current_task_policy"],
+        "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab"
+    );
+    assert_eq!(record["task_qualification_transferred"], false);
+    assert_eq!(record["public_source_rewritten"], false);
+    assert_eq!(serde_json::to_vec(&profile)?, before);
+    Ok(())
+}
+
+#[test]
+fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_transfer()
+-> Result<()> {
+    assert_eq!(
+        source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
+        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
+    );
+    assert_eq!(
+        source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
+        "29c7376e8e70c74562e53da3ad622fb0668b093e48f353e88cdc18f6e337d081"
+    );
+    assert_eq!(
+        source_sha(include_bytes!("../cuda.rs"))?.to_string(),
+        "81d80bf79baa783d9592446c1fef5f00155641d39d0674997996a1206c71ad87"
+    );
+    assert_ne!(
+        CURRENT_RUNTIME_SOURCE,
+        Some("9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d")
+    );
+    let profile = legacy_focus()?;
+    let original = serde_json::to_vec(&profile)?;
+    let record = serde_json::to_value(CpuSourceTransition::admit(&profile)?.record(&profile)?)?;
+    assert_eq!(record["task_qualification_transferred"], false);
+    assert_eq!(record["public_source_rewritten"], false);
+    assert_eq!(serde_json::to_vec(&profile)?, original);
+    Ok(())
+}

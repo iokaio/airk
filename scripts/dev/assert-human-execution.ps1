@@ -43,11 +43,10 @@ function Assert-AirkDirectoryPolicy {
     if ($Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid) { throw 'Output parent is foreign-owned' }
     $rules = @($Acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     $full = [Security.AccessControl.FileSystemRights]::FullControl
-    $both = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
     # Conservative sufficient policy, not a general Windows Authz evaluator:
     # require a direct human full-control grant for parent and descendants and
     # refuse any applicable token deny, including deny-only group membership.
-    $parentGrant = $false; $childGrant = $false
+    $parentGrant = $false; $childDirectoryGrant = $false; $childFileGrant = $false
     foreach ($rule in $rules) {
         $ruleSid = $rule.IdentityReference.Value
         if ($rule.AccessControlType -eq 'Deny' -and ($ruleSid -in $Identity.TokenSids -or $ruleSid -eq 'S-1-3-4')) {
@@ -55,9 +54,17 @@ function Assert-AirkDirectoryPolicy {
         }
         if ($ruleSid -ne $sid -or $rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band $full) -ne $full) { continue }
         if (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0) { $parentGrant = $true }
-        if (($rule.InheritanceFlags -band $both) -eq $both -and $rule.PropagationFlags -eq 'None') { $childGrant = $true }
+        # CI becomes effective on child directories; OI becomes effective on
+        # child files and propagates through directories as inherit-only. The
+        # grants may be separate ACEs, including an OI/InheritOnly file grant.
+        # NoPropagate cannot cover further descendants and is insufficient.
+        # https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-inheritance-rules
+        if (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::NoPropagateInherit) -eq 0) {
+            if (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0) { $childDirectoryGrant = $true }
+            if (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ObjectInherit) -ne 0) { $childFileGrant = $true }
+        }
     }
-    if (-not $parentGrant -or -not $childGrant) { throw 'No explicit human full-control grant covering parent and inherited outputs' }
+    if (-not $parentGrant -or -not $childDirectoryGrant -or -not $childFileGrant) { throw 'No explicit human full-control grant covering parent and inherited outputs' }
 }
 
 function Get-AirkCheckedPath {
@@ -84,10 +91,10 @@ function Get-AirkCheckedPath {
     return $full
 }
 
-function Assert-AirkOutputParent {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$ExpectedSid)
-    $identity = Assert-AirkHumanExecution $ExpectedSid
+function Assert-AirkOutputPathObservation {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)]$Identity)
+    $ExpectedSid = $Identity.UserSid
+    Assert-AirkCurrentToken $Identity
     $full = Get-AirkCheckedPath $Path $Root
     # Require the immediate parent to exist; create directories one level at a
     # time and audit them before using them as parents of further outputs.
@@ -108,6 +115,52 @@ function Assert-AirkOutputParent {
     [pscustomobject]@{ Path = $full; Parent = $parent; Identity = $identity }
 }
 
+# A batch is one read-only process. Reobserve its effective/default-owner token
+# for every path; never reuse ACL/path observations across entries or batches.
+function Assert-AirkCurrentToken {
+    param([Parameter(Mandatory)]$Identity)
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        if ($current.User.Value -ne $Identity.UserSid -or $current.Owner.Value -ne $Identity.UserSid -or [Diagnostics.Process]::GetCurrentProcess().SessionId -ne $Identity.SessionId) { throw 'Execution token changed during output audit' }
+        $currentSids = @(@($current.User.Value) + @($current.Groups | ForEach-Object Value) | Sort-Object -Unique)
+        $originalSids = @($Identity.TokenSids | Sort-Object -Unique)
+        if (@(Compare-Object $originalSids $currentSids).Count -ne 0) { throw 'Execution token group roster changed during output audit' }
+    } finally { $current.Dispose() }
+}
+
+function Assert-AirkOutputParent {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$ExpectedSid)
+    $identity = Assert-AirkHumanExecution $ExpectedSid
+    Assert-AirkOutputPathObservation -Path $Path -Root $Root -Identity $identity
+}
+
+function Start-AirkAuditClock { [Diagnostics.Stopwatch]::StartNew() }
+
+function Assert-AirkOutputBatch {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object[]]$Entries, [Parameter(Mandatory)][string]$ExpectedSid, [Parameter(Mandatory)][double]$BudgetSeconds)
+    if ($Entries.Count -lt 1 -or $Entries.Count -gt 16380 -or -not [double]::IsFinite($BudgetSeconds) -or $BudgetSeconds -le 0 -or $BudgetSeconds -gt 10) { throw 'Invalid bounded output audit batch' }
+    $clock = Start-AirkAuditClock
+    $identity = Assert-AirkHumanExecution $ExpectedSid
+    $results = @(for ($index = 0; $index -lt $Entries.Count; $index++) {
+        $entry = $Entries[$index]
+        $errorText = $null
+        try {
+            if ($clock.Elapsed.TotalSeconds -ge $BudgetSeconds) { throw 'Original output audit budget expired' }
+            if (@($entry.PSObject.Properties.Name).Count -ne 3 -or $null -eq $entry.path -or $null -eq $entry.root -or $entry.created -isnot [bool]) { throw 'Invalid output audit entry' }
+            $check = Assert-AirkOutputPathObservation -Path $entry.path -Root $entry.root -Identity $identity
+            if ($entry.created) {
+                if (-not (Test-Path -LiteralPath $check.Path -ErrorAction Stop)) { throw 'Created output is absent' }
+                if ((Get-Acl -LiteralPath $check.Path -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $ExpectedSid) { throw 'Created output has a foreign owner' }
+            }
+            if ($clock.Elapsed.TotalSeconds -ge $BudgetSeconds) { throw 'Original output audit budget expired' }
+        } catch { $errorText = $_.Exception.Message }
+        [pscustomobject]@{ index=$index; passed=($null -eq $errorText); error=$errorText }
+    })
+    $elapsed = $clock.Elapsed.TotalSeconds
+    [pscustomobject]@{ schema='airk.human-output-audit/1'; results=$results; elapsed_seconds=$elapsed; expired=($elapsed -ge $BudgetSeconds) }
+}
 function Assert-AirkCreatedOutput {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$ExpectedSid)

@@ -239,21 +239,6 @@ fn module_path(module: HMODULE) -> Result<PathBuf> {
     );
     Ok(PathBuf::from(String::from_utf16(&text[..n as usize])?))
 }
-fn gpu_name(name: &str) -> bool {
-    name == "onnxruntime.dll"
-        || name == "nvcuda.dll"
-        || [
-            "onnxruntime_providers_",
-            "cudnn",
-            "cublas",
-            "cudart",
-            "cufft",
-            "nvrtc",
-            "nvjitlink",
-        ]
-        .iter()
-        .any(|p| name.starts_with(p))
-}
 struct Baseline {
     rows: Vec<super::modules::ModuleIdentity>,
 }
@@ -342,30 +327,30 @@ fn approved_images(files: &[HeldFile]) -> Result<Vec<super::modules::ModuleIdent
         })
         .collect()
 }
-fn initial_baseline(files: &[HeldFile]) -> Result<Baseline> {
+fn initial_baseline(files: &[HeldFile], scientific: bool) -> Result<Baseline> {
     let baseline = mapped_images()?;
     let approved = approved_images(files)?;
-    for row in &baseline.rows {
-        ensure!(
-            !gpu_name(&row.name)
-                || approved
-                    .iter()
-                    .any(|v| v.name == row.name && v.path == row.path && v.id == row.id),
-            "unapproved existing GPU/core module"
-        );
+    let denied: Vec<_> = baseline
+        .rows
+        .iter()
+        .filter(|row| !super::modules::scientific_baseline_allowed(row, &approved, scientific))
+        .cloned()
+        .collect();
+    if let Some(report) =
+        super::modules::refusal_report("initial-baseline", &denied, &[], &approved)
+    {
+        anyhow::bail!("unapproved existing GPU/core module: {report}");
     }
     Ok(baseline)
 }
-fn reconcile(files: &[HeldFile], baseline: &Baseline) -> Result<()> {
-    let current = mapped_images()?;
-    let approved = approved_images(files)?;
-    for row in &current.rows {
-        ensure!(
-            super::modules::allowed(row, &baseline.rows, &approved),
-            "new/unapproved mapped image {} at {}",
-            row.name,
-            row.path
-        );
+fn reconcile(files: &[HeldFile], baseline: &Baseline, stage: &str) -> Result<()> {
+    let current = mapped_images().with_context(|| format!("module census at {stage}"))?;
+    let approved =
+        approved_images(files).with_context(|| format!("held module census at {stage}"))?;
+    if let Some(report) =
+        super::modules::refusal_report(stage, &current.rows, &baseline.rows, &approved)
+    {
+        anyhow::bail!("new/unapproved mapped images: {report}");
     }
     Ok(())
 }
@@ -409,6 +394,75 @@ fn trusted_driver(file: &HeldFile) -> Result<()> {
     );
     Ok(())
 }
+fn scientific_driver_closure(
+    system: &OpenedDirectory,
+    system_path: &Path,
+    driver: &HeldFile,
+    product: bool,
+    deadline: Instant,
+) -> Result<Option<Vec<HeldFile>>> {
+    super::modules::prepare_driver_companion(product, &driver.sha.to_string(), driver.bytes, || {
+        let (imports, delayed) = super::pe::imports_file(&driver.file, deadline)?;
+        ensure!(
+            imports == ["advapi32.dll".to_owned(), "kernel32.dll".to_owned()].into()
+                && delayed.is_empty(),
+            "scientific dispatcher import closure drift"
+        );
+        let mut package = system.clone();
+        for name in [
+            "DriverStore",
+            "FileRepository",
+            super::modules::DRIVER_PACKAGE,
+        ] {
+            in_time(deadline)?;
+            package = package.open_child(OsStr::new(name))?;
+            security(package.as_file(), false)?;
+        }
+        let anchor = final_path(system.as_file())?.replace('\\', "/") + "/";
+        let mut files = Vec::new();
+        let mut observed = Vec::new();
+        for row in super::modules::DRIVER_IMAGES {
+            in_time(deadline)?;
+            let parent = if row.path.contains('/') {
+                &package
+            } else {
+                system
+            };
+            let held = HeldFile::open(parent, &system_path.join(row.path), false, deadline)?;
+            let actual = final_path(&held.file)?.replace('\\', "/");
+            let relative = actual
+                .strip_prefix(&anchor)
+                .context("CUDA driver image escaped System32")?;
+            let sha = held.sha.to_string();
+            super::modules::validate_driver_image(relative, &sha, held.bytes)?;
+            trusted_driver(&held)?;
+            in_time(deadline)?;
+            if relative == super::modules::DRIVER_COMPANION {
+                let (imports, delayed) = super::pe::imports_file(&held.file, deadline)?;
+                ensure!(
+                    imports
+                        == super::modules::DRIVER_IMPORTS
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect()
+                        && delayed.is_empty(),
+                    "scientific companion import closure drift"
+                );
+            }
+            held.recheck(deadline)?;
+            observed.push((relative.to_owned(), sha, held.bytes));
+            files.push(held);
+        }
+        super::modules::validate_driver_closure(
+            &observed
+                .iter()
+                .map(|(path, sha, bytes)| (path.as_str(), sha.as_str(), *bytes))
+                .collect::<Vec<_>>(),
+        )?;
+        in_time(deadline)?;
+        Ok(files)
+    })
+}
 fn load(path: &Path) -> Result<usize> {
     let value = unsafe {
         LoadLibraryExW(
@@ -419,11 +473,57 @@ fn load(path: &Path) -> Result<usize> {
     };
     ensure!(
         !value.is_null(),
-        "authenticated GPU module load failed: {}",
+        "authenticated GPU module load failed for {}: {}",
+        path.display(),
         std::io::Error::last_os_error()
     );
     Ok(value as usize)
 }
+struct OrtProviderBridge;
+impl super::modules::ProviderBridge for OrtProviderBridge {
+    type Options = std::ptr::NonNull<ort::sys::OrtCUDAProviderOptionsV2>;
+
+    fn create(&self) -> Result<Self::Options> {
+        let mut options = std::ptr::null_mut();
+        // SAFETY: the pinned static core owns the returned options and status;
+        // the out pointer is valid and initialized null. No provider is loaded.
+        let status = unsafe { (ort::api().CreateCUDAProviderOptions)(&mut options) };
+        // SAFETY: this status was returned by that exact OrtApi. Conversion frees it.
+        if let Err(error) = unsafe { ort::error::status_to_result(status) } {
+            if !options.is_null() {
+                // Defensive ownership if a failed native call supplied an object.
+                unsafe { (ort::api().ReleaseCUDAProviderOptions)(options) };
+            }
+            return Err(error.into());
+        }
+        std::ptr::NonNull::new(options).context("native CUDA provider options missing")
+    }
+
+    fn update_empty(&self, options: &Self::Options) -> Result<()> {
+        // SAFETY: options belongs to this same API; zero count means the pinned
+        // implementation never reads either array. Empty parsing avoids the
+        // device_id parser and its cudaGetDeviceCount call. The public API loads
+        // shared+CUDA through the core-owned ProviderHost and initializes only
+        // the kernel registry, without a factory, session or cudaMalloc probe.
+        let status = unsafe {
+            (ort::api().UpdateCUDAProviderOptions)(
+                options.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+            )
+        };
+        // SAFETY: the exact core returned this status and owns its release.
+        unsafe { ort::error::status_to_result(status) }
+            .context("core-owned CUDA provider bridge initialization failed")
+    }
+
+    fn release(&self, options: Self::Options) {
+        // SAFETY: the lifecycle guard releases this API-owned object exactly once.
+        unsafe { (ort::api().ReleaseCUDAProviderOptions)(options.as_ptr()) };
+    }
+}
+
 unsafe fn symbol<T: Copy>(module: usize, name: &CStr) -> Result<T> {
     let value = unsafe { GetProcAddress(module as HMODULE, name.as_ptr().cast()) }
         .context("native CUDA driver API missing")?;
@@ -651,9 +751,19 @@ pub(super) fn admit(
         deadline,
     )?;
     trusted_driver(&driver_file)?;
+    in_time(deadline)?;
+    let companions = scientific_driver_closure(
+        &system,
+        &system_path,
+        &driver_file,
+        manifest.is_product(),
+        deadline,
+    )?;
+    let scientific_companion = companions.is_some();
     let mut files = vec![description];
     files.extend(sidecars);
     files.push(driver_file);
+    files.extend(companions.into_iter().flatten());
     for item in manifest.files() {
         let held = HeldFile::open(&directory, &root.join(&item.name), true, deadline)?;
         ensure!(
@@ -681,7 +791,26 @@ pub(super) fn admit(
             deadline,
         )?);
     }
-    let baseline = initial_baseline(&files)?;
+    if scientific_companion {
+        for name in super::modules::DRIVER_IMPORTS {
+            if files.iter().any(|f| {
+                f.path
+                    .as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&system_path.join(name).as_os_str().to_string_lossy())
+            }) {
+                continue;
+            }
+            files.push(HeldFile::open(
+                &system,
+                &system_path.join(name),
+                false,
+                deadline,
+            )?);
+        }
+    }
+    in_time(deadline)?;
+    let baseline = initial_baseline(&files, scientific_companion)?;
     win(unsafe {
         SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)
     })?;
@@ -690,15 +819,39 @@ pub(super) fn admit(
         modules: Vec::new(),
         started: true,
     };
+    in_time(deadline)?;
     attempt.modules.push(load(&system_path.join("nvcuda.dll"))?);
-    reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+    reconcile(
+        attempt.files.as_ref().unwrap(),
+        &baseline,
+        "after-driver-load",
+    )?;
     for name in manifest.load_order() {
         in_time(deadline)?;
+        // Full file/import authentication and Attempt custody precede the public
+        // core bootstrap. Its DLL mappings must pass the same closed census.
+        super::modules::prepare_provider(name, &OrtProviderBridge, || {
+            in_time(deadline)?;
+            reconcile(
+                attempt.files.as_ref().unwrap(),
+                &baseline,
+                "after-provider-bridge",
+            )
+        })?;
+        in_time(deadline)?;
         attempt.modules.push(load(&root.join(name))?);
-        reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+        reconcile(
+            attempt.files.as_ref().unwrap(),
+            &baseline,
+            &format!("after-load:{name}"),
+        )?;
     }
     let driver = unsafe { Driver::from(attempt.modules[0], manifest.is_product())? };
+    in_time(deadline)?;
     cuda(unsafe { (driver.init)(0) })?;
+    in_time(deadline)?;
+    reconcile(attempt.files.as_ref().unwrap(), &baseline, "after-cuInit")?;
+    in_time(deadline)?;
     for file in attempt.files.as_ref().unwrap() {
         file.recheck(deadline)?;
     }
@@ -721,7 +874,7 @@ pub(super) fn admit(
 }
 impl LoadedRuntime {
     fn recheck(&self, deadline: Instant) -> Result<()> {
-        reconcile(&self.files, &self.baseline)?;
+        reconcile(&self.files, &self.baseline, "runtime-recheck")?;
         for file in &self.files {
             file.recheck(deadline)?;
         }
@@ -829,12 +982,12 @@ impl LoadedRuntime {
         deadline: Instant,
     ) -> Result<AdapterObservation> {
         in_time(deadline)?;
-        reconcile(&self.files, &self.baseline)?;
+        reconcile(&self.files, &self.baseline, "before-observe")?;
         ensure!(ordinal == context.ordinal, "CUDA context/ordinal mismatch");
         context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0,dedicated_memory:if self.product {let mut integrated=0;let get=self.driver.attribute.context("native memory-pool observer missing")?;cuda(unsafe{get(&mut integrated,18,context.device)})?;ensure!(matches!(integrated,0|1),"native CUDA memory pool type unknown");Some(integrated==0)}else{None}})})
     }
     pub fn synchronize(&self, context: &PrimaryContext) -> Result<()> {
-        reconcile(&self.files, &self.baseline)?;
+        reconcile(&self.files, &self.baseline, "before-synchronize")?;
         context.with_current(|| cuda(unsafe { (self.driver.sync)() }))
     }
 }
@@ -993,7 +1146,7 @@ pub(super) fn runtime_poisoned() -> bool {
 
 impl LoadedRuntime {
     pub fn placement(&self, session: &ort::session::Session) -> Result<PlacementObservation> {
-        reconcile(&self.files, &self.baseline)?;
+        reconcile(&self.files, &self.baseline, "before-placement")?;
         // SAFETY: exact same statically linked ORT owner; live Session is held
         // under its native Mutex for this bounded synchronous observation.
         Ok(unsafe { super::placement::observe(self.collector, session) })

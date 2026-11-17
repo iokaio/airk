@@ -2,12 +2,42 @@
 
 This maintained owner performs one explicitly reviewed graph conversion, never
 model inference, GPU/native execution, training, activation or qualification.
-Root must first review actual first-FP32 and native-G5 admission evidence. The
-plan retains exact pins for both prerequisites but does not interpret native
-qualification documents or turn an arbitrary receipt/boolean into admission.
-`--inspect-plan` authenticates inputs only; `--execute-reviewed-conversion` is
-an explicit caller assertion that the external prerequisite review is complete.
-No actual conversion is authorized by source implementation or synthetic tests.
+`--prepare` creates only fresh private metadata after authenticating the frozen
+original export source plan, the retained runtime baseline, genuine successful
+Compact17 FP32 component evidence, and separate successful merged-G5 Clippy and
+Nextest/JUnit evidence. It never starts conversion. Compact17 is a component
+prerequisite only, not full8192 or product qualification; Focus/Large preparation
+refuses until their own actual FP32 validators exist. Root reviews the resulting
+plan before explicitly invoking `--execute-reviewed-conversion`.
+
+Preparation reopens the actual FP32 result and four-event journal through the
+maintained component validators and checks the original retained HANDLE/Job
+settlement, actual suspended PID/image/user/default-owner/Job and parent Python,
+preserved image/build identity and final proof receipts. Its original
+native source epoch remains historical; later G5 changes cannot rewrite it.
+G5 receipts must identify the same native group, unchanged successful inputs,
+current required G5/provider/CPU-transition sources and all15 literal G5 tests,
+all9 current CPU controls and the new G5 transition control in passing JUnit.
+An FP32 receipt cannot substitute for either native-G5 readiness receipt.
+These are developer prerequisites, never native profile or product admission.
+
+The generated prerequisite manifest pins all source helpers used to interpret
+these records and all consumed evidence. Authentication repeats these predicates
+before execution and in final input proof, using the original conversion clock.
+Original source-plan and runtime-baseline SHA256 identities are fixed, not supplied
+as freely replaceable expected values. Every retained baseline file must remain
+present and byte-identical. A fresh complete runtime census explicitly includes
+additional files; no roster or metadata-size cap is increased.
+
+Preparation uses one600-second metadata deadline, independent of a later explicit
+conversion invocation. It validates prerequisites before writing anything, checks
+all output parents, writes only create-new JSON and audits ownership before
+consumption. Failed preparation retains partial metadata; no replacement or retry.
+The output plan and sibling runtime/prerequisite manifests must be fresh paths
+under checkout artifacts with an existing reviewed parent. Full input census and
+each JSON document retain the original50000-file and32MiB bounds. The current
+execution guard is pinned. Preparation never imports NumPy/ONNX or reads tensors
+as tensors; streaming source hashes authenticate the existing weights.
 
 ## Inputs and outputs
 

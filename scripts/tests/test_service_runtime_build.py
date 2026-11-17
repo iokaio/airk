@@ -13,6 +13,15 @@ import unittest
 from unittest import mock
 
 
+def _mac_fixture_signing_options(identity, team, keychain=None):
+    """Use the existing explicit keychain only when supplied by the test caller."""
+    timestamp = "--timestamp" if team else "--timestamp=none"
+    options = ["--force", "--sign", identity, "--options", "runtime", timestamp]
+    if keychain:
+        options += ["--keychain", str(keychain)]
+    return options
+
+
 class ServiceRuntimeBuildTests(unittest.TestCase):
     def test_static_identity_binds_actual_aggregate_descriptor_and_refuses_mixed_or_tampered_inputs(self):
         specification = importlib.util.spec_from_file_location(
@@ -226,6 +235,16 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
                 else:
                     self.assertFalse((root / "AIRK.app/Contents/MacOS/airk-launcher-image").exists())
 
+    def test_mac_fixture_signing_keychain_is_explicit_and_optional(self):
+        self.assertEqual(_mac_fixture_signing_options("-", None),
+                         ["--force", "--sign", "-", "--options", "runtime", "--timestamp=none"])
+        identity = "Developer ID Application: Fixture (ABCDEFGHIJ)"
+        expected = ["--force", "--sign", identity, "--options", "runtime", "--timestamp"]
+        self.assertEqual(_mac_fixture_signing_options(identity, "ABCDEFGHIJ"), expected)
+        keychain = "/Users/example/Library/Keychains/airk signing.keychain-db"
+        self.assertEqual(_mac_fixture_signing_options(identity, "ABCDEFGHIJ", keychain),
+                         expected + ["--keychain", keychain])
+
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("clang"), "macOS standalone launcher/sealed-copy fixture")
     def test_standalone_launcher_remains_valid_after_sealing_and_copying(self):
         self._check_standalone_copy("-", None)
@@ -239,9 +258,9 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
         team = os.environ["AIRK_TEST_MAC_TEAM_ID"]
         self.assertTrue(identity.startswith("Developer ID Application:"))
         self.assertRegex(team, r"\A[A-Z0-9]{10}\Z")
-        self._check_standalone_copy(identity, team)
+        self._check_standalone_copy(identity, team, os.environ.get("AIRK_TEST_MAC_KEYCHAIN"))
 
-    def _check_standalone_copy(self, identity, team):
+    def _check_standalone_copy(self, identity, team, keychain=None):
         def checked(arguments, timeout=30):
             result = subprocess.run(arguments, capture_output=True, text=True, timeout=timeout)
             self.assertEqual(result.returncode, 0,
@@ -261,8 +280,7 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
             checked(["clang", str(source), "-o", str(bundled)])
             image = root / builder.launcher_name("macos", "1.8.8")
             shutil.copyfile(bundled, image)
-            timestamp = "--timestamp" if team else "--timestamp=none"
-            options = ["--force", "--sign", identity, "--options", "runtime", timestamp]
+            options = _mac_fixture_signing_options(identity, team, keychain)
             checked(["/usr/bin/codesign", *options, str(image)], timeout=60)
             checked(["/usr/bin/codesign", *options, str(root / "AIRK.app")], timeout=60)
             checked(["/usr/bin/codesign", "--verify", "--strict", str(root / "AIRK.app")])

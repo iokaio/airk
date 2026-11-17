@@ -24,10 +24,10 @@ def fixture():
             'cache_prefix': str(ROOT / 'absent-literal-cache'),
             'prerequisite_evidence': {'first_fp32': row('fp32-proof'), 'native_g5': row('g5-proof')},
             'helpers': {name: row(name, sha=sha) for name, sha in M.HELPERS.items()}}
-    for key in ('python', 'powershell', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest'):
+    for key in ('python', 'powershell', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest', 'source_plan', 'runtime_baseline', 'prerequisites_manifest'):
         plan[key] = row(key)
     plan['wrapper'] = row('scripts/arbiter-fp16-execution.py')
-    plan['input_files'] = [plan[key] for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest')] + list(plan['helpers'].values()) + list(plan['prerequisite_evidence'].values())
+    plan['input_files'] = [plan[key] for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest', 'source_plan', 'runtime_baseline', 'prerequisites_manifest')] + list(plan['helpers'].values()) + list(plan['prerequisite_evidence'].values())
     return plan
 
 
@@ -209,6 +209,216 @@ class OutputControls(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError): M.validate_manifest(bad, plan, graph, weights)
         with self.assertRaises(ValueError): M.validate_manifest(manifest, plan, graph, row('weights.bin', size=1))
 
+
+class PreparationControls(unittest.TestCase):
+    def fp32(self):
+        return {'schema': 'airk.private.owned-cuda-component/1', 'complete': True, 'failure': None,
+                'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
+                'whole_phase_deadline_not_refreshed': True, 'whole_phase_expired': False,
+                'qualification': False, 'product_admission': False, 'elapsed_seconds': 119.5,
+                'post_input_drift': [], 'final_input_errors': [], 'final_proof_errors': [],
+                'final_proof_success': ['native_result', 'operations', 'stdout']}
+
+    def readiness(self, kind='tests'):
+        return {'schema': 'airk-readiness-command/1', 'status': 'completed', 'passed': True,
+                'exit_code': 0, 'runner_exit_code': 0, 'interrupted': False,
+                'inputs_unchanged': True, 'runner_unchanged': True, 'runtime_unchanged': True,
+                'command_inputs_unchanged': True, 'selected_tests': 25,
+                'command': ['cargo', 'nextest', 'run', '--profile', 'ci', '--locked', '-p', 'airk-retrieval', '--all-features']
+                if kind == 'tests' else ['python', 'scripts/dev-check.py', '-p', 'airk-retrieval', '--all-features']}
+
+    def test_original_source_identity_cannot_be_replaced(self):
+        with self.assertRaisesRegex(ValueError, 'source plan identity'):
+            M.source_facts(row(), 'compact')
+
+    def test_unimplemented_variant_evidence_refuses(self):
+        for model in ('focus', 'large'):
+            with self.subTest(model=model), self.assertRaisesRegex(ValueError, 'only Compact'):
+                M.source_facts(row(), model)
+
+    def test_original_source_graph_and_closure_are_reopened(self):
+        original = {'schema': 'airk.private.g5-original3-export-run-plan/1', 'models': [
+            {'model': 'compact', 'original_graph': row('graph'), 'source_closure': row('closure'), 'source_closure_authority': row('authority')}]}
+        source = row('source', sha='cdf57c6c86b490cf2b6656fa8c48fbb4ff3b6ccb4d5c5be9705a71a2866b735c')
+        observed = []
+        with patch.object(M, 'read', return_value=original), patch.object(M, 'pinned', side_effect=lambda value, check: observed.append(value['path'])):
+            M.source_facts(source, 'compact')
+        self.assertEqual(observed, [source['path'], str(ROOT / 'graph'), str(ROOT / 'closure'), str(ROOT / 'authority')])
+
+    def test_missing_or_changed_source_member_refuses(self):
+        original = {'schema': 'airk.private.g5-original3-export-run-plan/1', 'models': [
+            {'model': 'compact', 'original_graph': row('graph'), 'source_closure': row('closure'), 'source_closure_authority': row('authority')}]}
+        source = row('source', sha='cdf57c6c86b490cf2b6656fa8c48fbb4ff3b6ccb4d5c5be9705a71a2866b735c')
+        for name in ('graph', 'closure', 'authority'):
+            def verify(value, check):
+                if Path(value['path']).name == name: raise ValueError('changed source')
+            with self.subTest(name=name), patch.object(M, 'read', return_value=original), patch.object(M, 'pinned', side_effect=verify), self.assertRaisesRegex(ValueError, 'changed source'):
+                M.source_facts(source, 'compact')
+
+    def test_runtime_baseline_cannot_be_replaced(self):
+        with self.assertRaisesRegex(ValueError, 'baseline identity'):
+            M.runtime_facts(row(), [])
+
+    def test_runtime_baseline_plus_added_files_are_explicit(self):
+        baseline = row('baseline', sha='23f9fbfa770d18ee2549dbd6c1b553e204ab8e387ba51b92b620dd24c10189cb')
+        one, added, outside = row('one'), row('added'), row('outside')
+        pins = {x['path']: x for x in (one, added, outside)}
+        value = {'schema': 'airk.private.exact-python-runtime-files/1', 'files': {one['path']: one['sha256'], outside['path']: outside['sha256']}}
+        with patch.object(M, 'pinned'), patch.object(M, 'read', return_value=value), patch.object(M, 'file_roster', return_value={one['path'], added['path']}), patch.object(M, 'pin', side_effect=lambda path, check: pins[str(path)]):
+            manifest, rest = M.runtime_facts(baseline, [ROOT])
+        self.assertEqual(manifest['files'], {one['path']: one, added['path']: added})
+        self.assertEqual(rest, {outside['path']: outside})
+
+    def test_changed_or_missing_runtime_baseline_refuses(self):
+        baseline = row('baseline', sha='23f9fbfa770d18ee2549dbd6c1b553e204ab8e387ba51b92b620dd24c10189cb')
+        value = {'schema': 'airk.private.exact-python-runtime-files/1', 'files': {str(ROOT / 'missing'): 'b' * 64}}
+        with patch.object(M, 'pinned'), patch.object(M, 'read', return_value=value), patch.object(M, 'file_roster', return_value=set()), patch.object(M, 'pin', return_value=row('missing')), self.assertRaisesRegex(ValueError, 'changed/missing'):
+            M.runtime_facts(baseline, [ROOT])
+        with patch.object(M, 'pinned'), patch.object(M, 'read', return_value=value), patch.object(M, 'file_roster', return_value=set()), patch.object(M, 'pin', side_effect=FileNotFoundError), self.assertRaises(FileNotFoundError):
+            M.runtime_facts(baseline, [ROOT])
+
+    def test_actual_component_success_shape(self):
+        M.successful_fp32(self.fp32())
+
+    def test_fp32_failed_late_missing_or_retagged_refuses(self):
+        for key, value in [('complete', False), ('failure', {}), ('whole_phase_expired', True), ('elapsed_seconds', 120),
+                           ('qualification', True), ('product_admission', True), ('execution_user_sid', 'other'),
+                           ('final_proof_success', ['native_result']), ('final_proof_errors', [{}]),
+                           ('post_input_drift', ['changed']), ('final_input_errors', [{}])]:
+            receipt = self.fp32(); receipt[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError): M.successful_fp32(receipt)
+        for key in self.fp32():
+            receipt = self.fp32(); del receipt[key]
+            with self.subTest(missing=key), self.assertRaises(ValueError): M.successful_fp32(receipt)
+
+    def test_actual_readiness_shapes(self):
+        M.successful_readiness(self.readiness(), 'tests')
+        M.successful_readiness(self.readiness('clippy'), 'clippy')
+
+    def test_readiness_failures_and_missing_predicates_refuse(self):
+        for key, value in [('passed', False), ('exit_code', 1), ('runner_exit_code', 1), ('interrupted', True),
+                           ('inputs_unchanged', False), ('runner_unchanged', False), ('runtime_unchanged', False),
+                           ('command_inputs_unchanged', False), ('selected_tests', 0), ('command', ['cargo', 'check'])]:
+            receipt = self.readiness(); receipt[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError): M.successful_readiness(receipt, 'tests')
+
+    def test_fp32_cannot_substitute_for_g5(self):
+        for kind in ('clippy', 'tests'):
+            with self.assertRaises(ValueError): M.successful_readiness(self.fp32(), kind)
+
+    def test_junit_missing_required_tests_refuses(self):
+        with self.assertRaisesRegex(ValueError, 'identities absent'):
+            M.validate_junit(b'<testsuites><testcase classname="airk-retrieval" name="unrelated"/></testsuites>', 1)
+
+    def test_junit_skipped_failed_and_duplicate_refuse(self):
+        for tag in ('skipped', 'failure', 'error'):
+            raw = ('<testsuites><testcase name="literal"><' + tag + '/></testcase></testsuites>').encode()
+            with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'failure/skipped/error'):
+                M.validate_junit(raw, 1)
+        raw = b'<testsuites><testcase name="literal"/><testcase name="literal"/></testsuites>'
+        with self.assertRaisesRegex(ValueError, 'unique identities'): M.validate_junit(raw, 2)
+
+    def test_junit_entity_and_count_refuse(self):
+        with self.assertRaisesRegex(ValueError, 'literal JUnit'):
+            M.validate_junit(b'<!DOCTYPE testsuites><testsuites/>', 1)
+        with self.assertRaisesRegex(ValueError, 'selected count'):
+            M.validate_junit(b'<testsuites/>', 1)
+
+    def test_g5_supplement_is_mandatory_and_independent_of_fp32(self):
+        self.assertEqual(len(M.G5_TESTS), 25)
+        self.assertIn('arbiter::runtime::cpu_source_transition::tests::g5_supplement_binds_exact_current_source_without_relabelling_old_row', M.G5_TESTS)
+        self.assertIn('arbiter::runtime::cpu_source_transition::tests::cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source', M.G5_TESTS)
+        self.assertIn('crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs', M.G5_SOURCES)
+        self.assertIn('crates/airk-retrieval/src/arbiter/runtime/cuda/fp16.rs', M.G5_SOURCES)
+        self.assertIn('crates/airk-retrieval/src/arbiter/external_data/g5.rs', M.G5_SOURCES)
+
+class G5EvidenceControls(unittest.TestCase):
+    def test_actual_onnx_source_owner_is_crate_root(self):
+        self.assertIn('crates/airk-retrieval/src/onnx.rs', M.G5_SOURCES)
+        self.assertNotIn('crates/airk-retrieval/src/arbiter/onnx.rs', M.G5_SOURCES)
+        self.assertTrue((ROOT / 'crates/airk-retrieval/src/onnx.rs').is_file())
+    def test_g5_source_is_reopened_and_missing_group_entry_refuses(self):
+        with patch.object(M, 'G5_SOURCES', ('literal.rs',)), patch.object(M, 'pin', return_value=row('literal.rs')):
+            self.assertEqual(M.g5_source_facts({'files': {'literal.rs': 'a' * 64}}, ROOT), {str(ROOT / 'literal.rs'): row('literal.rs')})
+            with self.assertRaisesRegex(ValueError, 'absent/changed'):
+                M.g5_source_facts({'files': {}}, ROOT)
+            with self.assertRaisesRegex(ValueError, 'absent/changed'):
+                M.g5_source_facts({'files': {'literal.rs': 'b' * 64}}, ROOT)
+
+    def test_missing_live_g5_source_refuses(self):
+        with patch.object(M, 'G5_SOURCES', ('literal.rs',)), patch.object(M, 'pin', side_effect=FileNotFoundError), self.assertRaises(FileNotFoundError):
+            M.g5_source_facts({'files': {'literal.rs': 'a' * 64}}, ROOT)
+
+    def test_literal_g5_and_transition_roster_passes(self):
+        # Independent expected identities from the reviewed G5/CPU contracts.
+        fp16 = ['inherited_exact_settings_pass_and_late_setter_or_drift_refuses',
+                'fp32_policy_remains_distinct_from_each_model_fp16_policy',
+                'context_boundaries_and_exact_original_mask_positions_refuse_unsupported_input',
+                'focus_all_live_and_extreme_left_pad_pass_without_renumbering',
+                'half_initializer_bit_loading_preserves_half_values_without_rounding',
+                'actual_final_placement_needs_exact_complete_attention_roster',
+                'qualified_product_math_does_not_force_attention_debug_logging']
+        external = ['three_literal_selected_rosters_admit_actual_half_boundaries',
+                    'wrong_scale_grouping_causal_and_bias_refuse_before_session',
+                    'wrong_half_cast_and_missing_layer_refuse', 'focus_bias_and_wrong_head_count_refuse',
+                    'all_f32_and_overlap_are_not_half_weight_closure',
+                    'large_half_metadata_is_additive_and_never_allocates_tensor_bytes',
+                    'unknown_quantized_half_closure_refuses',
+                    'focus_unwritten_padded_queries_require_explicit_sanitization']
+        cpu = ['closed_profile_refuses_neural_metadata_fit_and_source_drift',
+               'cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source',
+               'current_runtime_predicate_preserves_the_exact_legacy_cpu_literal',
+               'exact_legacy_descriptor_and_public_sources_remain_byte_stable',
+               'native_version_scope_is_pre_190_exact_release_only',
+               'source_row_refuses_wrong_current_core_or_task_policy',
+               'publisher_census_row_refuses_old_task_and_preserves_legacy_payload',
+               'transition_never_admits_context_or_relabels_a_current_profile',
+               'witness_rechecks_the_exact_descriptor_and_keeps_new_input_provenance',
+               'g5_supplement_binds_exact_current_source_without_relabelling_old_row']
+        names = ['arbiter::runtime::cuda::fp16::tests::' + x for x in fp16]
+        names += ['arbiter::external_data::g5::tests::' + x for x in external]
+        names += ['arbiter::runtime::cpu_source_transition::tests::' + x for x in cpu]
+        def document(values):
+            return ('<testsuites>' + ''.join('<testcase classname="airk-retrieval" name="' + name + '"/>' for name in values) + '</testsuites>').encode()
+        M.validate_junit(document(names), 25)
+        for omitted in names:
+            remaining = [name for name in names if name != omitted]
+            with self.subTest(omitted=omitted), self.assertRaisesRegex(ValueError, 'identities absent'):
+                M.validate_junit(document(remaining), 24)
+
+class FP32ProcessProofControls(unittest.TestCase):
+    def fixture(self):
+        old = {'native_image': row('native-image'), 'parent_python': row('python')}
+        receipt = {'parent_python': row('python'), 'owned': {'owned_leader_pid': 123,
+            'suspended_assignment': {'pid': 123, 'image': {'path': str(ROOT / 'native-image'), 'sha256': 'a' * 64},
+            'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
+            'default_owner_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
+            'component_job': {'process_bytes': 17179869184, 'job_bytes': 25769803776, 'flags': 8968, 'active_limit': 2}}}}
+        return receipt, old
+
+    def test_actual_suspended_os_proof_passes(self):
+        M.validate_fp32_process(*self.fixture())
+
+    def test_missing_or_changed_suspended_proof_refuses(self):
+        for key in ('pid', 'image', 'execution_user_sid', 'default_owner_sid', 'component_job'):
+            for action in ('missing', 'changed'):
+                receipt, old = self.fixture()
+                if action == 'missing': del receipt['owned']['suspended_assignment'][key]
+                else: receipt['owned']['suspended_assignment'][key] = 'other'
+                with self.subTest(key=key, action=action), self.assertRaises(ValueError):
+                    M.validate_fp32_process(receipt, old)
+
+    def test_original_job_fields_cannot_change(self):
+        for key in ('process_bytes', 'job_bytes', 'flags', 'active_limit'):
+            receipt, old = self.fixture(); receipt['owned']['suspended_assignment']['component_job'][key] += 1
+            with self.subTest(key=key), self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
+
+    def test_actual_pid_and_parent_python_must_match(self):
+        for key, value in [('owned_leader_pid', 124), ('owned_leader_pid', True)]:
+            receipt, old = self.fixture(); receipt['owned'][key] = value
+            with self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
+        receipt, old = self.fixture(); receipt['parent_python'] = row('other-python')
+        with self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
 
 if __name__ == '__main__':
     unittest.main()

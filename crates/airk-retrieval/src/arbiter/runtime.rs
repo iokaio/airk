@@ -386,6 +386,11 @@ fn bytes(source: &dyn AssetSource, asset: &Asset, maximum: u64) -> Result<Vec<u8
     Ok(bytes)
 }
 
+enum OpenMode {
+    Execution,
+    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+    PlacementDiagnostic,
+}
 impl Scorer {
     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
         Self::open_configured(profile, source, Ok)
@@ -409,6 +414,32 @@ impl Scorer {
             ort::session::builder::SessionBuilder,
         ) -> Result<ort::session::builder::SessionBuilder>,
     ) -> Result<Self> {
+        match Self::open_internal(profile, source, configure, OpenMode::Execution)? {
+            Some(scorer) => Ok(scorer),
+            None => {
+                anyhow::bail!("diagnostic cannot produce an execution scorer")
+            }
+        }
+    }
+    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+    pub fn diagnose_cuda_placement(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+    ) -> Result<()> {
+        cuda::diagnostic::require_diagnostic_profile(&profile)?;
+        match Self::open_internal(profile, source, Ok, OpenMode::PlacementDiagnostic)? {
+            None => Ok(()),
+            Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
+        }
+    }
+    fn open_internal(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        configure: impl FnOnce(
+            ort::session::builder::SessionBuilder,
+        ) -> Result<ort::session::builder::SessionBuilder>,
+        _mode: OpenMode,
+    ) -> Result<Option<Self>> {
         crate::native_inference::require_service_compute()?;
         profile.description.validate()?;
         profile.validate_native_source()?;
@@ -545,6 +576,11 @@ impl Scorer {
                 .build()])?;
         }
         builder = configure(builder)?;
+        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+            cuda::diagnostic::require_diagnostic_profile(&profile)?;
+            builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+        }
         for asset in profile
             .description
             .assets
@@ -609,13 +645,29 @@ impl Scorer {
             #[cfg(feature = "gpu-cuda")]
             gpu.clone(),
         );
+        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+            cuda::diagnostic::session_created(gpu.as_ref().context("diagnostic binding missing")?)?;
+        }
         #[cfg(feature = "gpu-cuda")]
         if let Some(claim) = cold {
             claim.settle()?;
         }
         #[cfg(feature = "gpu-cuda")]
         if let Some(binding) = &gpu {
-            binding.device.placement(&session)?.require_strict()?;
+            let diagnostic = {
+                #[cfg(feature = "test-support")]
+                {
+                    matches!(_mode, OpenMode::PlacementDiagnostic)
+                }
+                #[cfg(not(feature = "test-support"))]
+                {
+                    false
+                }
+            };
+            if !diagnostic {
+                binding.device.placement(&session)?.require_strict()?;
+            }
         }
 
         let focus = profile.description.abi.readout == Readout::FocusYesNo;
@@ -727,14 +779,19 @@ impl Scorer {
                 "Focus output must be the exact raw no/yes pair"
             );
         }
-        Ok(Self {
+        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+            cuda::diagnostic::finish(session, gpu.as_ref().context("diagnostic binding missing")?)?;
+            return Ok(None);
+        }
+        Ok(Some(Self {
             profile,
             compiler,
             session: Mutex::new(session),
             _environment: environment,
             physical_cores,
             joint_calibration,
-        })
+        }))
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_profiling(&self) -> Result<std::path::PathBuf> {

@@ -87,3 +87,100 @@ The eight closed-row regressions, including all seven retained refusal controls,
 and affected native consumer gates must pass before activation. Fresh /3 metadata
 remains a distinct unqualified private route; it cannot silently replace the
 installed/public legacy descriptor.
+
+## CUDA provider bridge and scientific driver closure with unchanged CPU runtime source
+
+The corrective Windows loader initializes the genuine core-owned ProviderHost
+through CreateCUDAProviderOptions, zero-entry UpdateCUDAProviderOptions and
+ReleaseCUDAProviderOptions before explicitly mapping the CUDA provider. Its
+historical provider-bridge-only source roster was:
+
+- runtime/cuda/windows.rs: 11555ada8a2ae94b14370abf914d5d4d2246e82080fc9a88df47e4d9c55ef9ab
+- runtime/cuda/modules.rs: 8e0784453278d309687681d063130f0b0e5dbd66d4680ad72466253256909d5b
+- runtime/cuda/CONTRACT.md: b14c76132a2fb3b506c4ecaf7c1543a0c66faea6e40538e9dde5e7b3b9336dde
+
+The preceding reviewed scientific driver closure additionally holds and validates
+one exact installed NVIDIA dispatcher/DriverStore companion pair before loading.
+It retains strict mapped-image reconciliation and does not expand product
+admission. The historical roster above is not an alternate current permit.
+Its historical driver-closure source roster was:
+
+- runtime/cuda/windows.rs: 50bc0842ed84fa004000f954ebc17041ade6bc6724f9a630db75138dc08cd584
+- runtime/cuda/modules.rs: 5d30f0d9d98beb849af2b33343a48e598b069009c3e056095f5aaa6b8576ccb2
+- runtime/cuda/CONTRACT.md: fe70ee40613a0fc3e551aff74171c1b84f4a39470dc5c0dba888b5d4a525d9b1
+
+The historical diagnostic source epoch retained those exact driver admission rules
+and added staged complete mapping-refusal evidence. Its historical roster was:
+
+- runtime/cuda/windows.rs: aec3026bc6c6dd44af057ede9e6577fff4f253d1b0a866a194a645337d44930f
+- runtime/cuda/modules.rs: 9cde13683c179712406f370c4171ff5733c50e2ea0ad34bdf71d6066dd954669
+- runtime/cuda/CONTRACT.md: c7aaabfffd5badc29c469f5ed08d5b44d22b6d6a8f60a56c17fdb902dfab708a
+
+The bounded diagnostic records all observed unapproved mappings with explicit
+omission counts and never authorizes a module. Post-cuInit reconciliation and
+the original deadline now precede LoadedRuntime publication inside the retained
+Attempt; failure keeps existing custody and poisons the process. Historical
+bridge and driver-closure source rosters are not alternate current permits.
+This supplement does not establish a successful driver, provider or model run.
+
+The current scientific source epoch admits the reviewed seven-file closure:
+the existing nvcuda64 companion plus the six exact after-cuInit census objects.
+Each row retains its exact installed location, size/hash, held file identity,
+protected access policy and native trust validation; no directory wildcard or
+product admission is introduced. Complete mapping reconciliation, its staged
+refusal evidence and the post-cuInit fence remain mandatory. The ninth regression
+pins the current Windows and module owners; the full reviewed source roster is:
+
+- runtime/cuda/windows.rs: 4af9924dbd953cc6065c4acc4549a079c3adfa10a1f850f5c32ca7dd94674cbe
+- runtime/cuda/modules.rs: 171be06a31093b1d93a6b8db0dcbf1408eab375937fd751d2ccd6226dbbbc3a9
+- runtime/cuda/CONTRACT.md: 715567f0b58bc9ffac869bc37dfb88355ebc2e1b9f807ff42d774956c2d55085
+
+The preceding diagnostic epoch remains historical, not an alternate permit.
+This exact source supplement transfers no CPU, GPU or model qualification.
+
+These are exact SHA256 values of the reviewed files (also equal to their
+UTF8/CRLF-to-LF normalized hashes; lone CR is refused by source_sha).
+The owning CPU transition hashes runtime.rs only, not its entire module tree.
+That file remains exactly
+9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d.
+Consequently CURRENT_RUNTIME_SOURCE, its digest algorithm, transition source,
+row framing and accepted CPU identities do not change. There is no invented
+9e-to-new mapping, alternate runtime permit or G5 activation. CURRENT_TASKcc25
+and Focus compilera582 remain current; every original legacy descriptor,
+Core/task/compiler/CAL/public-source constraint remains intact.
+
+A ninth literal regression binds the provider bridge and scientific driver closure,
+unchanged runtime9e and current taskcc25, and preserves the original Profile
+serialization and no-transfer flags. All eight existing transition regressions
+remain unchanged. These source checks do not prove provider loading, driver execution or inference.
+The whole-native source manifest, corrected build/image identity and actual
+execution receipts distinguish this loader correction from historical1114
+failures. CPU transition records alone do not identify the full native image;
+no old numeric, resource, CAL or qualification result transfers to the new build.
+
+## Disposable placement diagnostic source supplement
+
+The previous runtime source 9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d remains historical. The current runtime source
+254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0 wraps the existing open path in an internal result mode and adds a
+`gpu-cuda` plus `test-support` evaluation-only disposable diagnostic. Ordinary
+CPU opening selects `Execution`, uses the same builder, assets, session owner,
+ABI checks and resulting Scorer. CUDA production still forbids CPU fallback and
+requires strict placement. No descriptor, task/compiler policy, calibration,
+qualification, download or public source is relabelled. The first eight closed
+CPU controls are preserved byte-for-byte; the existing CUDA custody control's
+runtime literals deliberately advance, and a separate supplement pins the new
+observation owner. The inverse transformation record reconstructs exact prior
+runtime bytes; it is mechanical source evidence, not a compiled behavioral pass.
+
+Current Compact's task digest binds context_action.rs plus core semantics and
+its compiler digest binds compiler.rs plus qwen.rs. This runtime-only change
+therefore does not require retagging retained Compact metadata: current-policy
+admission remains available, while every diagnostic consumes a freshly built,
+explicitly pinned native source group. The legacy CPU witness is not Compact's
+admission path. G5 must be rebased on this runtime source: do not overwrite it
+with the historical DDE proposal or duplicate startup GEMM initialization.
+
+The supplemental source pins also bind current cuda.rs wiring and diagnostic
+unknown-release behavior. A caught SessionOwner Drop panic invokes the actual
+device poison/epoch owner and retains Binding before post-sync; native custody
+therefore retains all owned resources. The original closed CPU path is unchanged.

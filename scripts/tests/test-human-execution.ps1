@@ -99,4 +99,99 @@ Refuse 'path access error is terminating' {
     }
     Get-AirkCheckedPath $PSCommandPath $root
 }
+# Literal split ACE fixtures preserve their distinct flags rather than deriving
+# expected grants from the guard's decision logic. Descriptors stay in memory.
+function SplitPolicy([string]$DirectoryFlags='CI', [string]$FileFlags='OIIO') {
+    # DirectorySecurity canonicalizes equivalent adjacent grants into one ACE.
+    # Preserve the literal observed rule list here to exercise separate grants.
+    $descriptor=[Security.AccessControl.RawSecurityDescriptor]::new("O:${sid}D:(A;${DirectoryFlags};FA;;;${sid})(A;${FileFlags};FA;;;${sid})")
+    $rules=@(foreach ($ace in $descriptor.DiscretionaryAcl) {
+        $inheritance=[Security.AccessControl.InheritanceFlags]::None
+        if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::ContainerInherit) -ne 0) { $inheritance=$inheritance -bor [Security.AccessControl.InheritanceFlags]::ContainerInherit }
+        if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::ObjectInherit) -ne 0) { $inheritance=$inheritance -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit }
+        $propagation=[Security.AccessControl.PropagationFlags]::None
+        if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { $propagation=$propagation -bor [Security.AccessControl.PropagationFlags]::InheritOnly }
+        if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::NoPropagateInherit) -ne 0) { $propagation=$propagation -bor [Security.AccessControl.PropagationFlags]::NoPropagateInherit }
+        [Security.AccessControl.FileSystemAccessRule]::new($ace.SecurityIdentifier,[Security.AccessControl.FileSystemRights]$ace.AccessMask,$inheritance,$propagation,'Allow')
+    })
+    $acl=[pscustomobject]@{Owner=$descriptor.Owner;Rules=$rules}
+    $acl | Add-Member ScriptMethod GetOwner { param($Type) $this.Owner }
+    $acl | Add-Member ScriptMethod GetAccessRules { param($Explicit,$Inherited,$Type) $this.Rules }
+    $acl | Add-Member ScriptMethod AddAccessRule { param($Rule) $this.Rules += $Rule }
+    return $acl
+}
+Pass 'split CI effective and OI inherit-only grants' {
+    $acl=SplitPolicy
+    $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 2 -or $rules[0].InheritanceFlags -ne 'ContainerInherit' -or $rules[0].PropagationFlags -ne 'None' -or $rules[1].InheritanceFlags -ne 'ObjectInherit' -or $rules[1].PropagationFlags -ne 'InheritOnly') { throw 'Split fixture flags were changed' }
+    Assert-AirkDirectoryPolicy $acl (Observation)
+}
+Pass 'split grants with separate effective parent ACE' {
+    $acl=SplitPolicy -DirectoryFlags CIIO
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','Allow'))
+    Assert-AirkDirectoryPolicy $acl (Observation)
+}
+Refuse 'split grants lack effective parent' { Assert-AirkDirectoryPolicy (SplitPolicy -DirectoryFlags CIIO) (Observation) }
+Refuse 'split grants lack inherited directories' { Assert-AirkDirectoryPolicy (SplitPolicy -DirectoryFlags '') (Observation) }
+Refuse 'split grants lack inherited files' { Assert-AirkDirectoryPolicy (SplitPolicy -FileFlags '') (Observation) }
+Refuse 'split directory grant cannot propagate' { Assert-AirkDirectoryPolicy (SplitPolicy -DirectoryFlags CINP) (Observation) }
+Refuse 'split file grant cannot propagate' { Assert-AirkDirectoryPolicy (SplitPolicy -FileFlags OIIONP) (Observation) }
+Refuse 'both split grants cannot propagate' { Assert-AirkDirectoryPolicy (SplitPolicy -DirectoryFlags CINP -FileFlags OIIONP) (Observation) }
+Refuse 'split grants still refuse matching deny' {
+    $acl=SplitPolicy
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),'Write','Deny'))
+    Assert-AirkDirectoryPolicy $acl (Observation)
+}
+$batchIdentity=Assert-AirkHumanExecution $liveSid
+$batchEntries=@([pscustomobject]@{path=$PSCommandPath;root=$root;created=$true},[pscustomobject]@{path=(Join-Path $root 'scripts/dev/assert-human-execution.ps1');root=$root;created=$true})
+Pass 'batch checks identity once and each token and ancestor freshly' {
+    $script:identityCalls=0; $script:tokenCalls=0; $script:rootAclCalls=0
+    $tokenCheck=(Get-Command Assert-AirkCurrentToken).ScriptBlock
+    function Assert-AirkHumanExecution { param($ExpectedSid) $script:identityCalls++; $batchIdentity }
+    function Assert-AirkCurrentToken { param($Identity) $script:tokenCalls++; & $tokenCheck $Identity }
+    function Get-Acl { param($LiteralPath,$ErrorAction) if($LiteralPath -eq $root){$script:rootAclCalls++}; Microsoft.PowerShell.Security\Get-Acl -LiteralPath $LiteralPath -ErrorAction Stop }
+    $result=Assert-AirkOutputBatch $batchEntries $liveSid 10
+    if (@($result.results | Where-Object {-not $_.passed}).Count -ne 0 -or $script:identityCalls -ne 1 -or $script:tokenCalls -ne 2 -or $script:rootAclCalls -ne 2) { throw 'Batch skipped fresh identity/token/ancestor observations' }
+}
+Pass 'batch retains all path failures and continues later audits' {
+    $missing=[pscustomobject]@{path=(Join-Path $PSScriptRoot 'missing-guard-output-fixture');root=$root;created=$true}
+    $result=Assert-AirkOutputBatch @($batchEntries[0],$missing,$batchEntries[1]) $liveSid 10
+    if ($result.results.Count -ne 3 -or -not $result.results[0].passed -or $result.results[1].passed -or -not $result.results[2].passed -or $result.results[1].error -ne 'Created output is absent') { throw 'Per-path audit outcomes lost' }
+}
+Pass 'batch refuses token drift on the affected path' {
+    $script:tokenCalls=0
+    $tokenCheck=(Get-Command Assert-AirkCurrentToken).ScriptBlock
+    function Assert-AirkCurrentToken { param($Identity) $script:tokenCalls++; if($script:tokenCalls -eq 2){throw 'injected token drift'}; & $tokenCheck $Identity }
+    $result=Assert-AirkOutputBatch $batchEntries $liveSid 10
+    if (-not $result.results[0].passed -or $result.results[1].passed -or $result.results[1].error -ne 'injected token drift') { throw 'Token drift accepted' }
+}
+Pass 'batch expiry refuses every pending path without path access' {
+    function Start-AirkAuditClock { [pscustomobject]@{Elapsed=[pscustomobject]@{TotalSeconds=10}} }
+    function Assert-AirkOutputPathObservation { throw 'Expired audit touched path' }
+    $result=Assert-AirkOutputBatch $batchEntries $liveSid 10
+    if (-not $result.expired -or @($result.results | Where-Object {$_.passed -or $_.error -ne 'Original output audit budget expired'}).Count -ne 0) { throw 'Expired batch accepted' }
+}
+Pass 'batch malformed row cannot hide later audit' {
+    $bad=[pscustomobject]@{path=$PSCommandPath;root=$root;created='true'}
+    $result=Assert-AirkOutputBatch @($bad,$batchEntries[1]) $liveSid 10
+    if ($result.results[0].passed -or -not $result.results[1].passed) { throw 'Malformed entry accepted or later audit omitted' }
+}
+Refuse 'batch zero budget refuses before paths' { Assert-AirkOutputBatch $batchEntries $liveSid 0 }
+Refuse 'batch widened budget refuses' { Assert-AirkOutputBatch $batchEntries $liveSid 11 }
+Refuse 'batch nonfinite budget refuses' { Assert-AirkOutputBatch $batchEntries $liveSid ([double]::NaN) }
+Refuse 'batch oversized roster refuses' { Assert-AirkOutputBatch (@($batchEntries[0])*16381) $liveSid 10 }
+Refuse 'batch identity failure refuses before path access' {
+    function Assert-AirkHumanExecution { throw 'injected identity refusal' }
+    Assert-AirkOutputBatch $batchEntries $liveSid 10
+}
+Pass 'batch same-user token group drift refuses before ACL evaluation' {
+    function Assert-AirkHumanExecution {
+        param($ExpectedSid)
+        $changed=$batchIdentity.PSObject.Copy()
+        $changed.TokenSids=@($batchIdentity.TokenSids)+@('S-1-5-999')
+        $changed
+    }
+    $result=Assert-AirkOutputBatch $batchEntries $liveSid 10
+    if (@($result.results | Where-Object {$_.passed -or $_.error -ne 'Execution token group roster changed during output audit'}).Count -ne 0) { throw 'Token group drift accepted' }
+}
 Write-Output "Selected $script:passed; passed $script:passed; failed 0. No filesystem mutations."

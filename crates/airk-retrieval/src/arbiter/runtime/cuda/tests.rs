@@ -515,3 +515,34 @@ fn package_projection_refuses_unpinned_nonabsolute_and_aliased_descriptor_reques
         .is_err()
     );
 }
+
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+#[test]
+fn unsupported_platform_refuses_runtime_before_manifest_access() -> Result<()> {
+    let control = tempfile::Builder::new()
+        .prefix("airk-cuda-unsupported-")
+        .tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+    lease.admit_inference_owner()?;
+    // SAFETY: this actual exclusive native lease outlives the compute scope and
+    // refusal call; the unsupported platform path performs no native FFI.
+    let scope = unsafe { crate::native_inference::ServiceComputeScope::enter()? };
+    let root = control.path().join("unread-runtime");
+    let descriptor = root.join("unread-manifest.json");
+    assert!(!root.exists());
+    // SAFETY: pass that same retained real service lease, never a role surrogate.
+    let result = unsafe {
+        CudaRuntime::from_native_lease(
+            lease.clone(),
+            &root,
+            &descriptor,
+            Instant::now() + std::time::Duration::from_secs(1),
+        )
+    };
+    let error = result.err().context("unsupported runtime was admitted")?;
+    assert!(error.downcast_ref::<RuntimeUnavailable>().is_some());
+    assert!(error.to_string().contains("unsupported platform"));
+    assert!(!root.exists());
+    drop(scope);
+    Ok(())
+}

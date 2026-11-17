@@ -107,7 +107,7 @@ def validate_plan(plan):
     paths = [row['path'] for row in plan['input_files']]
     require(len(paths) == len(set(paths)) and len(paths) <= 50000, 'unique bounded complete input census required')
     by_path = {row['path']: row for row in plan['input_files']}
-    required = [plan[key] for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest')]
+    required = [plan[key] for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure', 'runtime_manifest', 'source_plan', 'runtime_baseline', 'prerequisites_manifest')]
     required += list(plan['helpers'].values()) + list(plan['prerequisite_evidence'].values())
     require(all(by_path.get(row['path']) == row for row in required), 'required source absent from input census')
     require(Path(plan['wrapper']['path']) == Path(__file__).resolve(), 'actual maintained wrapper differs')
@@ -136,6 +136,7 @@ def authenticate(plan, check=lambda: None):
     for name, value in closure.items():
         require(name not in ('', '.', '..') and Path(name).name == name and '/' not in name and '\\' not in name and ':' not in name, 'unsafe source sidecar name')
         require(by_path.get(str(parent / name)) == dict(value, path=str(parent / name)), 'source sidecar omitted from input census')
+    authenticate_prerequisites(plan, by_path, check)
     check()
     return runtime
 
@@ -367,6 +368,7 @@ def run(path, expected):
             for row in plan['input_files']:
                 pinned(row)
             require(set().union(*(file_roster(root) for root in runtime['roots'])) == set(runtime['files']), 'runtime final census drift')
+            authenticate_prerequisites(plan, {row['path']: row for row in plan['input_files']})
             row = pin(path)
             require(row['sha256'] == expected, 'plan changed')
             return row
@@ -380,16 +382,326 @@ def run(path, expected):
     return receipt
 
 
+SOURCE_PLAN_SHA = 'cdf57c6c86b490cf2b6656fa8c48fbb4ff3b6ccb4d5c5be9705a71a2866b735c'
+RUNTIME_BASELINE_SHA = '23f9fbfa770d18ee2549dbd6c1b553e204ab8e387ba51b92b620dd24c10189cb'
+G5_TESTS = frozenset(
+    'arbiter::runtime::cuda::fp16::tests::' + name for name in (
+        'inherited_exact_settings_pass_and_late_setter_or_drift_refuses',
+        'fp32_policy_remains_distinct_from_each_model_fp16_policy',
+        'context_boundaries_and_exact_original_mask_positions_refuse_unsupported_input',
+        'focus_all_live_and_extreme_left_pad_pass_without_renumbering',
+        'half_initializer_bit_loading_preserves_half_values_without_rounding',
+        'actual_final_placement_needs_exact_complete_attention_roster',
+        'qualified_product_math_does_not_force_attention_debug_logging')) | frozenset(
+    'arbiter::external_data::g5::tests::' + name for name in (
+        'three_literal_selected_rosters_admit_actual_half_boundaries',
+        'wrong_scale_grouping_causal_and_bias_refuse_before_session',
+        'wrong_half_cast_and_missing_layer_refuse', 'focus_bias_and_wrong_head_count_refuse',
+        'all_f32_and_overlap_are_not_half_weight_closure',
+        'large_half_metadata_is_additive_and_never_allocates_tensor_bytes',
+        'unknown_quantized_half_closure_refuses',
+        'focus_unwritten_padded_queries_require_explicit_sanitization')) | frozenset(
+    'arbiter::runtime::cpu_source_transition::tests::' + name for name in (
+        'closed_profile_refuses_neural_metadata_fit_and_source_drift',
+        'cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source',
+        'current_runtime_predicate_preserves_the_exact_legacy_cpu_literal',
+        'exact_legacy_descriptor_and_public_sources_remain_byte_stable',
+        'native_version_scope_is_pre_190_exact_release_only',
+        'source_row_refuses_wrong_current_core_or_task_policy',
+        'publisher_census_row_refuses_old_task_and_preserves_legacy_payload',
+        'transition_never_admits_context_or_relabels_a_current_profile',
+        'witness_rechecks_the_exact_descriptor_and_keeps_new_input_provenance',
+        'g5_supplement_binds_exact_current_source_without_relabelling_old_row'))
+G5_SOURCES = ('Cargo.lock', 'crates/airk-retrieval/Cargo.toml', 'crates/airk-retrieval/src/onnx.rs') + tuple(
+    'crates/airk-retrieval/src/arbiter/' + name for name in (
+        'external_data.rs', 'external_data/g5.rs', 'external_data/g5/tests.rs',
+        'runtime.rs', 'compiler.rs', 'compiler/focus.rs', 'runtime/cuda/manifest.rs',
+        'runtime/cuda.rs', 'runtime/cuda/fp16.rs',
+        'runtime/cuda/fp16/tests.rs', 'runtime/cuda/fp16/CONTRACT.md',
+        'runtime/cpu_source_transition.rs', 'runtime/cpu_source_transition/tests.rs',
+        'runtime/cpu_source_transition/CONTRACT.md', 'runtime/cuda/windows.rs',
+        'runtime/cuda/modules.rs', 'runtime/cuda/tests.rs',
+        'runtime/cuda/CONTRACT.md'))
+
+
+def successful_fp32(receipt):
+    require(receipt.get('schema') == 'airk.private.owned-cuda-component/1'
+            and receipt.get('complete') is True and receipt.get('failure', 'missing') is None
+            and receipt.get('execution_user_sid') == SID
+            and receipt.get('whole_phase_deadline_not_refreshed') is True
+            and receipt.get('whole_phase_expired') is False
+            and receipt.get('qualification') is False and receipt.get('product_admission') is False,
+            'genuine successful FP32 component receipt required')
+    elapsed = receipt.get('elapsed_seconds')
+    require(type(elapsed) in (int, float) and math.isfinite(elapsed) and 0 <= elapsed < 120,
+            'original FP32 whole-phase timing required')
+    for key in ('post_input_drift', 'final_input_errors', 'final_proof_errors'):
+        require(receipt.get(key) == [], 'FP32 final input/proof failure: ' + key)
+    require(receipt.get('final_proof_success') == ['native_result', 'operations', 'stdout'],
+            'complete original FP32 final proof roster required')
+
+
+def validate_fp32_process(receipt, old):
+    owned = receipt['owned']
+    pid = owned.get('owned_leader_pid')
+    proof = owned.get('suspended_assignment', {})
+    require(type(pid) is int and pid > 0 and type(proof.get('pid')) is int and proof['pid'] == pid,
+            'actual suspended FP32 PID proof absent')
+    require(proof.get('execution_user_sid') == SID and proof.get('default_owner_sid') == SID
+            and proof.get('image') == {key: old['native_image'][key] for key in ('path', 'sha256')},
+            'actual suspended FP32 image/token proof differs')
+    require(proof.get('component_job') == {'process_bytes': 16 << 30, 'job_bytes': 24 << 30,
+                                         'flags': 8968, 'active_limit': 2},
+            'actual suspended original FP32 Job proof differs')
+    require(receipt.get('parent_python') == old['parent_python'], 'actual FP32 parent interpreter differs')
+
+def successful_readiness(receipt, kind):
+    require(receipt.get('schema') == 'airk-readiness-command/1'
+            and receipt.get('status') == 'completed' and receipt.get('passed') is True
+            and receipt.get('exit_code') == 0 and receipt.get('runner_exit_code') == 0
+            and receipt.get('interrupted') is False, 'successful native G5 readiness receipt required')
+    for key in ('inputs_unchanged', 'runner_unchanged', 'runtime_unchanged', 'command_inputs_unchanged'):
+        require(receipt.get(key) is True, 'native G5 changed inputs: ' + key)
+    command = receipt['command']
+    require(isinstance(command, list) and 'airk-retrieval' in command and '--all-features' in command,
+            'native G5 feature/crate scope missing')
+    if kind == 'clippy':
+        require(any(Path(x).name == 'dev-check.py' for x in command), 'actual scoped Clippy receipt required')
+    else:
+        require(command[1:3] == ['nextest', 'run'] and '--locked' in command
+                and '--profile' in command and command[command.index('--profile') + 1] == 'ci',
+                'actual pinned Nextest receipt required')
+        require(type(receipt.get('selected_tests')) is int and receipt['selected_tests'] > 0,
+                'positive native G5 selected test count required')
+
+
+def validate_junit(raw, selected):
+    import xml.etree.ElementTree as ET
+    require(len(raw) <= 32 << 20 and b'<!DOCTYPE' not in raw and b'<!ENTITY' not in raw,
+            'bounded literal JUnit required')
+    tree = ET.fromstring(raw)
+    cases = list(tree.iter('testcase'))
+    require(len(cases) == selected and len({(x.get('classname'), x.get('name')) for x in cases}) == selected,
+            'JUnit selected count/unique identities differ')
+    require(all(not list(x) or all(child.tag == 'system-out' for child in x) for x in cases),
+            'JUnit failure/skipped/error evidence refused')
+    passed = {x.get('name') for x in cases if x.get('classname') == 'airk-retrieval'}
+    require(G5_TESTS <= passed, 'required G5/CPU-transition passing test identities absent')
+
+
+def g5_source_facts(group, root, check=lambda: None):
+    rows = {}
+    for relative in G5_SOURCES:
+        row = pin(root / relative, check)
+        require(group['files'].get(relative) == row['sha256'], 'required current G5 source absent/changed: ' + relative)
+        rows[row['path']] = row
+    return rows
+
+def prerequisite_facts(evidence, check=lambda: None):
+    """Reopen immutable historical FP32 and current G5 evidence, without dispatch."""
+    root = Path(__file__).resolve().parents[1]
+    rows = {}
+    def take(row):
+        pinned(row, check); rows[row['path']] = row
+        return Path(row['path'])
+    def core(row):
+        full = pin(row['path'], check)
+        require(full['sha256'] == row['sha256'], 'prerequisite core pin changed')
+        return take(full)
+    for row in evidence['validators'].values():
+        take(row)
+    require(set(evidence['validators']) == {'component', 'native'}, 'complete prerequisite validator roster required')
+    require(evidence['validators']['component']['path'] == str(root / 'scripts/cuda-component-execution.py')
+            and evidence['validators']['native']['path'] == str(root / 'scripts/cuda-native-execution.py'),
+            'maintained prerequisite validators required')
+    c = load(evidence['validators']['component']['path'], 'fp16_component_prerequisite')
+    b = c.base()
+    first = read(take(evidence['first_fp32']))
+    successful_fp32(first)
+    old = read(take(first['plan']))
+    require(old.get('schema') == c.SCHEMA and old.get('human_sid') == SID
+            and old.get('selector') == c.SELECTOR and old.get('limits') == c.LIMITS,
+            'original Compact17 source plan required')
+    require(first['command'] == [old['native_image']['path'], '--exact', c.SELECTOR, '--ignored', '--nocapture', '--test-threads=1']
+            and first['input_seals'] == dict(old['input_seals'], **{first['plan']['path']: first['plan']['sha256']}),
+            'FP32 original command/input identity differs')
+    for key in ('native_image', 'image_packet', 'native_build_receipt', 'request', 'native_input', 'profile', 'descriptor'):
+        take(old[key])
+    for row in old['runtime_files']:
+        take(row)
+    for name, sha in HELPERS.items():
+        path = Path(old['ownership_helper_root']) / name
+        row = pin(path, check); require(row['sha256'] == sha, 'original settlement helper changed'); take(row)
+    b.source_image(old)
+    validate_fp32_process(first, old)
+    take(old['parent_python'])
+    parent, _ = b.helpers(old)
+    require(parent.settled(first['owned']) and type(first['owned'].get('peak_host_committed_bytes')) is int
+            and 0 < first['owned']['peak_host_committed_bytes'] <= 24 << 30, 'actual FP32 HANDLE/Job settlement absent')
+    native, profile, fixture = c.input_facts(old, b)
+    for row in (native['numeric_fixture'], native['source_manifest'], fixture['reference_producer']):
+        core(row)
+    for key, cap in c.PROOFS.items():
+        require(first[key]['bytes'] <= cap, 'FP32 original output cap exceeded')
+        take(first[key])
+    value = read(first['native_result']['path'])
+    c.validate_native(value, old, first['owned']['owned_leader_pid'], native, profile, fixture)
+    c.validate_operations([json.loads(line) for line in Path(first['operations']['path']).read_text(encoding='utf-8').splitlines()], value)
+    tests = read(take(evidence['native_g5']))
+    clippy = read(take(evidence['native_g5_clippy']))
+    successful_readiness(tests, 'tests'); successful_readiness(clippy, 'clippy')
+    require(tests['groups']['native'] == clippy['groups']['native'], 'G5 Clippy/tests source groups differ')
+    group = tests['groups']['native']
+    require(group['sha256'] != old['native_group'], 'G5 cannot retag the original FP32 source epoch')
+    for row in g5_source_facts(group, root, check).values():
+        take(row)
+    junit = tests['junit']; leaf = Path(junit['path'])
+    require(leaf.name == junit['path'] and leaf.name not in ('', '.', '..'), 'JUnit must be a retained sibling leaf')
+    junit_path = core(dict(junit, path=str(Path(evidence['native_g5']['path']).parent / leaf)))
+    validate_junit(junit_path.read_bytes(), tests['selected_tests'])
+    check()
+    return rows
+
+
+def source_facts(source, model, check=lambda: None):
+    require(model == 'compact', 'only Compact has an implemented genuine FP32 prerequisite validator')
+    require(source['sha256'] == SOURCE_PLAN_SHA, 'original export source plan identity differs')
+    original = read(pinned(source, check))
+    require(original.get('schema') == 'airk.private.g5-original3-export-run-plan/1', 'original source schema differs')
+    models = [row for row in original['models'] if row['model'] == model]
+    require(len(models) == 1, 'exact original selected source required')
+    selected = models[0]
+    for key in ('original_graph', 'source_closure', 'source_closure_authority'):
+        pinned(selected[key], check)
+    return original, selected
+
+
+def runtime_facts(baseline, roots, check=lambda: None):
+    require(baseline['sha256'] == RUNTIME_BASELINE_SHA, 'original runtime baseline identity differs')
+    value = read(pinned(baseline, check))
+    require(value.get('schema') == 'airk.private.exact-python-runtime-files/1', 'runtime baseline schema differs')
+    files = {path: pin(path, check) for path in sorted(set().union(*(file_roster(root) for root in roots)))}
+    outside = {}
+    for path, sha in value['files'].items():
+        row = files.get(path) or pin(path, check)
+        require(row['sha256'] == sha, 'retained runtime baseline member changed/missing')
+        if path not in files:
+            outside[path] = row
+    return {'roots': [str(x) for x in roots], 'files': files, 'import_paths': [str(x) for x in roots]}, outside
+
+
+def authenticate_prerequisites(plan, by_path, check=lambda: None):
+    original, selected = source_facts(plan['source_plan'], plan['model'], check)
+    require(by_path.get(selected['source_closure_authority']['path']) == selected['source_closure_authority'], 'original source authority omitted from input census')
+    require(plan['source_graph'] == selected['original_graph'] and plan['source_closure'] == selected['source_closure']
+            and plan['expected_weights_bytes'] == selected['expected_weights_bin_bytes']
+            and plan['expected_attention_count'] == len(selected['expected_attention_nodes'])
+            and plan['python'] == original['python'] and plan['exporter']['sha256'] == original['reviewed_library']['sha256'],
+            'conversion differs from authentic original source data')
+    evidence = read(pinned(plan['prerequisites_manifest'], check))
+    require(evidence.get('schema') == 'airk.private.fp16-prerequisites/1'
+            and {key: evidence[key] for key in ('first_fp32', 'native_g5')} == plan['prerequisite_evidence'],
+            'prerequisite manifest identity differs')
+    for path, row in prerequisite_facts(evidence, check).items():
+        require(by_path.get(path) == row, 'prerequisite dependency omitted from input census')
+    baseline = plan['runtime_baseline']
+    require(baseline['sha256'] == RUNTIME_BASELINE_SHA, 'original runtime baseline identity differs')
+    value = read(pinned(baseline, check))
+    require(value.get('schema') == 'airk.private.exact-python-runtime-files/1', 'original runtime baseline schema differs')
+    for path, sha in value['files'].items():
+        require(by_path.get(path, {}).get('sha256') == sha, 'retained runtime baseline file omitted/changed')
+
+def prepare(args):
+    deadline = time.monotonic() + LIMITS['wall_seconds']
+    require(sys.flags.no_site == 1 and sys.dont_write_bytecode, 'nonwriting no-site preparer required')
+    windows_owner()
+    def check():
+        require(time.monotonic() < deadline, 'preparation metadata deadline expired')
+    root = Path(__file__).resolve().parents[1]
+    source = pin(args.source_plan, check)
+    original, selected = source_facts(source, args.model, check)
+    evidence = {'schema': 'airk.private.fp16-prerequisites/1',
+                'first_fp32': pin(args.first_fp32, check), 'native_g5': pin(args.native_g5, check),
+                'native_g5_clippy': pin(args.native_g5_clippy, check),
+                'validators': {'component': pin(root / 'scripts/cuda-component-execution.py', check),
+                               'native': pin(root / 'scripts/cuda-native-execution.py', check)}}
+    prerequisite_rows = prerequisite_facts(evidence, check)
+    python = original['python']; pinned(python, check)
+    require(pin(sys.executable, check) == python, 'original interpreter required for preparation')
+    home = Path(python['path']).parent
+    runtime, outside = runtime_facts(pin(args.runtime_baseline, check), [home / 'Lib', home / 'DLLs', Path(original['python_site'])], check)
+    plan_path = Path(args.plan)
+    require(plan_path.is_absolute() and plan_path.resolve(strict=False) == plan_path
+            and plan_path.is_relative_to(root / 'artifacts') and plan_path.parent.is_dir(), 'fresh canonical artifact metadata parent required')
+    runtime_path = plan_path.with_name(plan_path.stem + '-runtime.json')
+    evidence_path = plan_path.with_name(plan_path.stem + '-prerequisites.json')
+    require(not any(x.exists() for x in (plan_path, runtime_path, evidence_path)), 'preparation metadata must be fresh')
+    helper_root = root / 'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1'
+    plan = {'schema': SCHEMA, 'human_sid': SID, 'limits': dict(LIMITS), 'model': args.model,
+            'repository_root': str(root), 'output_root': str(args.output_root), 'cache_prefix': str(args.cache_prefix),
+            'expected_weights_bytes': selected['expected_weights_bin_bytes'],
+            'expected_attention_count': len(selected['expected_attention_nodes']),
+            'python': python, 'powershell': pin(args.powershell, check), 'wrapper': pin(__file__, check),
+            'guard': pin(root / 'scripts/dev/assert-human-execution.ps1', check),
+            'exporter': pin(root / 'scripts/arbiter-fp16-export.py', check),
+            'source_graph': selected['original_graph'], 'source_closure': selected['source_closure'],
+            'source_plan': source, 'runtime_baseline': pin(args.runtime_baseline, check),
+            'helpers': {name: pin(helper_root / name, check) for name in HELPERS},
+            'prerequisite_evidence': {'first_fp32': evidence['first_fp32'], 'native_g5': evidence['native_g5']}}
+    require(plan['exporter']['sha256'] == original['reviewed_library']['sha256'], 'original reviewed exporter differs')
+    rows = dict(runtime['files'], **outside, **prerequisite_rows)
+    for row in [source, plan['runtime_baseline'], selected['source_closure_authority'], *plan['helpers'].values()]:
+        rows[row['path']] = row
+    for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure'):
+        rows[plan[key]['path']] = plan[key]
+    for name, item in read(plan['source_closure']['path']).items():
+        require(Path(name).name == name and name not in ('', '.', '..') and not any(x in name for x in ('/', '\\', ':')), 'unsafe original source sidecar')
+        row = dict(item, path=str(Path(plan['source_graph']['path']).parent / name))
+        pinned(row, check); rows[row['path']] = row
+    def encoded(value):
+        raw = (json.dumps(value, indent=2) + '\n').encode('utf-8')
+        require(len(raw) <= 32 << 20, 'bounded metadata exceeded')
+        return raw
+    def prospective(path, raw):
+        return {'path': str(path), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+    runtime_raw, evidence_raw = encoded(runtime), encoded(evidence)
+    plan['runtime_manifest'] = prospective(runtime_path, runtime_raw)
+    plan['prerequisites_manifest'] = prospective(evidence_path, evidence_raw)
+    for row in (plan['runtime_manifest'], plan['prerequisites_manifest']):
+        rows[row['path']] = row
+    plan['input_files'] = list(rows.values())
+    validate_plan(plan)
+    plan_raw = encoded(plan)
+    for target in (plan_path, runtime_path, evidence_path, Path(plan['output_root'])):
+        guard(plan, target, deadline=deadline)
+    for target, raw in ((runtime_path, runtime_raw), (evidence_path, evidence_raw), (plan_path, plan_raw)):
+        check()
+        with target.open('xb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        guard(plan, target, True, deadline=deadline)
+    authenticate(plan, check)
+    check()
+    return pin(plan_path, check)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--prepare', action='store_true')
     mode.add_argument('--inspect-plan', action='store_true')
     mode.add_argument('--execute-reviewed-conversion', action='store_true')
     mode.add_argument('--worker', action='store_true')
     parser.add_argument('--plan', type=Path, required=True)
-    parser.add_argument('--plan-sha256', required=True)
+    parser.add_argument('--plan-sha256')
+    for name in ('source-plan', 'first-fp32', 'native-g5', 'native-g5-clippy', 'runtime-baseline', 'output-root', 'cache-prefix', 'powershell'):
+        parser.add_argument('--' + name, type=Path)
+    parser.add_argument('--model', choices=('focus', 'compact', 'large'))
     parser.add_argument('--deadline', type=float)
     args = parser.parse_args()
+    if args.prepare:
+        require(all(getattr(args, name) is not None for name in ('source_plan', 'first_fp32', 'native_g5', 'native_g5_clippy', 'runtime_baseline', 'output_root', 'cache_prefix', 'powershell', 'model')), 'complete prepare arguments required')
+        print(json.dumps({'plan': prepare(args), 'conversion_executed': False, 'qualification': False}))
+        return
+    require(args.plan_sha256 is not None, 'reviewed plan hash required')
     if not args.execute_reviewed_conversion:
         require(pin(args.plan)['sha256'] == args.plan_sha256, 'reviewed plan differs')
     if args.worker:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""One original Compact17 CUDA component; see cuda-component-execution/CONTRACT.md."""
+"""Bounded CUDA component and separate diagnostics; see cuda-component-execution/CONTRACT.md."""
 import argparse
 import ctypes
 import datetime
@@ -18,12 +18,29 @@ SID = 'S-1-5-21-3678370870-3858642417-826968105-1002'
 ANCHOR = Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z')
 SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_original_context_fp32_t17_component'
 SCHEMA = 'airk.private.cuda-component-plan/1'
+PLACEMENT_SCHEMA = 'airk.private.cuda-placement-diagnostic-plan/1'
+PLACEMENT_SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_load_only_placement_diagnostic'
+DIAGNOSTIC_SCHEMA = 'airk.private.cuda-runtime-diagnostic-plan/1'
+DIAGNOSTIC_SELECTOR = 'inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::cuda_runtime_only_admission_diagnostic'
 LIMITS = {'wall_seconds': 120, 'process_bytes': 16 << 30, 'job_bytes': 24 << 30,
           'log_bytes': 64 << 20, 'cleanup_seconds': 5}
 BOUNDS = {'schema': 'airk.arbiter.gpu-probe-reservation/1', 'host_limit_bytes': 16 << 30,
           'device_limit_bytes': 24 << 30, 'deadline_ms': 120000}
 PROOFS = {'native_result': 16 << 20, 'operations': 1 << 20, 'stdout': 64 << 20}
+DIAGNOSTIC_PROOFS = {'native_result': 16 << 20, 'stdout': 64 << 20}
+NEW_SOURCE_KEYS = (
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs',
+)
 SOURCE_KEYS = (
+    'crates/airk-retrieval/src/arbiter/runtime.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md',
+    'crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs',
+    'crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs',
     'crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs',
     'crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md',
     'crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation.rs',
@@ -54,30 +71,80 @@ def exact(value, expected, label):
     require(type(value) is type(expected) and value == expected, label)
 
 
-def guard(plan, path=None, created=False):
-    """Read-only checked guard in an inherited same-user PowerShell process."""
+def audit_timeout(deadline):
+    remaining = 10.0 if deadline is None else min(10.0, deadline - time.monotonic())
+    require(finite(remaining, 0, 10) and remaining > 0, 'original output audit deadline expired')
+    return remaining
+
+
+def guard_many(plan, paths, created=False, *, deadline=None, collect_errors=False):
+    """One same-user process; fresh token/ancestry/ACL checks for every path."""
+    paths = [Path(path) for path in paths]
+    require(0 < len(paths) <= 16380 and len(set(paths)) == len(paths), 'invalid output audit path roster')
     b = base()
     b.pinned(plan['checked_guard'])
     b.pinned(plan['powershell'])
-    code = "$ErrorActionPreference='Stop'; $v=[Console]::In.ReadToEnd()|ConvertFrom-Json; . $v.guard; "
-    if path is None:
-        code += 'Assert-AirkHumanExecution -ExpectedSid $v.sid | Out-Null'
-    else:
-        code += ('Assert-AirkCreatedOutput' if created else 'Assert-AirkOutputParent')
-        code += ' -Path $v.path -Root $v.root -ExpectedSid $v.sid | Out-Null'
-    root = ROOT if path is not None and Path(path).is_relative_to(ROOT) else ANCHOR
-    payload = {'guard': plan['checked_guard']['path'], 'sid': SID, 'path': str(path), 'root': str(root)}
+    entries = [{'path': str(path), 'root': str(ROOT if path.is_relative_to(ROOT) else ANCHOR),
+                'created': created} for path in paths]
+    budget = audit_timeout(deadline)
+    code = ("$ErrorActionPreference='Stop'; $v=[Console]::In.ReadToEnd()|ConvertFrom-Json; . $v.guard; "
+            'Assert-AirkOutputBatch -Entries @($v.entries) -ExpectedSid $v.sid -BudgetSeconds $v.budget '
+            '| ConvertTo-Json -Depth 5 -Compress')
+    payload = json.dumps({'guard': plan['checked_guard']['path'], 'sid': SID, 'entries': entries, 'budget': budget})
+    require(len(payload.encode('utf-8')) <= 4 << 20, 'output audit request oversized')
+    result = subprocess.run([plan['powershell']['path'], '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', code],
+                            input=payload, text=True, check=True, timeout=budget, capture_output=True)
+    require(len(result.stdout.encode('utf-8')) <= 4 << 20, 'output audit reply oversized')
+    value = json.loads(result.stdout)
+    require(value.get('schema') == 'airk.human-output-audit/1' and type(value.get('expired')) is bool
+            and finite(value.get('elapsed_seconds'), 0) and isinstance(value.get('results'), list)
+            and len(value['results']) == len(paths), 'output audit reply differs')
+    errors = {}
+    late = value['expired'] or value['elapsed_seconds'] >= budget or (deadline is not None and time.monotonic() >= deadline)
+    for index, (path, row) in enumerate(zip(paths, value['results'])):
+        require(type(row.get('index')) is int and row['index'] == index and type(row.get('passed')) is bool
+                and ((row['passed'] and row.get('error') is None)
+                     or (not row['passed'] and isinstance(row.get('error'), str) and row['error'])),
+                'output audit path result differs')
+        error = row['error']
+        if late:
+            error = 'original output audit deadline expired' + (': ' + error if error else '')
+        errors[str(path)] = error
+    if not collect_errors:
+        require(not any(errors.values()), 'output custody audit refused: ' + json.dumps(errors))
+    return errors
+
+
+def guard(plan, path=None, created=False, *, deadline=None):
+    if path is not None:
+        return guard_many(plan, [path], created, deadline=deadline)
+    b = base()
+    b.pinned(plan['checked_guard'])
+    b.pinned(plan['powershell'])
+    code = ("$ErrorActionPreference='Stop'; $v=[Console]::In.ReadToEnd()|ConvertFrom-Json; . $v.guard; "
+            'Assert-AirkHumanExecution -ExpectedSid $v.sid | Out-Null')
+    payload = {'guard': plan['checked_guard']['path'], 'sid': SID}
     subprocess.run([plan['powershell']['path'], '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', code],
-                   input=json.dumps(payload), text=True, check=True, timeout=10, capture_output=True)
+                   input=json.dumps(payload), text=True, check=True, timeout=audit_timeout(deadline), capture_output=True)
+    audit_timeout(deadline)
 
 
-def mkdir(plan, path):
-    guard(plan, path)
+def mkdir(plan, path, *, deadline=None):
+    guard(plan, path, deadline=deadline)
     Path(path).mkdir()
-    guard(plan, path, True)
+    guard(plan, path, True, deadline=deadline)
+
+
+def mkdir_siblings(plan, paths, *, deadline):
+    guard_many(plan, paths, deadline=deadline)
+    for path in paths:
+        Path(path).mkdir()
+    guard_many(plan, paths, True, deadline=deadline)
 
 
 def write_new(plan, path, value):
+    # Plan preparation and final receipt retention only. Receipt retention is
+    # explicitly outside finish's measured phase, still bounded to 10s per audit.
     guard(plan, path)
     with Path(path).open('x', encoding='utf-8', newline='\n') as stream:
         json.dump(value, stream, indent=2, allow_nan=False)
@@ -85,6 +152,61 @@ def write_new(plan, path, value):
         stream.flush()
         os.fsync(stream.fileno())
     guard(plan, path, True)
+
+
+def rebind_native_sources(old_required, old_files, new_files):
+    """Keep the complete old roster; derive every current hash from its new build."""
+    require(isinstance(old_required, dict) and old_required, 'historical native source roster absent')
+    keys = set(old_required) | set(SOURCE_KEYS)
+    require(set(old_required) <= set(old_files) and keys <= set(new_files)
+            and keys - set(old_files) <= set(NEW_SOURCE_KEYS), 'required native source missing from an authenticated build')
+    for key in keys:
+        require(isinstance(key, str) and key.startswith('crates/') and '\\' not in key
+                and not any(x in ('', '.', '..') for x in key.split('/')), 'canonical native source key required')
+        for digest in ([old_files[key]] if key in old_files else []) + [new_files[key]]:
+            require(isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest),
+                    'authenticated native source SHA required')
+        if key in old_required:
+            require(old_required[key] == old_files[key], 'historical source differs from its original build')
+    return {key: new_files[key] for key in sorted(keys)}
+
+
+def native_source_introductions(old_files, new_required):
+    introduced = set(new_required) - set(old_files)
+    require(introduced <= set(NEW_SOURCE_KEYS), 'unreviewed native source introduction')
+    return [{'path': str(ROOT / key), 'new_sha256': new_required[key]} for key in sorted(introduced)]
+
+
+def native_source_transition(old_seals, old_files, new_required):
+    transitions = []
+    for path, historical in sorted(old_seals.items()):
+        try:
+            relative = Path(path).relative_to(ROOT).as_posix()
+        except ValueError:
+            continue
+        if relative not in new_required:
+            continue
+        require(old_files.get(relative) == historical, 'old source seal differs from authenticated historical build')
+        current = new_required[relative]
+        if historical != current:
+            transitions.append({'path': path, 'old_sha256': historical, 'new_sha256': current})
+    return transitions
+
+
+def verify_native_transition(old, old_files, new_files, plan):
+    current = rebind_native_sources(old['required_native_sources'], old_files, new_files)
+    require(plan['required_native_sources'] == current, 'complete old+mandatory native roster must use the new build')
+    require(plan.get('native_source_introductions') == native_source_introductions(old_files, current),
+            'explicit native source introductions differ')
+    transitions = native_source_transition(old['input_seals'], old_files, current)
+    require(plan['native_source_transition'] == transitions, 'explicit historical-to-current source transition differs')
+    return transitions
+
+
+def verify_historical_inputs(seals, verified_transitions, digest):
+    updated = {row['path']: row['new_sha256'] for row in verified_transitions}
+    for path, sha in seals.items():
+        require(digest(path) == updated.get(path, sha), 'historical/current metadata input changed: ' + path)
 
 
 def metadata(plan, b, parent):
@@ -100,10 +222,15 @@ def metadata(plan, b, parent):
             and receipt.get('qualification') is False and receipt.get('execution_user_sid') == SID,
             'metadata parent scope differs')
     b.source_image(old)
+    old_build = b.read(b.pinned(old['native_build_receipt']), 32 << 20)
+    new_build = b.read(b.pinned(plan['native_build_receipt']), 32 << 20)
+    old_files, new_files = old_build['groups']['native']['files'], new_build['groups']['native']['files']
+    transitions = verify_native_transition(old, old_files, new_files, plan)
     seals = dict(old['input_seals'], **{receipt['plan']['path']: receipt['plan']['sha256']})
     require(receipt['input_seals'] == seals, 'metadata input closure differs')
-    for path, sha in seals.items():
-        require(b.digest(b.regular(path)) == sha, 'historical metadata source changed: ' + path)
+    # Old source hashes remain authenticated by the old build/receipt, while
+    # only explicit roster transitions use separately authenticated new bytes.
+    verify_historical_inputs(seals, transitions, lambda path: b.digest(b.regular(path)))
     outputs = receipt['outputs']
     require(len(outputs) == 6 and len({x['path'] for x in outputs}) == 6, 'native six-file metadata required')
     for row in outputs:
@@ -146,10 +273,20 @@ def input_facts(plan, b):
     return native, profile, fixture
 
 
+def execution_mode(plan):
+    identity = (plan.get('schema'), plan.get('selector'))
+    if identity == (SCHEMA, SELECTOR):
+        return False
+    if identity == (PLACEMENT_SCHEMA, PLACEMENT_SELECTOR):
+        return 'placement'
+    require(identity == (DIAGNOSTIC_SCHEMA, DIAGNOSTIC_SELECTOR), 'exact Context17 component or runtime diagnostic schema/selector pair required')
+    return True
+
+
 def preflight(plan, b, *, before):
-    require(plan.get('schema') == SCHEMA and plan.get('human_sid') == SID
-            and plan.get('selector') == SELECTOR and plan.get('limits') == LIMITS,
-            'exact Context17 plan and original bounds required')
+    execution_mode(plan)
+    require(plan.get('human_sid') == SID and plan.get('limits') == LIMITS,
+            'exact human identity and original bounds required')
     require(plan['repository_root'] == str(ROOT) and plan['wrapper'] == b.pin(__file__)
             and plan['custody_owner'] == b.pin(ROOT / 'scripts/cuda-native-execution.py')
             and plan['contract'] == b.pin(ROOT / 'scripts/cuda-component-execution/CONTRACT.md'), 'maintained source identity differs')
@@ -185,7 +322,8 @@ def preflight(plan, b, *, before):
     return parent, owner, native, profile, fixture
 
 
-def prepare(args):
+def prepare(args, *, diagnostic=False, placement=False):
+    require(not (diagnostic and placement), 'one execution mode required')
     b = base()
     metadata_pin = b.pin(args.metadata_receipt)
     require(metadata_pin['sha256'] == args.metadata_receipt_sha256, 'reviewed metadata receipt differs')
@@ -205,7 +343,8 @@ def prepare(args):
     out = Path(args.output_root)
     require(out.is_absolute() and out.parent == ANCHOR, 'canonical private direct-child output required')
     plan = {k: old[k] for k in ['repository_root', 'ownership_helper_root', 'output_guard', 'output_guard_lock']}
-    plan.update(schema=SCHEMA, human_sid=SID, selector=SELECTOR, limits=LIMITS,
+    plan.update(schema=PLACEMENT_SCHEMA if placement else DIAGNOSTIC_SCHEMA if diagnostic else SCHEMA, human_sid=SID,
+                selector=PLACEMENT_SELECTOR if placement else DIAGNOSTIC_SELECTOR if diagnostic else SELECTOR, limits=LIMITS,
                 wrapper=b.pin(__file__), custody_owner=b.pin(ROOT / 'scripts/cuda-native-execution.py'),
                 contract=b.pin(ROOT / 'scripts/cuda-component-execution/CONTRACT.md'),
                 metadata_receipt=metadata_pin, image_packet=packet_pin, native_build_receipt=build_pin,
@@ -216,9 +355,13 @@ def prepare(args):
                 parent_python=b.pin(sys.executable), powershell=b.pin(args.powershell),
                 checked_guard=b.pin(ROOT / 'scripts/dev/assert-human-execution.ps1'))
     plan['runtime_files'] = b.census(plan['runtime_root'])
-    plan['required_native_sources'] = dict(old['required_native_sources'])
-    for key in SOURCE_KEYS:
-        plan['required_native_sources'][key] = build['groups']['native']['files'][key]
+    old_build = b.read(b.pinned(old['native_build_receipt']), 32 << 20)
+    plan['required_native_sources'] = rebind_native_sources(
+        old['required_native_sources'], old_build['groups']['native']['files'], build['groups']['native']['files'])
+    plan['native_source_introductions'] = native_source_introductions(
+        old_build['groups']['native']['files'], plan['required_native_sources'])
+    plan['native_source_transition'] = native_source_transition(
+        old['input_seals'], old_build['groups']['native']['files'], plan['required_native_sources'])
     seals = dict(old['input_seals'])
     seals[receipt['plan']['path']] = receipt['plan']['sha256']
     rows = [v for v in plan.values() if isinstance(v, dict) and set(v) == {'path', 'bytes', 'sha256'}]
@@ -238,6 +381,162 @@ def prepare(args):
     guard(plan)
     write_new(plan, Path(args.plan), plan)
     return b.pin(args.plan)
+
+
+def validate_diagnostic(value, plan, pid, native, profile):
+    require(execution_mode(plan) is True, 'runtime-only diagnostic plan required')
+    require(value.get('schema') == 'airk.private.cuda-runtime-admission-diagnostic/1'
+            and value.get('diagnostic_complete') is True and value.get('diagnostic_error', 'missing') is None,
+            'complete native diagnostic absent')
+    require(value.get('operation_scope') == 'False operation flags describe explicit diagnostic caller operations only; production admission includes cuInit and makes no claim that driver internals allocate nothing or create no internal contexts', 'diagnostic operation scope absent')
+    for key in ['qualified', 'product_admission', 'model_requests_dispatched', 'adapters_observed',
+                'device_context_created', 'scorer_created', 'session_created', 'operations_journal_created']:
+        exact(value.get(key), False, 'runtime diagnostic scope differs: ' + key)
+    exact(value.get('forward_count_observed', 'missing'), None, 'runtime diagnostic cannot report model forwards')
+    require(not any(key in value for key in ['rows', 'adapter_before', 'adapter_after', 'final_placement', 'execution_identity']),
+            'runtime diagnostic contains model/device execution evidence')
+    b = base()
+    for key, expected in [('request', plan['request']), ('native_input', plan['native_input']),
+                          ('runtime_manifest', plan['descriptor']), ('source_manifest', native['source_manifest'])]:
+        require(b.core_pin_matches(value.get(key), expected), 'diagnostic input identity differs: ' + key)
+    require(value.get('profile') == profile['manifest'] and type(value.get('pid')) is int and value['pid'] == pid
+            and value.get('execution_user') == SID and value.get('default_owner') == SID
+            and value.get('native_binary_sha256') == plan['native_image']['sha256'], 'diagnostic native identity differs')
+    require(value.get('bounds') == BOUNDS and value.get('native_host_reservation_bytes') == 16 << 30,
+            'diagnostic native resource charge differs')
+    job = value.get('actual_job', {})
+    require(job.get('process_memory_limit_bytes') == 16 << 30 and job.get('job_memory_limit_bytes') == 24 << 30
+            and type(job.get('flags')) is int and job['flags'] == 0x2308, 'diagnostic actual Job differs')
+    require(isinstance(value.get('resource_snapshot'), dict) and value['resource_snapshot'], 'diagnostic resource observation absent')
+    require(finite(value.get('peak_process_rss_bytes'), 1, 16 << 30)
+            and finite(value.get('elapsed_us_to_final_report_start'), 0, 119999999)
+            and type(value.get('original_expires_monotonic_ns')) is int and value['original_expires_monotonic_ns'] > 0
+            and value.get('final_host_peak_error', 'missing') is None
+            and value.get('final_report_retention_exceeded_original_deadline', False) is False,
+            'diagnostic original time/RSS proof absent')
+    exact(value.get('native_control_cleanup_error', 'missing'), None, 'diagnostic cleanup error')
+    admitted = value.get('runtime_admitted')
+    require(type(admitted) is bool and value.get('outcome') == ('admitted' if admitted else 'refused'),
+            'diagnostic admission outcome differs')
+    chain = value.get('error_chain')
+    if admitted:
+        require(value.get('error', 'missing') is None and chain == [], 'admitted diagnostic retains an error')
+    else:
+        require(isinstance(value.get('error'), str) and value['error'] and isinstance(chain, list) and chain
+                and all(isinstance(error, str) and error for error in chain), 'diagnostic refusal chain absent')
+    for error in chain:
+        for marker in ['new/unapproved mapped images: ', 'unapproved existing GPU/core module: ']:
+            if marker not in error:
+                continue
+            encoded = error.split(marker, 1)[1]
+            census, end = json.JSONDecoder().raw_decode(encoded)
+            require(not encoded[end:].strip(), 'trailing native module refusal census data')
+            require(isinstance(census, dict) and census.get('schema') == 'airk.private.cuda-module-refusal/1'
+                    and census.get('complete') is True
+                    and type(census.get('omitted_count')) is int and census['omitted_count'] == 0
+                    and type(census.get('reported_count')) is int
+                    and type(census.get('unapproved_count')) is int
+                    and isinstance(census.get('mismatches'), list) and census['mismatches']
+                    and census['unapproved_count'] == census['reported_count'] == len(census['mismatches'])
+                    and isinstance(census.get('stage'), str) and census['stage'],
+                    'incomplete native module refusal census')
+    retained = value.get('native_control_retained_for_unknown_cuda')
+    require(type(retained) is bool, 'diagnostic retention fact absent')
+    if retained:
+        require(not admitted, 'admitted runtime cannot retain unknown CUDA custody')
+        for key, expected in [('process_cuda_poisoned', True), ('native_control_cleanup_observed', False),
+                              ('native_host_charge_release_observed', False)]:
+            exact(value.get(key), expected, 'retained diagnostic custody differs: ' + key)
+    else:
+        for key in ['native_control_cleanup_observed', 'native_host_charge_release_observed']:
+            exact(value.get(key), True, 'diagnostic native release absent: ' + key)
+        exact(value.get('process_cuda_poisoned'), False, 'released diagnostic is poisoned')
+    # The caller separately requires natural process exit, retained HANDLE and
+    # empty Job. Retained native custody is never relabeled as clean release.
+    return admitted
+
+
+def validate_placement_diagnostic(value, plan, pid, native, profile):
+    require(execution_mode(plan) == 'placement', 'exact placement diagnostic plan required')
+    require(value.get('schema') == 'airk.private.cuda-placement-diagnostic/1'
+            and value.get('diagnostic_complete') is True and value.get('outcome') == 'placement_observed',
+            'complete native placement diagnostic absent')
+    require(value.get('operation_scope') == 'Disposable session creation and final placement observation only; no Scorer, forward, hybrid policy or qualification is returned',
+            'placement operation scope differs')
+    for key in ['session_load_dispatched', 'session_created', 'strict_production_unchanged']:
+        exact(value.get(key), True, 'placement diagnostic fact absent: ' + key)
+    for key in ['scorer_returned', 'forward_dispatched', 'model_requests_dispatched', 'qualification',
+                'product_admission', 'cpu_fallback_disabled', 'native_control_retained_for_unknown_cuda', 'process_cuda_poisoned']:
+        exact(value.get(key), False, 'placement diagnostic scope differs: ' + key)
+    for key in ['forward_count_observed', 'error', 'native_control_cleanup_error']:
+        exact(value.get(key, 'missing'), None, 'placement diagnostic failure: ' + key)
+    require(value.get('error_chain') == [], 'placement diagnostic failure chain retained')
+    for key in ['native_control_cleanup_observed', 'native_host_charge_release_observed']:
+        exact(value.get(key), True, 'placement release absent: ' + key)
+    require(not any(key in value for key in ['rows', 'raw_scores', 'execution_identity']),
+            'placement diagnostic contains forward/scorer evidence')
+    b = base()
+    for key, expected in [('request', plan['request']), ('native_input', plan['native_input']),
+                          ('runtime_manifest', plan['descriptor']), ('source_manifest', native['source_manifest'])]:
+        require(b.core_pin_matches(value.get(key), expected), 'diagnostic input identity differs: ' + key)
+    require(value.get('profile') == profile['manifest'] and type(value.get('pid')) is int and value['pid'] == pid
+            and value.get('execution_user') == SID and value.get('default_owner') == SID
+            and value.get('native_binary_sha256') == plan['native_image']['sha256'], 'diagnostic native identity differs')
+    require(value.get('bounds') == BOUNDS and value.get('native_host_reservation_bytes') == 16 << 30,
+            'diagnostic native resource charge differs')
+    job = value.get('actual_job', {})
+    require(job.get('process_memory_limit_bytes') == 16 << 30 and job.get('job_memory_limit_bytes') == 24 << 30
+            and type(job.get('flags')) is int and job['flags'] == 0x2308, 'diagnostic actual Job differs')
+    require(isinstance(value.get('resource_snapshot'), dict) and value['resource_snapshot'], 'diagnostic resource observation absent')
+    require(finite(value.get('peak_process_rss_bytes'), 1, 16 << 30)
+            and finite(value.get('elapsed_us_to_final_report_start'), 0, 119999999)
+            and type(value.get('original_expires_monotonic_ns')) is int and value['original_expires_monotonic_ns'] > 0
+            and value.get('final_host_peak_error', 'missing') is None
+            and value.get('final_report_retention_exceeded_original_deadline', False) is False,
+            'diagnostic original time/RSS proof absent')
+    teardown = value.get('teardown', {})
+    for key in ['pre_sync_observed', 'session_drop_attempted', 'session_drop_returned', 'post_sync_observed']:
+        exact(teardown.get(key), True, 'placement teardown absent: ' + key)
+    require(type(teardown.get('pending_claims')) is int and teardown['pending_claims'] == 0,
+            'placement pending CUDA work remains')
+    exact(teardown.get('poisoned'), False, 'placement teardown poisoned')
+    require(teardown.get('errors') == [], 'placement teardown errors retained')
+    exact(value.get('diagnostic_error', 'missing'), None, 'placement post-validation failure')
+    place = value.get('placement', {})
+    require(isinstance(place, dict), 'placement observation absent')
+    nodes = place.get('nodes')
+    require(place.get('scope') == 'onnxruntime-final-session-state-ep-placement' and place.get('complete') is True
+            and type(place.get('shim_status')) is int and place['shim_status'] == 0
+            and type(place.get('ort_error_code')) is int and place['ort_error_code'] == 0
+            and isinstance(nodes, list) and 0 < len(nodes) <= 65536
+            and type(place.get('reported_nodes')) is int and place['reported_nodes'] == len(nodes),
+            'complete final diagnostic placement absent')
+    total = 0
+    for node in nodes:
+        require(isinstance(node, dict) and type(node.get('subgraph_index')) is int and node['subgraph_index'] >= 0,
+                'placement subgraph identity absent')
+        for key in ['name', 'domain', 'op', 'ep']:
+            require(isinstance(node.get(key), str) and len(node[key].encode()) <= 4096, 'placement string bound')
+            total += len(node[key].encode())
+        require(node['op'] and node['ep'], 'placement op/provider missing')
+    require(type(place.get('reported_string_bytes')) is int and total == place['reported_string_bytes']
+            and total <= 16 << 20, 'placement byte coverage differs')
+    logs = value.get('logs', {})
+    require(isinstance(logs, dict), 'placement logs absent')
+    for key in ['seen', 'selected', 'retained', 'omitted', 'bytes']:
+        require(type(logs.get(key)) is int and 0 <= logs[key] <= (1 << 64) - 1, 'log counter invalid: ' + key)
+    rows = logs.get('rows')
+    require(isinstance(rows, list) and len(rows) <= 65536 and logs['retained'] == len(rows)
+            and logs['selected'] == logs['retained'] + logs['omitted'] and logs['seen'] >= logs['selected']
+            and logs['omitted'] == 0 and logs.get('truncated') is False, 'placement logs incomplete')
+    total = 0
+    for row in rows:
+        require(isinstance(row, dict) and isinstance(row.get('location'), str) and isinstance(row.get('message'), str),
+                'placement log row malformed')
+        size = len(row['location'].encode()) + 2 + len(row['message'].encode())
+        require(size <= 4096, 'placement log row cap')
+        total += size
+    require(total == logs['bytes'] and total <= 65536, 'placement log byte coverage differs')
 
 
 def validate_native(value, plan, pid, native, profile, fixture):
@@ -400,12 +699,23 @@ def configure_job(api, job):
     return {'process_bytes': limits.process, 'job_bytes': limits.job, 'flags': limits.basic.flags, 'active_limit': limits.basic.active}
 
 
+def final_output_hasher(plan, paths, deadline, hash_file):
+    try:
+        audits = guard_many(plan, paths.values(), True, deadline=deadline, collect_errors=True)
+    except BaseException as error:
+        audits = {str(path): str(error) for path in paths.values()}
+    def checked_hash(path):
+        require(audits[str(path)] is None, 'final output custody refused: ' + str(audits[str(path)]))
+        return hash_file(path)
+    return {path: error for path, error in audits.items() if error}, checked_hash
+
+
 def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
-           utc_now=lambda: datetime.datetime.now(datetime.timezone.utc)):
+           utc_now=lambda: datetime.datetime.now(datetime.timezone.utc), proofs=PROOFS):
     receipt['final_proof_success'] = []
     receipt['final_proof_errors'] = []
     receipt['complete'] = receipt.get('complete') is True and receipt.get('failure') is None
-    for label, limit in PROOFS.items():
+    for label, limit in proofs.items():
         try:
             row = hash_file(paths[label])
             require(isinstance(row, dict) and set(row) == {'path', 'bytes', 'sha256'}
@@ -431,7 +741,8 @@ def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
         receipt['failure'] = receipt.get('failure') or {'type': 'TimeoutError', 'message': 'original component deadline expired'}
 
 
-def run(args):
+def run(args, *, diagnostic=False, placement=False):
+    require(not (diagnostic and placement), 'one execution mode required')
     started = time.monotonic()
     started_utc = datetime.datetime.now(datetime.timezone.utc)
     b = base()
@@ -440,8 +751,10 @@ def run(args):
     plan_pin = b.pin(args.plan)
     require(plan_pin['sha256'] == args.plan_sha256, 'reviewed component plan differs')
     plan = b.read(plan_pin['path'])
+    require(execution_mode(plan) == ('placement' if placement else diagnostic), 'reviewed invocation mode differs from plan')
+    proofs = DIAGNOSTIC_PROOFS if diagnostic or placement else PROOFS
     require(plan['parent_python'] == b.pin(sys.executable), 'actual parent interpreter differs')
-    guard(plan)
+    guard(plan, deadline=deadline)
     require(token_owner(ctypes.c_void_p(-1)) == SID, 'parent token default owner differs')
     parent, owner, native, profile, fixture = preflight(plan, b, before=True)
     require(parent.worker.windows_sid() == SID and time.monotonic() < deadline, 'parent identity/original deadline refused')
@@ -452,13 +765,12 @@ def run(args):
     policy_lock = json.loads(json.dumps(lock))
     policy_lock['build_path']['fresh_child'] = out.name
     policy = output_guard.identity_and_parent(cpu, out, policy_lock)
-    mkdir(plan, out)
-    for name in ['temp', 'private-census']:
-        mkdir(plan, out / name)
-    paths = {'native_result': out / 'native-result.json', 'operations': out / 'native-result.operations.jsonl',
-             'stdout': out / 'stdout-stderr.log'}
-    for path in [*paths.values(), out / 'stdin.txt', out / 'execution.json']:
-        guard(plan, path)
+    mkdir(plan, out, deadline=deadline)
+    mkdir_siblings(plan, [out / 'temp', out / 'private-census'], deadline=deadline)
+    paths = {'native_result': out / 'native-result.json', 'stdout': out / 'stdout-stderr.log'} if diagnostic or placement else {
+        'native_result': out / 'native-result.json', 'operations': out / 'native-result.operations.jsonl',
+        'stdout': out / 'stdout-stderr.log'}
+    guard_many(plan, [*paths.values(), out / 'stdin.txt', out / 'execution.json'], deadline=deadline)
     env = dict(os.environ)
     for key in list(env):
         if key.upper().startswith(('AIRK_', 'ORT_', 'PYTHON', 'CUDA_', 'CUDNN_')):
@@ -466,14 +778,19 @@ def run(args):
     env.update(PATH='C:/Windows/System32;C:/Windows', TEMP=str(out / 'temp'), TMP=str(out / 'temp'), TMPDIR=str(out / 'temp'),
                AIRK_PRIVATE_CENSUS_BASE=plan['private_census'], AIRK_CUDA_QUALIFICATION_INPUT=plan['request']['path'],
                AIRK_CUDA_QUALIFICATION_INPUT_SHA256=plan['request']['sha256'], AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths['native_result']))
-    argv = [plan['native_image']['path'], '--exact', SELECTOR, '--ignored', '--nocapture', '--test-threads=1']
-    receipt = {'schema': 'airk.private.owned-cuda-component/1', 'plan': plan_pin, 'command': argv,
+    argv = [plan['native_image']['path'], '--exact', plan['selector'], '--ignored', '--nocapture', '--test-threads=1']
+    receipt = {'schema': 'airk.private.owned-cuda-placement-diagnostic/1' if placement else 'airk.private.owned-cuda-runtime-diagnostic/1' if diagnostic else 'airk.private.owned-cuda-component/1',
+               'plan': plan_pin, 'command': argv,
                'started_utc': started_utc.isoformat(), 'original_deadline': original_deadline.isoformat(),
                'original_deadline_monotonic': deadline,
                'execution_user_sid': SID, 'parent_pid': os.getpid(), 'parent_python': b.pin(sys.executable),
                'output_policy': policy, 'input_seals': dict(plan['input_seals'], **{plan_pin['path']: plan_pin['sha256']}),
                'whole_phase_deadline_not_refreshed': True, 'complete': False, 'failure': None,
                'post_input_drift': [], 'qualification': False, 'product_admission': False}
+    if placement:
+        receipt.update(diagnostic_only=True, placement_observed=False, component_pass=False, model_pass=False)
+    if diagnostic:
+        receipt.update(diagnostic_only=True, runtime_admitted=None, component_pass=False, model_pass=False)
     try:
         def authenticate(api, job, info, child_deadline):
             proof = parent.suspended_authentication(api, info, deadline, child_deadline, SID, plan['native_image'], owner.image_proof)
@@ -484,7 +801,7 @@ def run(args):
             return proof
         with (out / 'stdin.txt').open('xb') as stream:
             stream.flush()
-        guard(plan, out / 'stdin.txt', True)
+        guard(plan, out / 'stdin.txt', True, deadline=deadline)
         remaining = deadline - time.monotonic()
         require(remaining > 0, 'original phase expired before dispatch')
         with (out / 'stdin.txt').open('rb') as initial, paths['stdout'].open('xb') as stdout:
@@ -492,14 +809,21 @@ def run(args):
                 16 << 30, before_resume=authenticate, cleanup_seconds=5, absolute_deadline=deadline)
         require(parent.settled(receipt['owned']) and finite(receipt['owned'].get('peak_host_committed_bytes'), 1, 24 << 30),
                 'original child did not settle naturally within bounds')
+        guard_many(plan, paths.values(), True, deadline=deadline)
         for label, path in paths.items():
-            guard(plan, path, True)
             receipt[label] = b.pin(path)
-            require(receipt[label]['bytes'] <= PROOFS[label], 'native output cap exceeded')
+            require(receipt[label]['bytes'] <= proofs[label], 'native output cap exceeded')
         value = b.read(paths['native_result'])
-        validate_native(value, plan, receipt['owned']['owned_leader_pid'], native, profile, fixture)
-        events = [json.loads(line) for line in paths['operations'].read_text(encoding='utf-8').splitlines()]
-        validate_operations(events, value)
+        if placement:
+            validate_placement_diagnostic(value, plan, receipt['owned']['owned_leader_pid'], native, profile)
+            receipt['placement_observed'] = True
+        elif diagnostic:
+            receipt['runtime_admitted'] = validate_diagnostic(value, plan, receipt['owned']['owned_leader_pid'], native, profile)
+            receipt['native_retained_until_process_exit'] = value['native_control_retained_for_unknown_cuda']
+        else:
+            validate_native(value, plan, receipt['owned']['owned_leader_pid'], native, profile, fixture)
+            events = [json.loads(line) for line in paths['operations'].read_text(encoding='utf-8').splitlines()]
+            validate_operations(events, value)
         receipt['complete'] = True
     except BaseException as error:
         receipt['failure'] = {'type': type(error).__name__, 'message': str(error)}
@@ -519,17 +843,14 @@ def run(args):
                 receipt['final_input_errors'].append({'path': path, 'type': type(error).__name__, 'message': str(error)})
         try:
             require(b.census(plan['runtime_root']) == plan['runtime_files'], 'final runtime roster drift')
-            for path in [out, *out.rglob('*')]:
-                guard(plan, path, True)
+            guard_many(plan, [out, *out.rglob('*')], True, deadline=deadline)
         except BaseException as error:
             receipt['final_input_errors'].append({'type': type(error).__name__, 'message': str(error)})
         if receipt['final_input_errors']:
             receipt['complete'] = False
             receipt['failure'] = receipt.get('failure') or receipt['final_input_errors'][0]
-        def final_hash(path):
-            guard(plan, path, True)
-            return b.pin(path)
-        finish(receipt, paths, started, deadline, final_hash)
+        receipt['final_guard_errors'], final_hash = final_output_hasher(plan, paths, deadline, b.pin)
+        finish(receipt, paths, started, deadline, final_hash, proofs=proofs)
         write_new(plan, out / 'execution.json', receipt)
         if original is None and not receipt['complete']:
             raise ValueError(receipt['failure'])
@@ -541,6 +862,10 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare', action='store_true')
     modes.add_argument('--execute-reviewed-component', action='store_true')
+    modes.add_argument('--prepare-placement-diagnostic', action='store_true')
+    modes.add_argument('--execute-reviewed-placement-diagnostic', action='store_true')
+    modes.add_argument('--prepare-runtime-diagnostic', action='store_true')
+    modes.add_argument('--execute-reviewed-runtime-diagnostic', action='store_true')
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--plan-sha256')
     parser.add_argument('--approved-script-sha256', required=True)
@@ -552,8 +877,16 @@ def main():
     parser.add_argument('--powershell', type=Path)
     args = parser.parse_args()
     require(base().digest(__file__) == args.approved_script_sha256, 'reviewed maintained script SHA required')
-    result = prepare(args) if args.prepare else run(args)
-    print(json.dumps(result if args.prepare else {'complete': result['complete'], 'elapsed_seconds': result['elapsed_seconds']}))
+    diagnostic = args.prepare_runtime_diagnostic or args.execute_reviewed_runtime_diagnostic
+    placement = args.prepare_placement_diagnostic or args.execute_reviewed_placement_diagnostic
+    preparing = args.prepare or args.prepare_runtime_diagnostic or args.prepare_placement_diagnostic
+    result = prepare(args, diagnostic=diagnostic, placement=placement) if preparing else run(args, diagnostic=diagnostic, placement=placement)
+    summary = result if preparing else {'complete': result['complete'], 'elapsed_seconds': result['elapsed_seconds']}
+    if diagnostic and not preparing:
+        summary.update(diagnostic_only=True, runtime_admitted=result['runtime_admitted'], component_pass=False, model_pass=False)
+    if placement and not preparing:
+        summary.update(diagnostic_only=True, placement_observed=result['placement_observed'], component_pass=False, model_pass=False)
+    print(json.dumps(summary))
 
 
 if __name__ == '__main__':

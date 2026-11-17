@@ -7603,3 +7603,298 @@ Separately, maintained FP16 conversion owner edc932a3 passes30/30 pure controls;
 independent combined component/conversion review passes89/89. Review closes
 unbounded PowerShell guard timeout and final UTC timing gaps before any conversion.
 Actual FP16 conversion/nativeG5 remains held behind first FP32 and its own gates.
+
+### 2026-11-17 16:34Z — Provider bridge correction and preserved-build preparation
+
+Same-human execution reverified: effective TYAI\tdotn, token default owner and
+interactive Explorer session1 all SID S-1-5-21-3678370870-3858642417-826968105-1002.
+The checked guard now accepts equivalent separate CI and OI/InheritOnly full
+control ACEs, while retaining owner, effective-parent, propagation and deny
+refusals. Primary reviewed the change;46/46 in-memory controls pass and live
+orchestration output-parent preflight passes. Guard SHA
+c04c97dbc445d80f678bb94eb139b09de80fab53422dcd001cee36bc49e380fe.
+Historical guard-bound plans remain historical.
+
+Additional user-authorized DACL-only repair restored human access to O/test-work/
+tmpx55ky85a (6 files,1 descendant directory). Existing ownership was already
+human; content remained unchanged. This is not a whole-repository access audit.
+
+Maintained no-model loader diagnostic78fa2619 passes46/46 controls. Actual run
+loads13 modules, observes Provider_GetHost NULL, then fails specifically loading
+onnxruntime_providers_cuda.dll with1114. PID59576 exits0 naturally; emptyJob,
+retainedHANDLE, unforced,26.6055385s, commit295452672B, no source drift/final errors.
+U/gpu-loader-probe-owned-r1/execution.json SHA
+04de49c0944f7fe7235413c682a9b6f0e7238cfb4d001040178ee3f1cb3666fd.
+Python application-directory context differs from the native executable; this
+establishes the diagnostic ordering failure, not native model qualification.
+
+Native correction uses the pinned public ORT Create/zero-option Update/Release
+CUDA-provider-options sequence before explicit provider LoadLibrary. It retains
+existing file custody/reconciliation and failure poisoning; no session/model or
+factory allocation is introduced. Six bridge regressions and the ninth CPU
+source-transition test retain the original runtime.rs identity and CPU boundary.
+Reviewed native group e7b6be7a7224d8d30fafd6c97b0a0877aa0a38e716b2dd20eae68f6bab054f40:
+scoped Retrieval+Inference all-target/all-feature Clippy passes52.8046329s;
+80/80 selected CUDA/CPU-transition tests pass (308 skipped),40.3528262s including
+build; actual two-crate all-feature offline no-run CargoJSON passes1.2541329s.
+All use warm target/, profile-default incremental off, pinned static CUDA ORT;
+compiler descendants settled. Exact commands, inputs and timings are in
+E/gpu-provider-bridge-checks-r1/{gpu-provider-bridge-clippy-r1,
+gpu-provider-bridge-regressions-r1,gpu-provider-bridge-images-r1}.json.
+No-run receipt SHA03602285364a3f78c77f88dbd2f76d69db6732e8dbe6457efe0fcebd87857096.
+Inference image d3d46d059b2b846cc82f3db043e1abeb07f499999d5b5bd30e12e204fdee1189;
+Retrieval48892049d8b8956e8999f4ede1a8601e6b1ea239f78fc5944629a463a6562f08.
+These passes establish selected native logic, not successful GPU model execution.
+
+Maintained additive image-preserver1c34f7fc passes18/18 controls; primary reviewed.
+Component preparer212ebcf8 passes73/73 including14 exact source-transition cases.
+Historical metadata/build hashes remain authenticated under original identities;
+only explicit complete-roster native transitions accept current build bytes.
+New image preservation and a fresh original-limit Compact17 plan are next.
+
+Additive preservation completes71.7168963s: all27 original runtime objects retain
+bytes/stat/file IDs/owner/ACL; sole new Inference image d3d46d05 is independently
+copied. O/gpu-provider-bridge-images-r1/native-test-images.json SHA
+70aff13c91121bb424a3b3b18c0d15e50cf8889379b9093a1625c214d58de106.
+Execution receipt E/gpu-provider-bridge-preservation-execution-r1.json SHA
+e1ac01789fb212d4caf276d21709bd502085df0ab7b782e20f69f51c3372d478.
+All5 new artifact entries and Inference image pass human-owner audit; no native
+execution. Repository checks pass3653 public files; whitespace passes.
+
+### 2026-11-17 16:44Z — Corrected FP32 reaches driver-module admission refusal
+
+Fresh plan04b9bbf291f22b564325abf4f0392431eab9177af732c3de7c8933eb95285ba1
+passes205 input seals/28runtime files/exact3 native transitions and human-owner
+audit. Actual corrected d3d46 image runs1 selector, fails1 (156 filtered) before
+model execution: new/unapproved mapped nvcuda64.dll in Windows System32 DriverStore
+nv_dispwi.inf_amd64_b9ead98da9a85944. The prior1114 is no longer observed.
+Original limits unchanged. PID64768 exits101 naturally; retainedHANDLE101,
+emptyJob/unforced/no timeout,68.5043559s including final proofs. Native phase
+7.165459s, Job peak307585024B, RSS232267776B. Native cleanup and host-charge
+release observed, no retained unknown control, no poison. Rows empty; mandatory
+nonempty operation-journal proof correctly refuses. Parent failure wording
+combines successful natural settlement with unsuccessful child exit; its raw
+custody facts distinguish these. No input drift or owner errors.
+U/gpu-compact17-component-owned-r2 retains execution/native-result/stdout receipts.
+All created outputs audited human-owned. No model or GPU qualification pass.
+Next: read-only driver provenance and admission-rule diagnosis, cheap regression
+before another expensive attempt. G5 remains held; independent Linux preparation
+continues. No unchanged retry or limit/allowlist relaxation is authorized by this
+failure.
+R2 execution SHA9142bd81e457f7496878b23627ef0aa68301ae23183d244885e5d936c0e99695;
+native-result SHAc49eacbb01ac355b8a394ebdcdfb6bc39f010fd5c2580b2fd328961b9d75c897.
+
+Read-only driver diagnosis: signed System32 dispatcher4466920B SHA
+f654977a2d34156c861a1434bbbbd1e9173b8d28b7e1c3f415bebca404df42be,
+DriverStore companion29713128B SHA
+4cf09882e346099361d9bc1e125d34f076d36bdcf5838da88132e74d1af3d5c6.
+Both version32.0.15.9706/TrustedInstaller, protected ordinary-user read-only ACL.
+Installed oem67.inf equals exact package nv_dispwi.inf SHA
+a6aac14dee3efd010fd321da61f4a9b0b70ed64bcc11d9423b3b2d219fb67f96;
+explicit dispatcher copy mapping and companion inclusion verified. Dispatcher
+imports ADVAPI32/KERNEL32; companion VERSION/KERNEL32/ADVAPI32/GDI32/SHLWAPI/USER32,
+no delay imports/further NVIDIA static dependency. Exact native-equivalent
+held-file WinVerifyTrust (CHOICE_FILE,flags0x1010,FILE_SHARE_READ/reparsepoint)
+returns0 for both, with state-close0 and held-byte hashes unchanged. No CUDA DLL
+load or file mutation. Explicit selected NV_DISP.CAT membership is not separately
+claimed. A source-owned scientific exact driver closure is being implemented;
+product discovery remains separate and cannot consume this host-specific row.
+### 2026-11-17 16:56Z — Driver closure regressions pass; custody batching reviewed
+
+Primary and independent source review close the scientific exact driver closure
+windows50bc0842/modules5d30f0d9/contractfe70ee40. Product consumes no scientific
+row; wrong preloaded companion refuses. Nine new portable controls cover exact
+row/import identities and refusal propagation; real held-file signature proof
+remains separately observed above. CPU transition ninth test pins new native
+files while preserving original eight tests, runtime9e/taskcc25/compiler a582.
+
+New native group2710cd008fe529ba216f50439ffbe3867b80e4f638673417eeb5c46efe70e0a5
+passes scoped Retrieval+Inference all-target/all-feature Clippy31.0971946s,
+89/89 selected CUDA/CPU-transition tests (308 skipped),35.5402417s including
+build (test phase.747s), and actual no-run CargoJSON1.2364015s. Inputs unchanged;
+warm target/ and profile-default incremental off, exact static CUDA environment.
+6441 output directories preflighted;113 changed target entries and all generated
+receipts audited human-owned. Compiler descendants settled. Exact commands and
+identities retained in E/gpu-driver-companion-checks-r1/.
+Actual no-run receipt9d6e1a0334ae4f01271a6ce07be6e571442b4456c0374e7b7e6d371e07eacb6c,
+log e4244de8ace132a44445de2e82e61f1206bc1d39360ef470c598b1f43ba6f27e.
+New Inference d8e7ea5a47423609c9f2f58b8e9facc0319a13e19593238234d87b62cd13c60b;
+Retrieval7eb672eef35290f8ac49209af2a044113ca778658fa6c7a687614b22f5e9274c.
+No model execution pass is implied.
+
+R2 timing review finds native7.165459s of68.5043559s total; remaining61.3388969s
+includes repeated ownership subprocesses and ~11.94GB sealed inputs rehashed.
+Maintained guard batch preserves fresh per-path token User/Owner/session/group
+roster plus ACL/ancestry, precreation/postcreation/preconsumption order, exact
+hashing, original deadline and all final proof failures. Independent review
+corrects token-group drift and simultaneous refusal+expiry evidence retention.
+Successful-path subprocess count28->12 (10 measured+2 explicit final receipt
+retention); failed R2 pattern25->11. No measured speedup claimed yet.
+57/57 PowerShell and87/87 Python controls pass; real two-path read-only batch
+passes. New guard57592dbbbefc63030c97a1d3485bc5c4fda7c2243d792b7399432b129ea4c57f,
+component81aecc605122f1de34c674f7302b91133642a226ca1adeaf802a96c66d88048a,
+contract800eef9bf88217e1d9653a3d6db22a8b31023a3ed53aecd7b2a014c9d2eaebf4.
+Fresh R3 plan will retain historical metadata separately and bind these new owners;
+no original deadline, memory limit or admission assertion is relaxed.
+Additive driver-image preservation passes75.0614648s; all28 existing runtime
+objects unchanged, sole new d8e7ea5a image, human-owner audits complete.
+O/gpu-driver-companion-images-r1/native-test-images.json SHA
+42da8ab589a2e6be49c171b797e3f205a9711faa0ed8bc5d6c9699eaadc9f91d;
+E/gpu-driver-companion-preservation-execution-r1.json SHA
+783d075e5724a42257d5464e6a4db40e407a0faaf638efb7db79059949639841.
+
+Independently reviewed maintained FP16 --prepare support95e85174 passes54/54 pure
+controls. Requires authentic historical Compact17 result/journal/suspended actual
+PID/image/SID/default-owner/Job/HANDLE settlement and separate current G5 Clippy+
+25 literal passing G5/CPU-transition JUnit cases. Complete runtime manifest and
+retained original baseline remain distinct. Review fixes stale ONNX path and
+missing suspended-process checks. No plan/conversion produced; actual FP32 success
+and implemented/validated G5 remain prerequisites. Repository checks pass3653
+public files; whitespace passes. No native/model claims arise from script tests.
+### 2026-11-17 17:02Z — R3 reaches unlisted Windows crypto-module boundary
+
+R3 plana22d921c0eb50b2ecd77e9a3e445c3d7f64db099af4a212de4979dc5b9a532e9
+retains206seals/29runtime files, exact3 reviewed native transitions, guard57592,
+component81ae, image d8e7. Native1selected fails1/156filtered before model rows:
+new/unapproved System32 cryptnet.dll. Earlier nvcuda64 refusal no longer observed.
+PID57364 exits101 naturally, emptyJob/retainedHANDLE101/unforced/no timeout;
+native cleanup/host-charge release true, unpoisoned,7.088282s native phase.
+Wholephase55.475233s vs R2's68.504356s; this is an observed pair, not an isolated
+performance benchmark. Jobpeak307445760B, no input/guard errors, mandatory empty
+operation journal remains nonpass. All outputs human-owned. No qualification.
+U/gpu-compact17-component-owned-r3/execution.json SHA
+9edaba1573983922bc5cf7830831935b58aa72141711c081e54e2c219eee2e9f;
+native-result184c66ee62b49948bd76be67622b1810a422904e2b33c7377145596be4664ed7.
+
+No further model attempt until revised whole-class module diagnosis and cheap
+regressions. Trust-only complete before/after native-equivalent verification
+census shows no cryptnet mapping at those sampled boundaries; it does not support
+a WinTrust-reload explanation. Full stage-tagged refusal census/runtime-only
+seam is under review. No System32/DriverStore/signer wildcard is authorized.
+### 2026-11-17 17:17Z — Reviewed runtime-only diagnostic and platform blocker
+
+Primary/independent review closes staged full-refusal classifier and after-cuInit
+reconciliation before publication (windowsaec3026b/modules9cde1368/contractc7aaabff).
+Allowed predicate unchanged; deterministic1MiB diagnostic prefix explicitly
+reports omission. Native runtime-only selector873ed686/contract9f3c328b reuses
+production admission and original custody/bounds; it performs no explicit adapter,
+context, session, scorer, model or journal operation. cuInit internals are not
+claimed allocation-free. Refusal/poisoned retained custody remain distinct from
+native clean release and from the parent's natural process settlement.
+
+Maintained parentd92c670d/contract69a106e2 passes99/99 controls; review fixes clean
+refusal poison handling and rejects incomplete baseline/postload diagnostic
+censuses with ambiguous counts/trailing data. Distinct diagnostic plan/result/
+parent schemas cannot satisfy the component or FP16 first-success prerequisite.
+Guard remains57592. CPU source supplement cce7fc/e5b33 preserves all original8
+regressions/runtime9e and binds the new native module source identities.
+
+Frozen native32a6dc29b4fa99cee19852a9ca8fb9f2a762114488c6b0c2298c52d3bb0787b1
+passes scoped Retrieval+Inference Clippy33.4867284s and103/103 CUDA/CPU-transition/
+qualification-seam regressions (302 skipped),36.1506817s including build (.867s
+actual tests). No-run CargoJSON passes1.2497973s. Warm target/, profile-default
+incremental off and pinned static CUDA environment; input drift0.6441 directories
+preflighted,113 changed target entries/receipts human-owner audited; compilers
+settled. Exact receipts E/gpu-runtime-diagnostic-checks-r1/ retain commands/scope.
+No-run receipt5c27b82074b11d2287668a9da0f6a84f3d76578f4f737cc3b78e2cfac9988a5c;
+log4e177a5ba0e421dcbdbbaf0ab1399612b9ee86485659cdf03ff06d10b0df50b0.
+Inferenceae33d33faaa5d2ec292678dba054f94fe353bbe1d9320c4e2c697552603a4dc1;
+Retrieval462e0b7a9497c9d0db15547eae7b180e8ebb51206d4dab2538865eb5365fcd90.
+No runtime diagnostic or model pass yet; additive preservation is in progress.
+
+Mac read-only diagnosis verifies SSHUID501 equals consoleUID501. Both login and
+configured airk-signing keychains have SecKeychainGetStatus2 (locked). Exact
+codesignPID86489 at2026-11-17T15:50:44.866Z logs attempted unlock followed by
+CSSMERR_CSP_NO_USER_INTERACTION / SecKeyCreateSignature -25308. Identity matches;
+this is interactive key-access refusal. User asked asynchronously to unlock the
+configured keychain in Keychain Access; no password/ACL/keychain modification or
+signing retry. Production already supports --keychain; failed fixture omitted it.
+Reviewed one-file optional AIRK_TEST_MAC_KEYCHAIN fixture forwarding preserves all
+original signature/copy/version checks;1/1 literal argv test passes, sourcef63732f2.
+No Mac rerun until the keychain is available. No production signing change.
+### 2026-11-17 17:23Z — Runtime-only census locates complete cuInit refusal set
+
+Additive diagnostic image preservation passes76.4941804s;29preexisting objects
+unchanged, packet40da6caed64f4a85b96be8e6682189911e2152a331033ed60bb7daaa60a68307.
+E/gpu-runtime-diagnostic-preservation-execution-r1.json SHA
+a664fa83e5a0bf39570e65b2e7ffe207e43b5fa6811e3154d4ec0ac639c01b35.
+Reviewed diagnostic planc093358da0feffed04cde7468182250014737bd7f7b0d4d909ba8a60380dfd47
+has207seals/30runtime files, same original bounds, actual ae33 image/native32a6.
+
+Actual diagnostic completes51.9629908s, native1.666307s, runtime_admitted=false,
+component_pass=false/model_pass=false. Full census stage after-cuInit reports
+6/6 new_image mappings, omitted0: cryptnet.dll, drvstore.dll, nvapi64.dll,
+nvdxgdmal64.dll, ole32.dll, wldp.dll. Exact paths/objectIDs/addresses remain in raw
+native result. This establishes the actual initialization boundary, not a WinTrust
+reload hypothesis or a complete future model/context dependency guarantee.
+
+Native correctly poisons and retains control/host charge (native cleanup/release
+false). OriginalPID8220 subsequently exits0 naturally; retainedHANDLE exit0,
+unforced emptyJob,307146752B peakcommitted, no input/guard/finalproof failures.
+The diagnostic's success means faithful bounded observation of refusal; it never
+means runtime/model admission or native clean release. All output owners audited.
+U/gpu-runtime-only-diagnostic-owned-r1/execution.json SHA
+305247b9d880beb0b53136a66be13e3cabb614940df411d01474a89f045ebb8e;
+native-result815cf428de53481f64181b10616c524399b1b2f9b09aea4936e6b942afb2fa1c.
+Next review authenticates this entire observed six-object closure before any
+scientific policy extension; no broad directory/signer waiver or model retry.
+### 2026-11-17T17:42Z — complete observed CUDA closure review and parallel host gate
+
+Primary source review and independent focus_review closed the seven-image scientific closure: windows4af9924d, modules171be06a, CUDA contract715567f0. Every exact path/hash/size row receives held signature and parent-policy verification before loading; original dispatcher gating, post-cuInit reconciliation, poison retention and product exclusions remain. CPU transition tests3d146744/contract91a5e2cf refresh only the two loader pins, preserving runtime9e, taskcc25 and all nine test semantics. Windows native group48b85a29ad097a6345bee6ae9fd585133c7a917fac7a7e9d2a6b52c06f961761 scoped Clippy passed35.321787s; focused regressions pending. Receipt directory: artifacts/v190/final-plan/exec-20261116T052942Z/gpu-cuinit-closure-checks-r1. Human User/defaultOwner/interactive SID1002 reverified; all6441 target directories preflighted and67 initial changed outputs owner-audited. No model qualification claimed.
+
+Preserver batching1bdf9e02/contractbc4a249/testsdef6d34 passed26 controls and primary/independent review. It batches runtime ACL observations while retaining all three full byte censuses, both native manifests and exact per-path checks. Actual next-copy speed remains unmeasured.
+
+Linux source transfer completed on separate same-user WSL target: original frozen native32a6, source overlay2af4b4c7fbfa23942d0e6de6e274cefc7b27e1ef, byte-identical retained receipt linux-source-driver-fix-transfer-actual-r1.json SHA8f4c90b8693e7821fb310695bae2e65eef7cc476f4267b7b56e31e934c30370c. Source is dirty and is not the later Windows closure. Preflight classified symlink0777 correctly using its same-user protected resolved target and parent policy; no permissions changed. Authorized scoped Linux Clippy failed after57.647s; batch stopped before Nextest, source/input and output-owner audits passed, compiler descendants absent. Exact compiler diagnosis is being collected; no unchanged retry.
+Windows48b85 validation completes:109/109 selected tests pass (302 skipped),37.257542s including build/.913s tests; no-run CargoJSON1.238561s. Receipt483dfb0b6c1ba901cefac37afcbe397b9cf3ffa9bd7c885d7dd6f26f28bf79d0, log4347ce60fd30465497f3ea2af8a0c85c3fe59c860d5127e7ce9cc7d85d7f3092. Inference81c485eb6831a9f523d5a675f6b8443e40ca0e900ba0c19e04204f7ddab6fff5; Retrieval2ca9bbaf4176628001671a28734eb6bc0a590b12069e3d3799a737f25050fc49.132 changed target/receipt outputs human-owner audited, compiler descendants absent.
+
+New batched preserver passes49.067s versus prior76.494s observation (different image, not a controlled benchmark). All30 old runtime objects unchanged, sole new airk_inference-cuinit-closure-r1.exe,31 total. Packet O/gpu-cuinit-closure-images-r1/native-test-images.json8c02f3bb1daca26ad9e89e4368253d43bf530781f0e1192cbc59ff037b2606b1; bindingsb321cfcdce12fe081745c136f29dac73eee50153ff3e2a703a6fb5ddf112d970. Independent source/copy object identities and human-owned outputs audited. E/gpu-cuinit-closure-preservation-execution-r1.json189deaf0b61587a0fcb358173bce9028e104193869a96e55773252779d9c3357 retains argv/timing/helper exit0. The outer wrapper initially misapplied inventory-only policy to tracked inputs and refused before copy; its corrected launch later misapplied that same role policy to the already-written E receipt. These are wrapper classifications, not helper success fabrication: original receipt preserved, standard guard independently audited, no ownership/access changes, copy retry or overwrite. Runtime-only R2 preparation follows; no model pass.
+### 2026-11-17T17:54Z — runtime admission passes; FP32 session exposes placement refusal
+
+Runtime-only R2 plan067f519ec717ab16477362247eef7a7e7efdebcc3b7c1ee26bdbd1475ed3fb5d passes on native48b85/image81c485: runtime_admitted=true,52.3274777s parent/2.865846s native, PID70944 naturalexit0, retainedHANDLE0, unforced emptyJob,307138560B peakcommitted. Native cleanup and hostcharge release observed, no poison or retainedunknowncontrol. All208seals/31runtimefiles stable;7outputs humanowner audited. U/gpu-runtime-only-diagnostic-owned-r2/execution.json90b7d4aafa3b9301524b8aef7efcf34ff572860157248a957e75a838abf49e78; native-result55b8a2e6ab26108554daaa950fe7b0300ced1d13364f9eff84f71ecf5b0e68a1. Initial relative-plan CLI invocation was rejected before any outputs; corrected absolute invocation is the sole native attempt. Runtime admission is not model qualification.
+
+Fresh Compact17 R4 pland5155f0303a72f85943f9396217d6c60de3f667e55e5fe692c24973639dfb717 retained original bounds/numeric request and same image. Actual session load refused: ONNX Runtime assigned nodes to default CPU EP while session.disable_cpu_ep_fallback=1. No inference rows. Parent73.7589524s/native25.491165s/load15.789352s; PID14752 exited101 naturally, retainedHANDLE101, unforced emptyJob, no timeout or input/guard errors. Native cleanup/hostcharge release true, no poison. Peakcommitted15761235968B, RSS15410364416B; adapter8.6 with51526500352B physicalVRAM. All8outputs humanowner audited. U/gpu-compact17-component-owned-r4/execution.json4dab7ab9ed4b3ada8cd7f18ec0b85779cd0e73ed59004fc3a8aecdb128af3011; native-result109630389b342f1d8b82711fdf4eca47538ffecbdfa3af56827b04945eea5f89. Parent's generic unsettled failure string reflects exit101 failing its success predicate; retained evidence proves actual natural settlement, not a cleanup failure.
+
+Stop before unchanged retry. Inspect exact CPU node placement and owning policy. D08 already authorizes explicitly bounded/qualified hybrid shape/control placement, never unexpected CPU compute or a silent GPU claim. Current first implementation refuses that mode; any extension needs contract-first implementation and full placement/profiler proof. Linux precise platform-gating correction proceeds independently through proposal/review.
+### 2026-11-17T18:04Z — Linux cfg correction and independent diagnostic preparation
+
+Actual Linux failure32a6 is78 dead_code errors under-Dwarnings, primarily platform-only CUDA provenance/descriptor owners; no installer error in that scoped batch. Exact receipt e96933d76330e99e608340e9ff0250d258b2acf2854976a18d12ba34d922626d/log4cfaea1de2947b1bdb858361c1809b5079e166dd62ae42c03fd60112cd8df2a7 retained at E/linux-driver-fix-checks-r1. Reviewed proposalb61353e53549c24b9b750ced914e014220af44c489ab3eebbe4ebb58ecc05b5b passed primary and independent review before CONTRACT-first application. Precise Windows/test gates retain shared scientific test-support metadata and27 pure provenance controls. Unsupported production RuntimeDescriptor is uninhabited with exhaustive reads; actual lease/scope regression checks typed refusal before manifest access. No lint suppression/dead-code deletion. Final cuda.rs1223cc20/manifest15a3cfaf/tests7c7d66b5/CONTRACT2bfd84b2; native source4aee296005c5fb25fe11af6bbb21901c7d9d1bf47cd3edc6dcfde342a764f4fd is uncompiled. Original runtime9e/Windows4af/modules171 and CPU transition unchanged; new snapshot/gates pending.
+
+Read-only Compactgraph inventory E/gpu-compact17-static-graph-inventory-r1.json9f48f32e31ad243f058b5aef19d630e3ee06991dc5bcc27e9aab14c73894a44d records7162nodes from exactc79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4. No intermediate value_info exists.338 Gather nodes directly consume Shape outputs, but embeddingGather consumes modelweights and FLOAT casts compute data: op-name exceptions are unsafe. No externalweights/session/inference loaded; graph bytes and metadata unchanged, outputs human-owned. Separate test-support load-only final-placement diagnostic proposed, never returning a Scorer or granting hybrid admission; completeactual node evidence remains pending.
+
+G5 streaming overlay E/gpu-fp16-streaming-proposal-r1/proposal.json39179771df2cd8377b28861fe86488d70c18c0add66a300aa1f359b610b2d4b2/diffc02bf120a8c8aff17e25a68d88f9d4bd1dfbbe1f992072dce900fe9e7728f709 prepared and primary-reviewed only. It replaces proposed multiGB sidecar materialization with4MiB bounded exactlength/fullhash/originaldeadline checks and explicit held-reader emitter responsibility.5Rustcontrols prepared, unrun; live sources/r3 unchanged. Actual emitter integration and native checks remain pending. Future placement-diagnostic runtime source changes require deliberate G5 rebase; oldDDE is not assumed current.
+### 2026-11-17T18:15Z — Linux feature matrix narrows remaining cfg defect
+
+Fresh4aee source pack E/linux-source-cfg-r1 sealed17.535s with source unchanged; manifest95eb09ddb5f5548d00005356614c3e77bc5f2ce2053fa3171b5621c53497e5f0, tare3224d9511fe376f44b266ddfff792af03c91dffddc3b4a7aebc0dba686bd21a. Same-user guest transfer passes7.632s/3653files, normalized dirty overlayac888b61875e0c7d07c7862177d423bee4dc39da; Windows retained transferreceipt E/linux-source-cfg-transfer-actual-r1.json672a423fa3f98857702c5eb2373a888e8ec1995f2564f5add5a9eb46182fbe9f. Original failed snapshots preserved.
+
+Linux production gpu-cuda library without test-support Clippy passes34.915s, receipt1bf15d6c0bc420cd3009381860f3c6d080ceaa57ba0fac9efdc0886741c755b0. All-feature installer+Retrieval Clippy fails after56.245s on one remaining dead_code item: RuntimeDescriptor::approved is compiled for Linux unit tests but its sole caller is Windows loader689. Existing tests use RuntimeManifest::approved, a different function. All previous78 errors are gone. Batch stopped before Nextest; no unchanged retry. Receipt85e43b422f466ed081232468b602f1ca3ae2a0ffb10e0a85d739611b964e8508/logc4c3825e3e04da6d603e64542a12f80501e9d94ec95d9c727ce98377c6603f06; finalaudit963e4aa4ac2ba8a80983326f514b0c9c0c69b4a975fbcd5d1dc79a0174cc67b5. All13 evidence files retained/audited at E/linux-cfg-checks-r1. Static/model/source inputs unchanged and compiler descendants absent. Root independently verified exact caller roster and authorized only approved()'s Windows-only cfg attribute plus contract clarification, preserving its function body. Fresh changed-source proof and test-target Clippy precede regressions; no platform qualification claimed.
+
+G5 streaming proposal3917/c02 independent source review also closes without blockers;5Rusttests remain unrun and held-file emitter integration remains pending. Placement parent proposal E/gpu-placement-parent-proposal-r1/proposal.json3e4d449ffb180e4bf0ecaf02dadb0f9800273913d5469af32ff3177162165fc1 has117/117 pure controls and primary/independent review closure conditional on native alignment. Script2b33d9b962024fa5315f3ff5e7b3bf8a221133c1ebbb18e4942cabc4ef71d18d introduces separate diagnostic schemas/mode and exact two new-source introduction records; old native roster/build authentication and original resource/output limits remain. Native implementation/CPU source transition proposals are still being prepared; no live parent or model-policy change yet.
+### 2026-11-17T18:31Z — Linux scoped gate closes; placement diagnostic implemented and checked
+
+Linux corrected source e010e8b38a10fd7e203efb9af12180f185f090899eb6f2622b81c465b9ba0adb passes installer+Retrieval all-feature scoped Clippy73.908s and71/71 Nextest controls (0.339s tests/87.046s including build). Actual roster: installer4, CPU9, modules28, provenance27, focused3; earlier65 estimate omitted the six seven-image closure controls. E/linux-cfg-checks-r2 retains all15 byte-identical, human-owner-audited evidence files. Clippy receiptfa1f258544b625ce6f5faaca54750cd698c5108a4438ca9cadff9e039d38afda; Nextest71298c5c1fc942be8527c114b75348f2b8bb003beff6c0b2835a9f1d29bfa774. Postwrapper initially expected JUnit under external target; actual fresh source-local target/nextest/ci/junit.xmla4dcb5e1e89c71e6397a2ba253b8113807399adb3917156a239bc9342195151b recovered without rerun. Separate observatione0c9f00125bcfe8205b848f172361880aab86a37ab084969abcaadd7ee311993 retains unchanged raw runner, exact paths and audits. Transfer2b52d571df0de4d7afde1988f6c186cd722ad77f262538140ac78b98546d70a1. Inputs unchanged, compilers gone. This is scoped Linux evidence on e010, not the later diagnostic source or full platform qualification.
+
+Placement proposal709db8c9 and parent2f910e47 passed primary/independent review and were applied CONTRACT-first as13 exact files with existing SDDL preserved/new ownership audited. Runtime254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0 has exact inverse to prior9e; original8 CPU controls unchanged. Primary review caught unknown SessionOwner Drop panic not triggering retention: corrected code invokes actual device poison/epoch and retains Binding before post-sync, so native custody retains owner/lease/charge/control/files. Regression verifies event ordering and retained ownership. Global loader poison remains a separate truthful observation. Production strict placement is unchanged; disposable diagnostic returns no Scorer or forward handle.
+
+Parent2b33/contract2dca has117 direct-file Python controls passing0.535s. Initial direct run found one CP1252 byte0xe9 in the new Unicode boundary test: prior proposal harness decoded host CP1252 before compiling a string, so it proved assertions but missed source encoding. Root replaced exactly that literal byte with ASCII Python escape\\u00e9, preserving intended Unicode semantics; tests now0dcf75872ae574ff4326581d53dbd708b38e21261bfc09f777a9e825ad583b68. New proposal checks use Python raw-byte source compilation. No runtime helper change or native-source drift resulted.
+
+Windows native55e919ce63a39e6cb8ea2dcfc24455999801f65382f203a746658b18952f9f9b passes scoped Clippy33.009769s,122/122 regressions (303 skipped)35.089374s including build/.971s tests, no-run1.298961s. E/gpu-placement-diagnostic-checks-r1 retains exactcommands/JUnit/timings;6441outputparents preflighted,132changedoutputs human-owner audited, compilers gone. CargoJSON receipt918052b1e25ea6aead9c016fb16e5b9e0851da7223927c0a178f578a86892906/log00d1890f85162153b6f81cc00c0493095c514c453ef7fe4d18b025f81523225a; Inferenceb054a3b43d9450527e0c10e73addab0b664b11952205dffe1efe293e1328e772, Retrievalf28f772881f740cbff9664dbb54ae8a83f3eaf53e46e5644d8a2a09d8bc686fa. Additive preservation and actual placement observation pending. No FP32 forward or GPU model qualification yet.
+### 2026-11-17T18:39Z — complete placement retained; final-dataflow proof required
+
+Placement image preservation passes51.636413s with all31old objects unchanged/32total. O/gpu-placement-diagnostic-images-r1/native-test-images.json4a55573868ed30fdaada56d0f5a7a493354235625e2711e6650e8eb3fd81b716; E/gpu-placement-diagnostic-preservation-execution-r1.jsone06db99da785cab9c21b9d945ba00b6f487dadc13de39b7160fb43e1a64ccfec. Wrapper and helper both exit0; standard role-appropriate audits pass.
+
+Reviewed plane173128f3becf8d1e6235818421f51b7d657158f0b2c631e5090be8cba7fc075 retains215seals/32runtimefiles/36native source rows and2exact new-source introductions. Actual diagnostic on b054/native55e919 creates a session and captures COMPLETE final SessionState placement:2786nodes/178245raw stringbytes,CUDA1491/CPU1295. Native finalmap status0/error0. Session pre-sync, Drop returned, post-sync, claims0 and no poison are observed; outer control/hostcharge released. No Scorer/forward or inference rows.
+
+Overall diagnostic remains FAILED because selected logs hit original65536-byte cap:4921seen/1267selected/226retained/1041omitted. No cap/requirement changed, no unchanged retry. Full placement is a retained finding, not a successful diagnostic or qualification. PID16792 exits101 naturally, retainedHANDLE101, unforcedemptyJob, no timeout/finalinput/guard errors. Parent81.917157s/native30.928562s, peakcommitted16983654400B within original16GiBprocess bound. All7outputs human-owner audited. U/gpu-placement-diagnostic-owned-r1/execution.json9ba7976ee4a012421c061d2470ea0adc679da3e008359b1932969ef88ccedf62; native-result9f027c05bd447f98422684e6ec33ff1008149a26fe7c134dd47c66f72fc01bce.
+
+Exact original/final join E/gpu-placement-static-cpu-join-r1.json1130b8a5dc9cee4e3bbff7d8f34ff64f93acb9963d438913e4759ec97a311086:1071CPUrows match original name/domain/op;224do not(Gather84/Squeeze112/Split28). Originalgraph has no intermediate value_info.957matched nodes have provisional original shape/integer ancestry,114Equal/Where remain unclassified; none establishes actual optimized lineage. Pinned gather_fusion source creates and rewires these generated nodes. Public EP assignment API is pre-final-transform and lacks edges; existing finalcollector onlynames/ops/providers. No op allowlist is admitted.
+
+Next reviewed design is additive same-core final-graph metadata observation, with typed IDs/ordered edges/types/shapes/attrs and bounded CPU-resident integer/bool constants only. No GPU tensor reads, weight copies or graph serialization. Metadata encoded<=8MiB within existing16MiBresult cap; existingnode/string limits retained. Exact final dataflow must precede any separately identified bounded-hybrid policy. Original strict production admission remains unchanged. Source and fresh incrementalproducer proposals are in progress, not executed.
+
+Read-only build inventory verifies all96oldaggregate libraries against checkpointed producerf9fac, unchanged aggregate042c/provider DLLs and144relevant human-owned files. Ninja graph isolates c_api.cc to one object/sessionarchive; provider/CUDA kernel edges are independent. Planned fresh outputs reuse39unchanged sessionobjects and95unchanged aggregate libraries, with new object/PDB/session/aggregate and genuine new identity; never overwrite/retag old artifacts. Historical timings11.811s object/.230s session/7.897s aggregation suggest30–120s new compilation/archive, excluding audits/relink; this is an estimate.482headerdependencies and exact toolenv must be frozen before execution.
+### 2026-11-17T18:57Z — reviewed diagnostic checkpoint and incremental-core proposals
+
+Current Windows source retains the runtime-only admission pass and complete final placement finding, with FP32 model execution still blocked and original selected-log truncation still a failure. Primary reinspection and independent helper checkpoint review found no blocker in the maintained loader, image preserver and parent diagnostic helpers. All six Python source/test files compile from raw bytes without imports or writes; existing selected test evidence remains unchanged. Repository check passes for3655 public files and git diff --check passes. README, documentation index,1.8.207 source release record and Marketplace text retain truthful candidate/unqualified scope; no release-version change is made for this local checkpoint.
+
+Final-graph collector, producer runner, Python handoff and native provenance are separate ignored proposals. New build-proof/3 and environment/5 will authenticate an actual fresh one-TU derivation; old checkpoint/2, producerf9fac, aggregate042c and profile3179 are immutable. No proposed output is yet compiled or admitted. Independent early collector review caught pre-bound string copies/attribute precollection; correction and final decoder review are required before execution. Graph-only capture will have a distinct explicit result contract and cannot relabel the failed placement-log observation or qualify inference.
+
+Identity reverified as TYAI\tdotn, User/Owner/interactive SID1002. All336 Git output directory policies pass the checked same-human rule; only sample hooks exist. No target clean, ACL/owner change, model retry or publication occurred. Parallel file ownership is component_review(graph collector/native diagnostic), gpu_inventory(producer/verifier), platform_inventory(Python handoff consumers), fp16_readiness(native provenance), guard(parent graph envelope), focus_review(independent review). Windows Cargo remains idle pending integrated review.
