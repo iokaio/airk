@@ -50,6 +50,7 @@ impl Drop for SessionOwner {
     fn drop(&mut self) {
         #[cfg(feature = "gpu-cuda")]
         if let Some(gpu) = &self.gpu {
+            gpu.end_session_eligibility();
             let _ = gpu.device.synchronize(gpu.load_deadline);
             if gpu.device.poisoned() {
                 std::mem::forget(gpu.clone());

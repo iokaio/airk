@@ -360,3 +360,132 @@ fn native_probe_builder_returns_new_bound_unavailable_cal_without_old_rules() ->
     assert!(prepare_fp32_probe_profile(&cpu, &source, &runtime, runtime_pin, plan).is_err());
     Ok(())
 }
+
+fn product_manifest() -> manifest::ProductRuntimeManifest {
+    let old = manifest();
+    let identity = "literal-native-product-identity".to_owned();
+    manifest::ProductRuntimeManifest {
+        schema: "airk.native.cuda-runtime-manifest/2".into(),
+        ort_version: "1.30.0".into(),
+        static_core_build: Sha256Digest::from_bytes([2; 32]),
+        provenance: airk_core::arbiter::Asset {
+            name: "airk-cuda-build-provenance.json".into(),
+            role: airk_core::arbiter::AssetRole::Notice,
+            bytes: 12,
+            sha256: Sha256Digest::from_bytes([3; 32]),
+        },
+        files: old.files,
+        load_order: old.load_order,
+        system_imports: old.system_imports,
+        requirements: vec![manifest::VariantRequirement {
+            manifest: Sha256Digest::from_bytes([4; 32]),
+            execution_identity: identity.clone(),
+            target: "x86_64-pc-windows-msvc".into(),
+            compute_capabilities: vec![[8, 6]],
+            minimum_driver_api: 12080,
+            cold_peak_limit_bytes: 100,
+            warm_extra_limit_bytes: 20,
+            headroom_bytes: 10,
+            host_warm_extra_limit_bytes: 1,
+            artifact_evidence: DeviceEvidence {
+                target: "x86_64-pc-windows-msvc".into(),
+                execution_identity: identity,
+                numerical: Sha256Digest::from_bytes([5; 32]),
+                resources: Sha256Digest::from_bytes([6; 32]),
+                placement: Sha256Digest::from_bytes([7; 32]),
+            },
+            acceptance_fixture: airk_core::arbiter::Asset {
+                name: "synthetic-input.json".into(),
+                role: airk_core::arbiter::AssetRole::Fixture,
+                bytes: 15,
+                sha256: Sha256Digest::from_bytes([8; 32]),
+            },
+        }],
+    }
+}
+#[test]
+fn product_manifest_is_distinct_strict_and_has_no_scientific_fit_transfer() -> Result<()> {
+    let product = product_manifest();
+    product.validate()?;
+    let raw = serde_json::to_vec(&product)?;
+    let parsed = manifest::RuntimeDescriptor::parse(&raw)?;
+    assert!(parsed.is_product());
+    assert!(parsed.fits().is_err());
+    let mut mixed = serde_json::to_value(&product)?;
+    mixed["fits"] = serde_json::json!([]);
+    assert!(manifest::RuntimeDescriptor::parse(&serde_json::to_vec(&mixed)?).is_err());
+    let mut legacy = serde_json::to_value(manifest())?;
+    legacy["schema"] = serde_json::json!("airk.native.cuda-runtime-manifest/2");
+    assert!(manifest::RuntimeDescriptor::parse(&serde_json::to_vec(&legacy)?).is_err());
+    let mut altered = product.clone();
+    altered.requirements[0].compute_capabilities = vec![[8, 9]];
+    assert!(altered.validate().is_err());
+    let mut altered = product.clone();
+    altered.requirements[0].artifact_evidence.resources =
+        altered.requirements[0].artifact_evidence.numerical;
+    assert!(altered.validate().is_err());
+    let mut altered = product;
+    altered.provenance.name = "private-producer.json".into();
+    assert!(altered.validate().is_err());
+    Ok(())
+}
+#[test]
+fn product_compatibility_is_not_reference_uuid_or_driver_image_equality() -> Result<()> {
+    let product = product_manifest();
+    let row = &product.requirements[0];
+    let mut actual = AdapterIdentity {
+        uuid: [11; 16],
+        ordinal: 3,
+        compute_major: 8,
+        compute_minor: 6,
+        driver_api_version: 12080,
+        driver_image_sha256: Sha256Digest::from_bytes([12; 32]),
+        physical_total_bytes: 110,
+        dedicated_memory: true,
+    };
+    row.supports(&actual)?;
+    actual.uuid = [13; 16];
+    actual.driver_image_sha256 = Sha256Digest::from_bytes([14; 32]);
+    row.supports(&actual)?;
+    for (major, minor) in [(7, 5), (8, 0), (8, 7), (8, 9), (9, 0)] {
+        actual.compute_major = major;
+        actual.compute_minor = minor;
+        assert!(row.supports(&actual).is_err());
+    }
+    actual.compute_major = 8;
+    actual.compute_minor = 6;
+    actual.physical_total_bytes = 109;
+    assert!(is_device_capacity_failure(
+        &row.supports(&actual).unwrap_err()
+    ));
+    actual.physical_total_bytes = 110;
+    actual.driver_api_version = 12079;
+    assert!(!is_device_capacity_failure(
+        &row.supports(&actual).unwrap_err()
+    ));
+    actual.driver_api_version = 12080;
+    actual.dedicated_memory = false;
+    assert!(row.supports(&actual).is_err());
+    Ok(())
+}
+
+#[test]
+fn qualified_scientific_route_preserves_scoring_while_product_requires_live_eligibility()
+-> Result<()> {
+    let legacy = manifest::RuntimeDescriptor::Scientific(manifest());
+    let scientific = eligibility::initial_admission(&legacy);
+    assert!(matches!(
+        scientific,
+        eligibility::AdmissionState::Scientific
+    ));
+    scientific.authorize(Sha256Digest::from_bytes([9; 32]))?;
+    let product = manifest::RuntimeDescriptor::Product(product_manifest());
+    let product = eligibility::initial_admission(&product);
+    assert!(matches!(product, eligibility::AdmissionState::Pending));
+    assert!(
+        product
+            .authorize(Sha256Digest::from_bytes([9; 32]))
+            .is_err()
+    );
+    Ok(())
+}

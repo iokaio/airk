@@ -179,3 +179,78 @@ Retrieval adds no dependency edge to Kernel/Store. process_poisoned is a read-on
 actual native poison observation for failures before a device could be returned;
 it never permits execution. The fixed-absolute operation journal and component
 contract preserve genuine owned-process timing/custody requirements.
+
+## G3: product compatibility and actual local eligibility (proposed)
+
+Scientific RuntimeManifest/1 VariantFit and exact reference UUID/driver pins
+retain their original scope/bytes. Product RuntimeManifest/2 has the explicit authenticated closure/requirements
+fields from the G3 decision and a Core Notice Asset pin to the separately
+Rust-owned public provenance projection; it does not ship the private raw
+producer sidecar. It accepts no `fits`, adapter UUID or driver-image equality rule.
+A new approved manifest/policy digest and GPU Profile identity are mandatory.
+Unknown schema/target/SM/build/provider/math/placement/resource/source rows
+refuse; initial actual supported class is Windows x64/SM86 only. Signed held
+System32 driver identity remains mandatory actual observation, not a reference
+card's universal allowlist. CPU encoding/execution and forced CPU remain intact.
+
+A non-Deserialize DeviceEligibility is created only by actual native owner
+completion of bounded per-host admission under the existing management
+warm/probe original<=120000ms deadline: authenticate exact artifacts/actual
+SM86+signed driver/modules; check real free capacity against qualified
+conservative requirements and actual charges; native load; complete final
+all-subgraph placement; one pass of independently referenced Context17/128/8192
+or all twelve Focus512 cases; real synchronization and final deadline/authority/
+capacity recheck. No per-user20/p95/peak/coexistence or semantic requalification
+benchmark is introduced. Release/variant G4/G5 remains tied to tested hardware.
+
+A different user UUID/driver-image hash is not itself a refusal or a passing
+qualification. Neither raw JSON, saved receipt, reference A6000 evidence nor
+metadata flags construct the live witness. Actual user peak/p95 stay unobserved
+unless genuinely measured; these checks do not assert those quantities.
+DeviceEvidence keeps its genuine release/variant scope; local diagnostics are
+not rebranded as G4. No persisted permit/public config/status field is added.
+
+The witness binds actual UUID/driver API+signed image/module/runtime/model/math/
+fixture/catalog/configuration/joint-set identity. Recheck actual free capacity
+and authority before dispatch, avoid charging backed residents twice, and retain
+all custody until real completion. Unknown settlement invalidates acceptance
+and never advances fallback. Private scientific /1 cannot mint product /2
+acceptance; actual old failure/evidence remains immutable.
+
+The accepted short scope is proposal57aacf58bc1a503a14f2574b0edb32162bca106d12bfd8c54e56c3b0cef6a1ce.
+Product /2 requirements/data never mint DeviceEligibility. The real native
+resident must establish it under one existing original management deadline;
+query entry/delivery also fence the actual native configuration/source/joint
+key. Reaccepting retained stages shares that same management cutoff and actual
+sessions/charges; no duplicate loads, budget renewal or hidden Answer work.
+Management liveness is checked only during establish, never retained as a
+120s expiry on future Ready. Actual session teardown revokes the witness.
+
+The private native acceptance fixture is airk.arbiter.device-acceptance-input/1,
+strictly decoded and bound to the selected compiler/task/resource/trained-asset
+closure and exact compiled Fixture Asset hash. Its complete twelve Focus or
+three Context rows retain both independently produced same-artifact and
+original-FP32 full score arrays. Native compiler readout validation precedes
+any row dispatch. This is one fixed acceptance pass, never an input-derived
+query or a twenty-sample benchmark. The original management authority is
+sampled before/after rows and is not retained as a future Ready expiry.
+
+Only the lane's current validation thread and exact approved fixture-row digest
+may dispatch before acceptance. Other pending product scores refuse. A live
+witness holds weak references to the actual session/device/state; teardown,
+poison, changed native key, or revocation makes it stale even if a queue retains
+its Arc. Numeric/complete observed placement mismatches are typed admission
+refusals; malformed sources/fixtures and deadline/cancellation are not invented
+provider faults. Actual CUDA allocation error2 and observed insufficient free
+capacity carry the separate capacity class. No error-string matching grants a
+fault classification. Incremental host bytes come from the authenticated
+Binding; None refuses while explicit zero remains zero.
+
+The /2 product runtime admission opens the path-free native public provenance
+and every direct legal Notice under the existing held protected-file owner.
+The test-support projection bridge implements the public projector's Source
+callbacks with real held/no-follow hash and effective-owner/integrity checks,
+then rechecks all held sources within the original deadline. It never changes
+an ACL, ships raw producer records, or creates execution authority. The raw
+checkpointed producer/composite schema is a separate pending strict bridge;
+this implementation does not alias its status to the historical /1 producer.

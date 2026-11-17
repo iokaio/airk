@@ -448,8 +448,15 @@ struct Driver {
     pop: unsafe extern "system" fn(*mut ContextHandle) -> i32,
     memory: unsafe extern "system" fn(*mut usize, *mut usize) -> i32,
     sync: unsafe extern "system" fn() -> i32,
+    attribute: Option<unsafe extern "system" fn(*mut i32, i32, i32) -> i32>,
 }
 fn cuda(result: i32) -> Result<()> {
+    // Pinned CUDA12.8 cuda.h: CUDA_ERROR_OUT_OF_MEMORY=2.
+    if result == 2 {
+        return Err(super::capacity_fault(
+            "actual native CUDA driver out-of-memory".into(),
+        ));
+    }
     if result != 0 {
         return Err(super::native_fault(format!(
             "native CUDA driver call failed ({result})"
@@ -458,7 +465,7 @@ fn cuda(result: i32) -> Result<()> {
     Ok(())
 }
 impl Driver {
-    unsafe fn from(module: usize) -> Result<Self> {
+    unsafe fn from(module: usize, product: bool) -> Result<Self> {
         Ok(Self {
             get: unsafe { symbol(module, c"cuDeviceGet")? },
             init: unsafe { symbol(module, c"cuInit")? },
@@ -473,6 +480,11 @@ impl Driver {
             pop: unsafe { symbol(module, c"cuCtxPopCurrent_v2")? },
             memory: unsafe { symbol(module, c"cuMemGetInfo_v2")? },
             sync: unsafe { symbol(module, c"cuCtxSynchronize")? },
+            attribute: if product {
+                Some(unsafe { symbol(module, c"cuDeviceGetAttribute")? })
+            } else {
+                None
+            },
         })
     }
 }
@@ -521,6 +533,7 @@ pub(super) struct LoadedRuntime {
     baseline: Baseline,
     _modules: Vec<usize>,
     driver: Driver,
+    product: bool,
     identity: Sha256Digest,
 }
 static LOADED: OnceLock<LoadedRuntime> = OnceLock::new();
@@ -548,7 +561,7 @@ pub(super) fn admit(
     deadline: Instant,
 ) -> Result<(
     &'static LoadedRuntime,
-    manifest::RuntimeManifest,
+    manifest::RuntimeDescriptor,
     Sha256Digest,
 )> {
     let _exclusive = ADMISSION
@@ -573,7 +586,7 @@ pub(super) fn admit(
     security(directory.as_file(), true)?;
     let description = HeldFile::open(&directory, manifest_path, true, deadline)?;
     let bytes = read(&description.file, 128 << 10)?;
-    let (manifest, identity) = manifest::RuntimeManifest::approved(&bytes)?;
+    let (manifest, identity) = manifest::RuntimeDescriptor::approved(&bytes)?;
     crate::onnx::initialize_runtime()?;
     use ort::execution_providers::ExecutionProvider;
     ensure!(
@@ -589,16 +602,45 @@ pub(super) fn admit(
         existing.recheck(deadline)?;
         return Ok((existing, manifest, identity));
     }
-    let producer = HeldFile::open(
-        &directory,
-        &root.join(&manifest.producer_name),
-        true,
-        deadline,
-    )?;
-    ensure!(
-        producer.bytes == manifest.producer_bytes && producer.sha == manifest.producer_sha256,
-        "actual CUDA producer receipt differs"
-    );
+    let mut sidecars = Vec::new();
+    match &manifest {
+        manifest::RuntimeDescriptor::Scientific(value) => {
+            let producer =
+                HeldFile::open(&directory, &root.join(&value.producer_name), true, deadline)?;
+            ensure!(
+                producer.bytes == value.producer_bytes && producer.sha == value.producer_sha256,
+                "actual scientific producer receipt differs"
+            );
+            sidecars.push(producer);
+        }
+        manifest::RuntimeDescriptor::Product(value) => {
+            let artifact = &value.provenance;
+            let proof = HeldFile::open(&directory, &root.join(&artifact.name), true, deadline)?;
+            let projected = super::provenance::validate(
+                &read(&proof.file, 1 << 20)?,
+                artifact,
+                value.static_core_build,
+                &value.files,
+            )?;
+            sidecars.push(proof);
+            let mut names = BTreeSet::new();
+            for legal in projected.legal_assets() {
+                ensure!(
+                    legal.role == airk_core::arbiter::AssetRole::Notice
+                        && legal.name.starts_with("airk-cuda-notice-")
+                        && names.insert(legal.name.clone())
+                        && !value.files.iter().any(|v| v.name == legal.name),
+                    "public legal closure name mismatch"
+                );
+                let file = HeldFile::open(&directory, &root.join(&legal.name), true, deadline)?;
+                ensure!(
+                    file.bytes == legal.bytes && file.sha == legal.sha256,
+                    "actual legal notice differs from native public projection"
+                );
+                sidecars.push(file);
+            }
+        }
+    }
     let system_path = system_directory()?;
     let system = OpenedDirectory::open(&system_path)?;
     security(system.as_file(), false)?;
@@ -609,8 +651,10 @@ pub(super) fn admit(
         deadline,
     )?;
     trusted_driver(&driver_file)?;
-    let mut files = vec![description, producer, driver_file];
-    for item in &manifest.files {
+    let mut files = vec![description];
+    files.extend(sidecars);
+    files.push(driver_file);
+    for item in manifest.files() {
         let held = HeldFile::open(&directory, &root.join(&item.name), true, deadline)?;
         ensure!(
             held.sha == item.sha256 && held.bytes == item.bytes,
@@ -623,7 +667,7 @@ pub(super) fn admit(
         );
         files.push(held);
     }
-    for name in &manifest.system_imports {
+    for name in manifest.system_imports() {
         if name == "nvcuda.dll"
             || name.starts_with("api-ms-win-")
             || name.starts_with("ext-ms-win-")
@@ -648,12 +692,12 @@ pub(super) fn admit(
     };
     attempt.modules.push(load(&system_path.join("nvcuda.dll"))?);
     reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
-    for name in &manifest.load_order {
+    for name in manifest.load_order() {
         in_time(deadline)?;
         attempt.modules.push(load(&root.join(name))?);
         reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
     }
-    let driver = unsafe { Driver::from(attempt.modules[0])? };
+    let driver = unsafe { Driver::from(attempt.modules[0], manifest.is_product())? };
     cuda(unsafe { (driver.init)(0) })?;
     for file in attempt.files.as_ref().unwrap() {
         file.recheck(deadline)?;
@@ -668,6 +712,7 @@ pub(super) fn admit(
             baseline,
             _modules: modules,
             driver,
+            product: manifest.is_product(),
             identity,
         })
         .map_err(|_| anyhow::anyhow!("GPU module owner raced"))?;
@@ -700,6 +745,58 @@ impl LoadedRuntime {
             device,
             driver: &self.driver,
         })
+    }
+    pub fn discover(&self, deadline: Instant) -> Result<Vec<AdapterIdentity>> {
+        self.recheck(deadline)?;
+        ensure!(self.product, "product-only metadata discovery");
+        let mut count = 0;
+        cuda(unsafe { (self.driver.count)(&mut count) })?;
+        ensure!((0..=64).contains(&count), "invalid adapter count");
+        let driver_image = self
+            .files
+            .iter()
+            .find(|f| {
+                f.path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|n| n.eq_ignore_ascii_case("nvcuda.dll"))
+            })
+            .context("held driver identity missing")?
+            .sha;
+        let mut values = Vec::new();
+        for ordinal in 0..count {
+            in_time(deadline)?;
+            let (mut device, mut major, mut minor, mut api, mut pool, mut total, mut uuid) =
+                (0, 0, 0, 0, 0, 0usize, [0; 16]);
+            cuda(unsafe { (self.driver.get)(&mut device, ordinal) })?;
+            cuda(unsafe { (self.driver.uuid)(&mut uuid, device) })?;
+            cuda(unsafe { (self.driver.cc)(&mut major, &mut minor, device) })?;
+            cuda(unsafe { (self.driver.version)(&mut api) })?;
+            cuda(unsafe { (self.driver.total)(&mut total, device) })?;
+            cuda(unsafe {
+                self.driver
+                    .attribute
+                    .context("native memory-pool observer absent")?(
+                    &mut pool, 18, device
+                )
+            })?;
+            ensure!(
+                uuid != [0; 16] && total > 0 && matches!(pool, 0 | 1),
+                "native adapter metadata invalid"
+            );
+            values.push(AdapterIdentity {
+                uuid,
+                ordinal,
+                compute_major: major,
+                compute_minor: minor,
+                driver_api_version: api,
+                driver_image_sha256: driver_image,
+                physical_total_bytes: total as u64,
+                dedicated_memory: pool == 0,
+            });
+        }
+        in_time(deadline)?;
+        Ok(values)
     }
     pub fn adapters(
         &'static self,
@@ -734,7 +831,7 @@ impl LoadedRuntime {
         in_time(deadline)?;
         reconcile(&self.files, &self.baseline)?;
         ensure!(ordinal == context.ordinal, "CUDA context/ordinal mismatch");
-        context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0})})
+        context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0,dedicated_memory:if self.product {let mut integrated=0;let get=self.driver.attribute.context("native memory-pool observer missing")?;cuda(unsafe{get(&mut integrated,18,context.device)})?;ensure!(matches!(integrated,0|1),"native CUDA memory pool type unknown");Some(integrated==0)}else{None}})})
     }
     pub fn synchronize(&self, context: &PrimaryContext) -> Result<()> {
         reconcile(&self.files, &self.baseline)?;
@@ -856,4 +953,105 @@ fn final_collector() -> Result<super::placement::Collector> {
     // Missing/old core refuses GPU; no second core or API offset is attempted.
     unsafe { symbol(module as usize, c"airk_ort_collect_final_placement_v1") }
         .context(RuntimeUnavailable::new("final-placement capability absent"))
+}
+
+#[cfg(feature = "test-support")]
+struct ProjectionSource {
+    deadline: Instant,
+    files: std::cell::RefCell<BTreeMap<PathBuf, HeldFile>>,
+}
+#[cfg(feature = "test-support")]
+impl ProjectionSource {
+    fn hold(
+        &self,
+        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+        maximum: u64,
+    ) -> Result<()> {
+        pin.validate()?;
+        in_time(self.deadline)?;
+        let path = Path::new(&pin.path);
+        ensure!(
+            path.is_absolute(),
+            "projection source path must be absolute"
+        );
+        if !self.files.borrow().contains_key(path) {
+            let parent =
+                OpenedDirectory::open(path.parent().context("projection source parent missing")?)?;
+            // Immutable metadata/SDK inputs may be human-owned or OS trusted. Neither
+            // branch accepts foreign write/delete/DAC/owner grants or modifies any ACL.
+            let private = if security(parent.as_file(), true).is_ok() {
+                true
+            } else {
+                security(parent.as_file(), false)?;
+                false
+            };
+            let held = HeldFile::open(&parent, path, private, self.deadline)?;
+            ensure!(
+                held.sha == pin.sha256 && held.bytes <= maximum,
+                "actual pinned projection source differs"
+            );
+            self.files.borrow_mut().insert(path.to_owned(), held);
+        }
+        let files = self.files.borrow();
+        let held = files.get(path).context("projection custody missing")?;
+        ensure!(
+            held.sha == pin.sha256 && held.bytes <= maximum,
+            "projection pin changed"
+        );
+        held.recheck(self.deadline)
+    }
+}
+#[cfg(feature = "test-support")]
+impl super::provenance::projection::Source for ProjectionSource {
+    fn read(
+        &self,
+        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+        maximum: u64,
+    ) -> Result<Vec<u8>> {
+        self.hold(pin, maximum)?;
+        let files = self.files.borrow();
+        let held = files
+            .get(Path::new(&pin.path))
+            .context("projection held input missing")?;
+        let raw = read(&held.file, maximum)?;
+        in_time(self.deadline)?;
+        Ok(raw)
+    }
+    fn authenticate(
+        &self,
+        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+        bytes: u64,
+        maximum: u64,
+    ) -> Result<()> {
+        self.hold(pin, maximum)?;
+        ensure!(
+            self.files
+                .borrow()
+                .get(Path::new(&pin.path))
+                .context("projection input missing")?
+                .bytes
+                == bytes,
+            "projection declared source size differs"
+        );
+        Ok(())
+    }
+    fn recheck(&self) -> Result<()> {
+        for held in self.files.borrow().values() {
+            held.recheck(self.deadline)?;
+        }
+        in_time(self.deadline)
+    }
+}
+#[cfg(feature = "test-support")]
+pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+    let input = super::provenance::projection::decode_input(raw)?;
+    let source = ProjectionSource {
+        deadline,
+        files: std::cell::RefCell::new(BTreeMap::new()),
+    };
+    let prepared = super::provenance::projection::project(&source, input)?;
+    let bytes = serde_json::to_vec(&prepared)?;
+    ensure!(bytes.len() <= 16 << 20, "native projection output cap");
+    in_time(deadline)?;
+    Ok(bytes)
 }

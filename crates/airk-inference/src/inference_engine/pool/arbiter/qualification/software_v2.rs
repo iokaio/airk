@@ -491,6 +491,7 @@ fn diagnostic(row: &Value, fixture: Sha256Digest) -> Result<CompiledInput> {
         ),
     })
 }
+#[cfg(not(feature = "gpu-cuda"))]
 fn softmax(values: &[f32]) -> Result<Vec<f64>> {
     ensure!(
         !values.is_empty() && values.iter().all(|value| value.is_finite()),
@@ -504,6 +505,7 @@ fn softmax(values: &[f32]) -> Result<Vec<f64>> {
     let total: f64 = values.iter().sum();
     Ok(values.into_iter().map(|value| value / total).collect())
 }
+#[cfg(not(feature = "gpu-cuda"))]
 fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
     ensure!(
         actual.len() == expected.len(),
@@ -529,6 +531,10 @@ fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
             .fold(0f64, f64::max),
         winner(actual) == winner(expected),
     ))
+}
+#[cfg(feature = "gpu-cuda")]
+fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
+    airk_retrieval::arbiter::runtime::cuda::compare_reference_scores(actual, expected)
 }
 fn numeric_shape(
     fixture: &NumericFixture,

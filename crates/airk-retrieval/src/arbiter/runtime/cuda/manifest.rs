@@ -47,6 +47,66 @@ fn name(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
         && !value.contains("..")
 }
+#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+fn validate_payload(
+    files: &[RuntimeFile],
+    load_order: &[String],
+    system_imports: &BTreeSet<String>,
+) -> Result<()> {
+    ensure!(
+        (2..=64).contains(&files.len()) && system_imports.len() <= 256,
+        "CUDA closure capacity"
+    );
+    let mut names = BTreeSet::new();
+    let mut total = 0u64;
+    for file in files {
+        ensure!(
+            name(&file.name)
+                && file.name.ends_with(".dll")
+                && file.name != "onnxruntime.dll"
+                && file.name != "nvcuda.dll"
+                && file.bytes > 0
+                && file.bytes <= 2u64 << 30
+                && names.insert(file.name.clone()),
+            "invalid or duplicate CUDA payload"
+        );
+        total = total
+            .checked_add(file.bytes)
+            .context("CUDA closure overflow")?;
+        ensure!(
+            total <= 8u64 << 30 && file.imports.len() <= 256 && file.delay_imports.len() <= 256,
+            "CUDA closure byte/import capacity"
+        );
+    }
+    ensure!(
+        names.contains("onnxruntime_providers_shared.dll")
+            && names.contains("onnxruntime_providers_cuda.dll"),
+        "same-build provider pair missing"
+    );
+    ensure!(
+        load_order.len() == names.len()
+            && load_order.iter().cloned().collect::<BTreeSet<_>>() == names,
+        "invalid CUDA load order"
+    );
+    ensure!(
+        system_imports.iter().all(|v| name(v)
+            && v.ends_with(".dll")
+            && !names.contains(v)
+            && v != "onnxruntime.dll"),
+        "invalid system import closure"
+    );
+    for file in files {
+        ensure!(
+            file.imports
+                .iter()
+                .chain(&file.delay_imports)
+                .all(|v| names.contains(v) || system_imports.contains(v)),
+            "unresolved native DLL import"
+        );
+    }
+    Ok(())
+}
+
 impl RuntimeManifest {
     #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
     pub fn validate(&self) -> Result<()> {
@@ -61,59 +121,8 @@ impl RuntimeManifest {
                 && self.producer_bytes <= 16 << 20,
             "producer/static-core closure mismatch"
         );
-        ensure!(
-            (2..=64).contains(&self.files.len())
-                && self.fits.len() <= 16
-                && self.system_imports.len() <= 256,
-            "CUDA closure capacity"
-        );
-        let mut names = BTreeSet::new();
-        let mut total = 0u64;
-        for file in &self.files {
-            ensure!(
-                name(&file.name)
-                    && file.name.ends_with(".dll")
-                    && file.name != "onnxruntime.dll"
-                    && file.name != "nvcuda.dll"
-                    && file.bytes > 0
-                    && file.bytes <= 2u64 << 30
-                    && names.insert(file.name.clone()),
-                "invalid or duplicate CUDA payload"
-            );
-            total = total
-                .checked_add(file.bytes)
-                .context("CUDA closure overflow")?;
-            ensure!(
-                total <= 8u64 << 30 && file.imports.len() <= 256 && file.delay_imports.len() <= 256,
-                "CUDA closure byte/import capacity"
-            );
-        }
-        ensure!(
-            names.contains("onnxruntime_providers_shared.dll")
-                && names.contains("onnxruntime_providers_cuda.dll"),
-            "same-build provider pair missing"
-        );
-        ensure!(
-            self.load_order.len() == names.len()
-                && self.load_order.iter().cloned().collect::<BTreeSet<_>>() == names,
-            "invalid CUDA load order"
-        );
-        ensure!(
-            self.system_imports.iter().all(|v| name(v)
-                && v.ends_with(".dll")
-                && !names.contains(v)
-                && v != "onnxruntime.dll"),
-            "invalid system import closure"
-        );
-        for file in &self.files {
-            ensure!(
-                file.imports
-                    .iter()
-                    .chain(&file.delay_imports)
-                    .all(|v| names.contains(v) || self.system_imports.contains(v)),
-                "unresolved native DLL import"
-            );
-        }
+        ensure!(self.fits.len() <= 16, "CUDA scientific fit capacity");
+        validate_payload(&self.files, &self.load_order, &self.system_imports)?;
         let mut manifests = BTreeSet::new();
         for fit in &self.fits {
             ensure!(
@@ -177,4 +186,233 @@ pub fn math_policy_digest() -> Sha256Digest {
         b"airk.native.cuda.math-policy/1",
         &[b"fp32;tf32=0;original-six-input-and-scores-abi;unchanged-numeric-limits"],
     )
+}
+
+/// Product requirements are compiled data; they are not a live device permit.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct VariantRequirement {
+    pub manifest: Sha256Digest,
+    pub execution_identity: String,
+    pub target: String,
+    pub compute_capabilities: Vec<[u32; 2]>,
+    pub minimum_driver_api: i32,
+    pub cold_peak_limit_bytes: u64,
+    pub warm_extra_limit_bytes: u64,
+    pub headroom_bytes: u64,
+    pub host_warm_extra_limit_bytes: u64,
+    pub artifact_evidence: DeviceEvidence,
+    pub acceptance_fixture: airk_core::arbiter::Asset,
+}
+impl VariantRequirement {
+    pub fn supports(&self, id: &AdapterIdentity) -> Result<()> {
+        ensure!(
+            id.uuid != [0; 16]
+                && id.driver_image_sha256 != Sha256Digest::from_bytes([0; 32])
+                && id.dedicated_memory
+                && self.compute_capabilities.contains(&[
+                    u32::try_from(id.compute_major)?,
+                    u32::try_from(id.compute_minor)?
+                ])
+                && id.driver_api_version >= self.minimum_driver_api,
+            "actual native product architecture/driver/memory-pool unsupported"
+        );
+        let required = self
+            .cold_peak_limit_bytes
+            .checked_add(self.headroom_bytes)
+            .context("declared product capacity overflow")?;
+        if required > id.physical_total_bytes {
+            return Err(capacity_fault("actual native physical VRAM cannot cover qualified declared requirement plus headroom".into()));
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProductRuntimeManifest {
+    pub schema: String,
+    pub ort_version: String,
+    pub static_core_build: Sha256Digest,
+    pub provenance: airk_core::arbiter::Asset,
+    pub files: Vec<RuntimeFile>,
+    pub load_order: Vec<String>,
+    pub system_imports: BTreeSet<String>,
+    pub requirements: Vec<VariantRequirement>,
+}
+impl ProductRuntimeManifest {
+    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+    pub fn validate(&self) -> Result<()> {
+        use airk_core::arbiter::AssetRole;
+        ensure!(
+            self.schema == "airk.native.cuda-runtime-manifest/2"
+                && self.ort_version == "1.30.0"
+                && self.static_core_build != Sha256Digest::from_bytes([0; 32]),
+            "unknown product CUDA runtime"
+        );
+        ensure!(
+            self.provenance.name == "airk-cuda-build-provenance.json"
+                && self.provenance.role == AssetRole::Notice
+                && self.provenance.bytes > 0
+                && self.provenance.bytes <= 1 << 20
+                && self.provenance.sha256 != Sha256Digest::from_bytes([0; 32]),
+            "product runtime requires exact public provenance asset"
+        );
+        validate_payload(&self.files, &self.load_order, &self.system_imports)?;
+        ensure!(
+            self.requirements.len() <= 16,
+            "product CUDA requirement capacity"
+        );
+        let mut seen = BTreeSet::new();
+        for row in &self.requirements {
+            ensure!(
+                seen.insert(row.manifest)
+                    && row.manifest != Sha256Digest::from_bytes([0; 32])
+                    && !row.execution_identity.is_empty()
+                    && row.execution_identity.len() <= 512,
+                "duplicate/invalid product variant"
+            );
+            ensure!(
+                row.target == "x86_64-pc-windows-msvc"
+                    && row.compute_capabilities == [[8, 6]]
+                    && row.minimum_driver_api >= 12080,
+                "unqualified native target/SM/driver requirements"
+            );
+            DeviceCapacityPlan::new(
+                row.cold_peak_limit_bytes,
+                row.warm_extra_limit_bytes,
+                row.headroom_bytes,
+            )?;
+            let e = &row.artifact_evidence;
+            ensure!(
+                e.target == row.target
+                    && e.execution_identity == row.execution_identity
+                    && e.numerical != e.resources
+                    && e.numerical != e.placement
+                    && e.resources != e.placement
+                    && [e.numerical, e.resources, e.placement]
+                        .iter()
+                        .all(|v| *v != Sha256Digest::from_bytes([0; 32])),
+                "invalid scoped artifact evidence"
+            );
+            let f = &row.acceptance_fixture;
+            ensure!(
+                f.role == AssetRole::Fixture
+                    && name(&f.name)
+                    && f.bytes > 0
+                    && f.bytes <= 16 << 20
+                    && f.sha256 != Sha256Digest::from_bytes([0; 32]),
+                "complete independent eligibility fixture required"
+            );
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug)]
+pub(super) enum RuntimeDescriptor {
+    Scientific(RuntimeManifest),
+    Product(ProductRuntimeManifest),
+}
+impl RuntimeDescriptor {
+    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+    pub fn parse(raw: &[u8]) -> Result<Self> {
+        ensure!(raw.len() <= 128 << 10, "runtime descriptor byte cap");
+        let head: serde_json::Value = serde_json::from_slice(raw)?;
+        match head["schema"].as_str() {
+            Some("airk.native.cuda-runtime-manifest/1") => {
+                let value: RuntimeManifest = serde_json::from_slice(raw)?;
+                value.validate()?;
+                Ok(Self::Scientific(value))
+            }
+            Some("airk.native.cuda-runtime-manifest/2") => {
+                let value: ProductRuntimeManifest = serde_json::from_slice(raw)?;
+                value.validate()?;
+                Ok(Self::Product(value))
+            }
+            _ => anyhow::bail!("unknown CUDA runtime descriptor schema"),
+        }
+    }
+    pub fn build(&self) -> Sha256Digest {
+        match self {
+            Self::Scientific(v) => v.static_core_build,
+            Self::Product(v) => v.static_core_build,
+        }
+    }
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn files(&self) -> &[RuntimeFile] {
+        match self {
+            Self::Scientific(v) => &v.files,
+            Self::Product(v) => &v.files,
+        }
+    }
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn load_order(&self) -> &[String] {
+        match self {
+            Self::Scientific(v) => &v.load_order,
+            Self::Product(v) => &v.load_order,
+        }
+    }
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn system_imports(&self) -> &BTreeSet<String> {
+        match self {
+            Self::Scientific(v) => &v.system_imports,
+            Self::Product(v) => &v.system_imports,
+        }
+    }
+    pub fn is_product(&self) -> bool {
+        matches!(self, Self::Product(_))
+    }
+    pub fn fits(&self) -> Result<&[VariantFit]> {
+        match self {
+            Self::Scientific(v) => Ok(&v.fits),
+            Self::Product(_) => anyhow::bail!("product requirements cannot be scientific fits"),
+        }
+    }
+    pub fn requirement(&self, profile: &Profile) -> Result<&VariantRequirement> {
+        let Self::Product(v) = self else {
+            anyhow::bail!("scientific reference fit cannot grant product eligibility")
+        };
+        let identity = profile.device_execution_identity()?;
+        let row = v
+            .requirements
+            .iter()
+            .find(|r| r.manifest == profile.manifest && r.execution_identity == identity)
+            .context("product variant has no compiled conservative requirements")?;
+        ensure!(
+            row.target == super::super::current_target()
+                && row.host_warm_extra_limit_bytes <= profile.memory_reservation_bytes
+                && profile.assets.iter().any(|a| a == &row.acceptance_fixture),
+            "product host/fixture/target requirements differ from profile"
+        );
+        ensure!(
+            matches!(&profile.device_execution.as_ref().context("CPU product profile")?.memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==row.cold_peak_limit_bytes&&*headroom_bytes==row.headroom_bytes),
+            "product conservative bounds differ from immutable profile"
+        );
+        Ok(row)
+    }
+    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+    pub fn approved(raw: &[u8]) -> Result<(Self, Sha256Digest)> {
+        let approved = option_env!("AIRK_APPROVED_CUDA_MANIFEST_SHA256")
+            .context(RuntimeUnavailable::new("manifest approval not compiled"))?;
+        let build = option_env!("AIRK_STATIC_CUDA_BUILD_SHA256")
+            .context(RuntimeUnavailable::new("static build provenance absent"))?;
+        let digest = Sha256Digest::from_bytes(Sha256::digest(raw).into());
+        ensure!(
+            digest.to_string() == approved,
+            "unapproved runtime manifest bytes"
+        );
+        let value = Self::parse(raw)?;
+        // Keep scientific compiled approval on its exact original owner path.
+        if matches!(&value, Self::Scientific(_)) {
+            let (legacy, digest) = RuntimeManifest::approved(raw)?;
+            return Ok((Self::Scientific(legacy), digest));
+        }
+        ensure!(
+            value.build().to_string() == build,
+            "GPU closure differs from linked static build"
+        );
+        Ok((value, digest))
+    }
+}
+pub fn product_compatibility_policy_digest() -> Sha256Digest {
+    airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/2",&[b"windows-x64;sm=86;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit"])
 }

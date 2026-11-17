@@ -6854,3 +6854,27 @@ D: has432.25GiB free at this checkpoint. Preserve warm Windows outputs; the
 previous22.170GiB Windows cleanup and separate4.036GiB Mac cleanup remain the
 observed recovery evidence. G3 eligibility and G4 diagnostics remain private
 source review; no applied/tested capability is inferred from their proposals.
+
+### 2026-11-17 09:15Z — G3 provider/provenance source milestone
+
+Root applies17 reviewed paths from eligibility implementationR2 (577e9600)
+and provenanceR4 (27751047), contracts before consumers, preserving existing
+owner/ACL/file identity. E/g3-g4-reviewed-application-r1 retains manifest
+63d35df8 and the complete application receipt. Independent review37c86837
+closes the scientific /1 scoring regression; its original failing proposal is
+preserved. Runtime.rs remains9e539508 unchanged.
+
+Scoped Retrieval+Inference all-target/all-feature Clippy passes37.857174s;
+52/52 selected grouped CUDA/numeric/provenance regressions pass53.281335s
+(including build;0.431s tests),282 filtered. Receipts are
+E/gpu-g3-provider-provenance-clippy-r1.json and
+E/gpu-g3-provider-provenance-regressions-r1.json; native source seal1fab33b8,
+JUnit80e0bc4e. Format, whitespace and repository checks pass3581 public files.
+These checks prove tested contract/refusal behavior, not actual CUDA model use.
+
+Actor/Service eligibility and scoped diagnostics remain private pending accepted
+stage-isolation and retained-fault/circuit corrections. Generic product probing
+must also refuse scientific /1 artifacts; explicit scientific evaluation remains
+separate. The actual Flash target continues under its fixed cutoff. GPU model
+execution, product /2 artifacts and qualification remain pending. D: free space
+was431.97GiB; no Windows warm target is cleaned.

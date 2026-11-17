@@ -56,6 +56,7 @@ pub(in crate::arbiter::runtime) fn score(
     focus: bool,
 ) -> Result<Vec<f32>> {
     in_time(deadline)?;
+    binding.authorize_score(input.input_digest)?;
     let tokens = input.input_ids.len();
     let candidates = input.candidate_positions.len();
     let output_name = if focus { "logits" } else { "scores" };
@@ -154,5 +155,6 @@ pub(in crate::arbiter::runtime) fn score(
         "Arbiter GPU score shape/finite contract changed"
     );
     in_time(deadline)?;
+    binding.authorize_score(input.input_digest)?;
     Ok(scores.to_vec())
 }
