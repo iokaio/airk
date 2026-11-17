@@ -6559,3 +6559,20 @@ runtime/device changes and grouped native qualification, alongside independent
 composed/platform/candidate work. No further CPU Large attention research,
 data fishing, relaxed tolerances or universal GPU speed claims. Retain a final
 four-hour gate/settlement/handoff reserve and report remaining unmet criteria.
+
+### D08 amendment — FP32 only for version 1.9.0
+
+17 November2026 UTC. The user explicitly chooses the safer FP32 target and
+defers FP16 with efficient attention beyond the1.9.0 goal. final-plan.md now
+makes this binding across active G1–G4, uses original unfusedFP32 Compact/Large
+graphs and TF32off, and removes any half/mixed-precision rescue branch or
+initializer implementation requirement. MiniLM CPUINT8 is unchanged. Future
+half/efficient-attention estimates are documentation only, outside current
+acceptance. All agents touching GPU contracts/runtime were informed.
+
+Planning estimates communicated to the user are not measured requirements:
+FocusFP32 roughly4GB possible/6–8GB safer; Compact16GB possible/24GB safer;
+Large32–40GB possible/48GB safer, at512/8192 tokens respectively. Potential
+future efficientFP16 targets4/8/12–16GB remain unmeasured and out of scope.
+Actual available memory, runtime/driver/operator compatibility, joint residency
+and native G4 evidence must determine Auto selection, never these guesses.

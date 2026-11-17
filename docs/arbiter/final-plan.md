@@ -2,8 +2,9 @@
 
 Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; D01–D08 recorded.
-Scope update: automatic GPU execution with qualified CPU fallback is included
-by the user's 17 November execution instruction; see section 11.
+Scope update: automatic FP32 GPU execution with qualified CPU fallback is
+included by the user's 17 November UTC execution instructions; see section 11.
+FP16 with efficient attention is deferred beyond version 1.9.0.
 The original planning request authorized this runbook only. The user authorized
 implementation on 15 November 2026; public publication requires separate
 authorization. Current execution evidence and blockers are in section 10.
@@ -41,7 +42,7 @@ contract encodings must be recorded before implementation; see section 11.
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
 | D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
-| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
+| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. Version 1.9.0 GPU work is FP32 only, CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. FP16 with efficient attention is future work outside the 1.9.0 goal. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
 
 ### Settled rules; do not ask again
 
@@ -1091,7 +1092,11 @@ Added during execution on 17 November 2026 UTC at the user's request.
 D08 expands implementation scope; the subsequent instruction explicitly requires
 AIRK to choose a usable GPU for each user's machine and otherwise use CPU.
 This section supersedes CPU-only execution assumptions for optional Arbiter
-profiles. It does not claim that GPU support has already been implemented.
+profiles. The user's subsequent instruction limits the version 1.9.0 GPU goal
+to the safer **FP32** target. FP16/BF16/mixed-precision conversion and efficient
+attention development are deferred beyond 1.9.0; they are not completion gates
+or fallback branches for this campaign. Existing MiniLM CPU INT8 paths remain.
+GPU support has not yet been implemented.
 
 ### Required user behavior and scope
 
@@ -1103,7 +1108,7 @@ The service, CLI, Admin and Workbench expose the actual selected device and the
 reason for CPU selection. A GPU being present is not evidence of model fit.
 
 Keep MiniLM's existing CPU U8/S8 paths and vector identity unchanged in this
-extension. Prioritize Context Compact/Large, where CPU time is consequential.
+extension. Optional GPU variants use FP32 with TF32 disabled for version 1.9.0. Prioritize Context Compact/Large, where CPU time is consequential.
 Preserve independent Focus/Context selection; Focus keeps its CPU path unless a
 separately qualified GPU variant offers a measured benefit. Do not silently
 substitute Compact for Large, change precision, reduce input width or reset the
@@ -1119,6 +1124,17 @@ numerical/deadline failures are not qualified fallbacks.
 Read-only Windows inventory at 2026-11-17T01:57–02:00Z found an NVIDIA RTX A6000,
 compute capability 8.6, driver 597.06, 49,140 MiB total and approximately
 38,400 MiB free VRAM. Free memory is a transient observation, not a reservation.
+
+Provisional discrete-VRAM planning targets, not measured minima or admission
+thresholds: Focus6–8GB at512 tokens; Compact24GB and Large48GB at8192 tokens.
+Dense FP32 attention can require a4GiB matrix for Compact or8GiB for Large,
+with multiple intermediates plus weights/runtime/headroom. The actual G4
+measurements determine requirements; never hard-code these guesses as fit proof.
+These estimates assume one selected Context model, not both Context models or
+unmeasured joint GPU residency. Apple unified memory also pays host/OS costs.
+Architecture references:
+[Compact](https://huggingface.co/Qwen/Qwen3-1.7B/blob/main/config.json),
+[Large](https://huggingface.co/Qwen/Qwen3-4B/blob/main/config.json).
 CUDA_PATH names Toolkit 12.8; compatible CUDA/cuDNN libraries, their provenance
 and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 8 GiB unified RAM. It cannot be assumed to fit either Context model.
@@ -1197,13 +1213,15 @@ is not inherently required. However, the pinned CUDA GroupQueryAttention kernel
 registers F16/BF16 activation types, whereas the retained GQA artifacts use FP32.
 Registering CUDA alone therefore cannot qualify those graphs as all-GPU.
 
-First probe a supported FP32 graph with unchanged math using tiny 17/128 inputs
-and an actual placement trace. If unsupported or impractical, register one
-controlled GPU graph/export branch with supported attention and, only as needed,
-mixed/F16 precision. Preserve causal/padding masks, positions, projections,
-decision rows and output ABI. The current large-initializer path supports F32/U8;
-a precision change also needs validated native initializer loading and new
-asset identities. No blanket cast or unreviewed community export.
+Use the existing original unfused FP32 Compact (c79c6725...) and Large
+(f8ba5d3e...) graphs first. Probe tiny 17/128 inputs with unchanged math and an
+actual placement trace, then the original 8192 boundary if those pass. Preserve
+causal/padding masks, positions, projections, decision rows and the FP32 output
+ABI. No FP16/BF16/mixed conversion, new half-precision initializer loader or
+efficient-attention export is part of version 1.9.0. If a supported FP32 GPU path
+cannot meet its gates, use a fitting admitted CPU variant or report unavailable;
+do not open a lower-precision rescue branch. Any necessary alternative FP32
+operator decomposition needs its own reviewed identity and unchanged gates.
 
 Use error_on_failure for provider registration. For a strict GPU session,
 disable implicit CPU EP fallback and do not also register CPU EP explicitly:
@@ -1312,3 +1330,21 @@ the exact unmet criterion rather than weakening it.
 Current D08 status: planning and read-only hardware/source analysis complete;
 device contracts, automatic selection, GPU execution and qualification
 **not yet implemented**. Existing CPU results retain their original identities.
+
+### Deferred beyond version 1.9.0 — FP16 and efficient attention
+
+Retain this direction for future work only. A separately reviewed FP16 or mixed
+export with genuinely memory-efficient attention might make Focus practical on
+about4GB, Compact on about8GB and Large on about12–16GB of dedicated VRAM.
+Those are unmeasured estimates, not hardware requirements or a promised result.
+Half precision alone does not remove dense attention's quadratic workspace:
+an unfused half-precision graph could still need roughly12–16GB for Compact and
+24GB for Large at8192 tokens.
+
+Future work would require exact attention/mask equivalence, authenticated
+half-precision initializer support, independent numerical checks, new runtime/
+graph/profile identities and fresh device/resource/CAL/task qualification.
+Casting the retained biased GQA graph does not itself enable Flash attention.
+None of this work is required, scheduled, implemented or used to unblock the
+version1.9.0 FP32 goal. Do not revisit it during this campaign merely because
+an FP32 variant fails a gate.
