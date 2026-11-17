@@ -70,6 +70,23 @@ pub(super) struct Aggregate {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct CheckpointSectionHistory {
+    pub section_id: String,
+    pub section_index: u64,
+    pub receipt_sha256: Sha256Digest,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CheckpointHistory {
+    pub mode: String,
+    pub cold_build_qualified: bool,
+    pub qualification: bool,
+    pub approved_plan_sha256: Sha256Digest,
+    pub failed_ancestry: Vec<Sha256Digest>,
+    pub sections: Vec<CheckpointSectionHistory>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PublicRuntimeProvenance {
     pub schema: String,
     pub target: String,
@@ -83,6 +100,8 @@ pub(super) struct PublicRuntimeProvenance {
     pub legal_inventory_sha256: Sha256Digest,
     pub legal_owner_sha256: Sha256Digest,
     pub historical_failed_parent: Option<Sha256Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_history: Option<CheckpointHistory>,
     pub aggregate: Aggregate,
     pub components: Vec<Component>,
     pub tools: Vec<Tool>,
@@ -188,6 +207,44 @@ fn validate_description(
             && value.historical_failed_parent.is_none_or(nonzero),
         "missing public build/source identity"
     );
+    if let Some(history) = &value.checkpoint_history {
+        ensure!(
+            history.mode == "checkpointed-warm"
+                && !history.cold_build_qualified
+                && !history.qualification
+                && history.approved_plan_sha256.to_string()
+                    == "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97"
+                && !history.failed_ancestry.is_empty()
+                && history.failed_ancestry.len() <= 32
+                && history.failed_ancestry.iter().copied().all(nonzero)
+                && history
+                    .failed_ancestry
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == history.failed_ancestry.len()
+                && history.failed_ancestry.iter().any(|x| x.to_string()
+                    == "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026")
+                && value.historical_failed_parent.is_some_and(|x| x.to_string()
+                    == "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026")
+                && history.sections.len() == 3,
+            "invalid public checkpoint history"
+        );
+        for (index, row) in history.sections.iter().enumerate() {
+            ensure!(
+                row.section_index == index as u64
+                    && row.section_id
+                        == [
+                            "flash-remainder",
+                            "llm-remainder",
+                            "final-provider-all-closure"
+                        ][index]
+                    && nonzero(row.receipt_sha256),
+                "public checkpoint section identity differs"
+            );
+        }
+    }
     ensure!(
         value.aggregate.file.name == "onnxruntime.lib"
             && value.aggregate.file.bytes > 65_536

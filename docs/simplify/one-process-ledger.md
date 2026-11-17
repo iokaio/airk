@@ -6959,3 +6959,64 @@ outer8a321f61. Environment/4 SHAa348c538e349e8311841654ddce2365c229fb5972670f0b3
 retains five static keys, activation=false and unqualified scope. Evidence is
 under the approved human-owned cu8 roots. No neural execution is claimed.
 D: free427.37GiB; prior22.17GiB incremental cleanup retained, warm cache preserved.
+
+### 2026-11-17 10:51Z — Current-source native bridge and no-inference gate
+
+G3/G4 milestone commits18cf7f0ecc92e0489f9a5a4d035b756d59f7cf11 with verified
+Tyler Jensen DCO. Native checkpoint/package bridge applies16 reviewed paths,
+contracts first, exact manifest50e1f11058bcdca87f94b7c0b495d997962c77f5fd083993093ab96f0d7257ba;
+existing owner/ACL/fileIDs preserved. Independent final reviewa5be547f closes
+lifecycleR2 plus companionR3 and the actual Host descriptor filename gate.
+
+Actual CUDA archive ClippyR1 fails51.252216s only on oversized test JSONmacro
+recursion (checkpoint/tests.rs128). The reviewed test-only correction splits
+all85 ordered literal field/expression pairs into smaller macros without changed
+values/assertions or crate limits; proposal0822e1c5 and application retained.
+No-inference all-target Clippy for Retrieval/Inference/Service passes49.778134s,
+sourceef7bcadd, incremental0, warm target/. This proves that selected configuration,
+not CUDA runtime/model capability. New native model execution remains0.
+
+### 2026-11-17 11:38Z — CUDA-linked bridge passes; actual NN0 and retained input refusal
+
+The combined native checkpoint/custody section passes all-target/all-feature
+Clippy11.835980s (E/gpu-native-checkpoint-bridge-clippy-r3.json). Earlier51.252216s
+macro-depth and16.134818s singleton-slice lint failures remain retained. Only
+test construction changed; fixture contents/assertions and production thresholds
+remain. First actual regressions run76/78; two synthetic Memory String lookups
+mis-handle Windows mixed separators. The test-only Path equality correction
+passes scoped Clippy50.931978s; grouped78/78 then passes19.026655s including build
+(.621s tests,292 skipped). Native seal8a8c2993; JUnit345d5948. Final formatting,
+repository3595 and whitespace checks pass. No GPU model has yet executed.
+
+The actual CUDA no-run CargoJSON passes1.266475s; receipt SHA
+d6788b82f2608387da19caefbd5c5a9888237787a3c036024fa51e72b516ea85. Exact two
+independent human-owned PE64 images are retained under O/gpu-native-checkpoint-images-r1,
+inventoryde8afa5158d3e0ff1b0f568cb64042d28c20582fe90377dabd72ec349a6490d9.
+Inference0fe7e85d/242689024B and Retrieval69c3ef5a/45317632B bind actual CUDA
+archive042c9701, not the older CPU-linked image packet.
+
+Root reviewed all34 staging entries. Actual metadata/runtime/image create-new
+staging passes under protected approved C anchor, keeping owners/ACLs unchanged;
+receipt SHAs d87bbd49/ba87b5d9/e5a5ced9. The runtime contains13 exact DLLs,
+1896322352B, plus original notices; it remains private/unapproved. Native custody
+emission passes9.686369s, PID56464,16,601,088B peak, originalexit0/no force/Job0,
+receipt20232f84. Native assembly-request emission passes9.569064s PID63056,
+receipt0c17e4c9; exact Rust request67d30bac/9548B. Both select1/1 and retain
+false activation/qualification/null unknown forwards.
+
+Assembly R1 then fails3.990226s, PID63904 exit101,14,491,648B peak, natural
+settlement/Job0. Native error: GPU payload/system owner mismatch. Root initially
+hypothesized a reader-policy defect, then corrected that diagnosis before any
+policy application: warm-completed-output-census.json on D: is omitted from the
+9 aliases and its parent has foreign write grants. This is a valid refusal.
+No ownership/security proposal is applied. Audit complete read closure and add
+exact protected copies via the EXISTING contract with fresh R2 native inputs;
+retain failure70b85630. No repeated unchanged attempt or deadline renewal.
+
+Independent main-plan work closes the existing1867 exact binary-label split/
+clone/native scope, with17 literal +16 real-data checks, packet21162777. TRAIN400,
+DEV85; no new binary human labels are required for this narrow diagnostic arm.
+F1/replay/worker remain implementation work; DEV3 clusters cannot support two-sided
+.05 promotion. Broader evidence/terminal labels remain unavailable. G5 export,
+math and resource proposals remain private/unrun pending first FP32 and review.
+D: free427.04GiB, warm cache preserved; no additional cleaning is justified yet.

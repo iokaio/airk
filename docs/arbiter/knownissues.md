@@ -518,7 +518,7 @@ service, doctests, the full Nextest remainder, real-transport parity suites,
 macOS and Linux.
 
 
-## Open execution issue — 17 November 2026: CUDA compiler child lifetime
+## Resolved execution hold — 17 November 2026: CUDA compiler child lifetime
 
 The current checkpointed Flash section has completed its compiler work, but its
 owned process tree remains open. Read-only observations at09:37Z and09:43Z find
@@ -546,3 +546,17 @@ No registry/tool/ACL change or descendant exemption was used. LLM then passes
 43 outputs (da0eda4c) and final provider closure passes1860 outputs (5bf52327),
 both naturally. Final composition passes with explicit checkpointed-warm scope
 (f9fac8eb). The original R12 failure remains failed; model qualification is pending.
+
+## Open execution input — 17 November 2026: protected GPU proof metadata closure
+
+First actual native assembly refuses GPU custody, exits101 naturally, and leaves
+an empty owned Job. The error is masked as an owner mismatch by the parent-policy
+fallback; no unsupported runtime or model is admitted. Exact source tracing finds
+the historical warm baseline under the writable D: campaign directory missing
+from the9-entry protected metadata-copy map. The unchanged Source correctly refuses
+that original parent. Complete the exact read-closure audit and use the existing
+Rust-owned metadata-copy mechanism in fresh inputs; preserve prior native outputs
+and this failed attempt. No ACL/owner change or loader/proof-policy broadening is
+used. Actual receipt: approved human C anchor/gpu-first-fp32-assembly-owned-r1/
+execution.json, SHA70b85630acc8b3a2e9e6b9b535b164cc09b578c806ff81514a6dfc6e04ba065d.
+First FP32 neural execution remains pending while this input correction proceeds.

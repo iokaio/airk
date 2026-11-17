@@ -3,13 +3,27 @@
 use super::*;
 use airk_core::arbiter::resource_policy::ResourceFilePin;
 use serde_json::Value;
+mod checkpoint;
 mod strict;
+pub(in crate::arbiter::runtime::cuda) use checkpoint::validate_checkpointed_producer;
 
 pub(in crate::arbiter::runtime::cuda) trait Source {
     /// The actual native caller retains no-follow/owner/held-object custody.
     fn read(&self, pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>>;
     /// Stream-authenticate large DLL bytes without allocating an entire DLL.
     fn authenticate(&self, pin: &ResourceFilePin, bytes: u64, maximum: u64) -> Result<()>;
+    /// Inert historical build-tool evidence only; never execute/load a copy.
+    /// Actual aliases are limited by the native owner to two exact sealed tools.
+    fn authenticate_historical_tool(
+        &self,
+        _tool: &str,
+        pin: &ResourceFilePin,
+        bytes: u64,
+        maximum: u64,
+    ) -> Result<()> {
+        self.authenticate(pin, bytes, maximum)
+    }
+
     /// Recheck every held source under the original caller deadline before return.
     fn recheck(&self) -> Result<()>;
 }
@@ -47,6 +61,10 @@ pub(in crate::arbiter::runtime::cuda) struct Input {
     pub legal_owner: ResourceFilePin,
     pub payloads: Vec<PayloadInput>,
     pub notices: Vec<NoticeInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custody_copies: Vec<super::super::MetadataCustodyCopy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub historical_tool_copies: Vec<super::super::HistoricalToolCustodyCopy>,
 }
 const INPUT_SCHEMA: &str = "airk.native.cuda-provenance-projection-input/1";
 /// Opaque native metadata request only; it grants no runtime/device permit.
@@ -54,6 +72,8 @@ pub(in crate::arbiter::runtime::cuda) fn decode_input(raw: &[u8]) -> Result<Inpu
     ensure!(raw.len() <= 16 << 20, "projection request byte capacity");
     strict::parse(raw)?; // Reject all duplicate object keys before typed decode.
     let input: Input = serde_json::from_slice(raw)?;
+    super::super::validate_metadata_custody(&input.custody_copies)?;
+    super::super::validate_historical_tool_custody(&input.historical_tool_copies)?;
     ensure!(
         input.schema == INPUT_SCHEMA
             && (2..=64).contains(&input.payloads.len())
@@ -249,6 +269,8 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             && (3..=512).contains(&input.notices.len()),
         "projection input capacity"
     );
+    super::super::validate_metadata_custody(&input.custody_copies)?;
+    super::super::validate_historical_tool_custody(&input.historical_tool_copies)?;
     let build = json(source, &input.build_proof)?;
     let producer = json(source, &input.producer_receipt)?;
     let aggregate = json(source, &input.aggregate_proof)?;
@@ -265,20 +287,29 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         rows(&legal_inventory)?.len() == input.notices.len(),
         "exact legal owner roster required"
     );
-    ensure!(
-        build["schema"] == "airk.cuda-static-build-proof/1"
-            && build["target"] == "x86_64-pc-windows-msvc"
-            && build["ort_version"] == "1.30.0"
-            && build["qualification"] == false
-            && sha(&build["build_receipt"]["sha256"])? == input.producer_receipt.sha256
-            && producer["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
-        "successful same-build producer proof required"
-    );
-    let commands = rows(&producer["commands"])?;
-    ensure!(
-        !commands.is_empty() && commands.len() <= 16 && commands.iter().all(successful),
-        "producer did not naturally settle successfully"
-    );
+    let checkpointed = if build["schema"] == "airk.cuda-static-build-proof/2" {
+        Some(validate_checkpointed_producer(
+            source,
+            &input.producer_receipt,
+            &input.build_proof,
+        )?)
+    } else {
+        ensure!(
+            build["schema"] == "airk.cuda-static-build-proof/1"
+                && build["target"] == "x86_64-pc-windows-msvc"
+                && build["ort_version"] == "1.30.0"
+                && build["qualification"] == false
+                && sha(&build["build_receipt"]["sha256"])? == input.producer_receipt.sha256
+                && producer["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
+            "successful same-build producer proof required"
+        );
+        let commands = rows(&producer["commands"])?;
+        ensure!(
+            !commands.is_empty() && commands.len() <= 16 && commands.iter().all(successful),
+            "producer did not naturally settle successfully"
+        );
+        None
+    };
     ensure!(
         producer["policy"]["one_static_core"] == true
             && producer["policy"]["optional_shared_cuda_provider"] == true
@@ -295,7 +326,7 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         "matching naturally settled static aggregate required"
     );
     ensure!(
-        build["toolchain"] == producer["toolchain"]
+        (checkpointed.is_some() || build["toolchain"] == producer["toolchain"])
             && build["provider_dlls"] == producer["provider_dlls"]
             && aggregate["output"] == command["output"]
             && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
@@ -314,10 +345,15 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         size(&aggregate["output"]["bytes"])?,
         2u64 << 30,
     )?;
-    let original_lock = build
-        .get("ancestry")
-        .and_then(|a| a.get("original_r8_lock"))
-        .unwrap_or(&build["producer_lock_sha256"]);
+    let checkpoint_lock = serde_json::Value::String(checkpoint::SOURCE_LOCK.into());
+    let original_lock = if checkpointed.is_some() {
+        &checkpoint_lock
+    } else {
+        build
+            .get("ancestry")
+            .and_then(|a| a.get("original_r8_lock"))
+            .unwrap_or(&build["producer_lock_sha256"])
+    };
     ensure!(
         sha(original_lock)? == input.source_lock.sha256
             && lock["ort_version"] == "1.30.0"
@@ -325,6 +361,14 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             && lock["upstream_commit"] == cpu["upstream_commit"],
         "source lock ancestry differs"
     );
+    if let Some(validated) = &checkpointed {
+        ensure!(
+            validated.static_core_build == input.producer_receipt.sha256
+                && validated.build == build
+                && validated.producer == producer,
+            "shared checkpoint interpretation differs"
+        );
+    }
     let mut components = vec![Component {
         name: "onnxruntime".into(),
         version: Some("1.30.0".into()),
@@ -343,6 +387,15 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             sha(&lock["final_placement"]["patch_sha256"])?,
         ],
     }];
+    if let Some(validated) = &checkpointed {
+        components[0]
+            .source_changes
+            .push(validated.corrected_source);
+        ensure!(
+            validated.provider_dlls.len() == 2,
+            "shared checkpoint provider roster differs"
+        );
+    }
     if let Some(change) = producer.get("changed_source_after_sha256") {
         components[0].source_changes.push(sha(change)?);
     }
@@ -404,9 +457,9 @@ pub(in crate::arbiter::runtime::cuda) fn project(
     }
     let mut tools = Vec::new();
     for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
-        let t = &build["toolchain"][name];
+        let t = &producer["toolchain"][name];
         let version = if name == "compiler" {
-            Some(text(&build["toolchain"]["msvc_toolset"])?)
+            Some(text(&producer["toolchain"]["msvc_toolset"])?)
         } else {
             t.get("version").map(text).transpose()?
         };
@@ -421,7 +474,7 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             path: t["path"].as_str().context("tool path absent")?.into(),
             sha256: sha(&t["sha256"])?,
         };
-        source.authenticate(&pin, size(&t["bytes"])?, 1u64 << 30)?;
+        source.authenticate_historical_tool(name, &pin, size(&t["bytes"])?, 1u64 << 30)?;
         tools.push(Tool {
             name: name.into(),
             version,
@@ -445,7 +498,12 @@ pub(in crate::arbiter::runtime::cuda) fn project(
             .into(),
         sha256: sha(&archive_tool["sha256"])?,
     };
-    source.authenticate(&archive_pin, size(&archive_tool["bytes"])?, 1u64 << 30)?;
+    source.authenticate_historical_tool(
+        "archiver",
+        &archive_pin,
+        size(&archive_tool["bytes"])?,
+        1u64 << 30,
+    )?;
     let nvcc = rows(&cuda)?
         .iter()
         .find(|v| v["path"] == "bin/nvcc.exe")
@@ -459,7 +517,7 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         path: nvcc_path.into(),
         sha256: sha(&nvcc["sha256"])?,
     };
-    source.authenticate(&nvcc_pin, size(&nvcc["bytes"])?, 1u64 << 30)?;
+    source.authenticate_historical_tool("nvcc", &nvcc_pin, size(&nvcc["bytes"])?, 1u64 << 30)?;
     tools.push(Tool {
         name: "nvcc".into(),
         version: None,
@@ -535,8 +593,16 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         target: "x86_64-pc-windows-msvc".into(),
         ort_version: "1.30.0".into(),
         static_core_build: input.producer_receipt.sha256,
-        producer_script_sha256: sha(&build["producer_script_sha256"])?,
-        producer_lock_sha256: sha(&build["producer_lock_sha256"])?,
+        producer_script_sha256: if checkpointed.is_some() {
+            sha(&build["producer_source"]["sha256"])?
+        } else {
+            sha(&build["producer_script_sha256"])?
+        },
+        producer_lock_sha256: if checkpointed.is_some() {
+            input.source_lock.sha256
+        } else {
+            sha(&build["producer_lock_sha256"])?
+        },
         verifier_sha256: input.verifier.sha256,
         build_proof_sha256: input.build_proof.sha256,
         legal_inventory_sha256: input.legal_inventory.sha256,
@@ -544,10 +610,15 @@ pub(in crate::arbiter::runtime::cuda) fn project(
         configure_argv_sha256: Sha256Digest::from_bytes(
             Sha256::digest(serde_json::to_vec(&producer["configure_argv"])?).into(),
         ),
-        historical_failed_parent: producer
-            .get("parent_failed_receipt")
-            .map(|v| sha(&v["sha256"]))
-            .transpose()?,
+        checkpoint_history: checkpointed.as_ref().map(|v| v.history.clone()),
+        historical_failed_parent: if checkpointed.is_some() {
+            Some(sha(&producer["original_failed_build"]["sha256"])?)
+        } else {
+            producer
+                .get("parent_failed_receipt")
+                .map(|v| sha(&v["sha256"]))
+                .transpose()?
+        },
         aggregate: Aggregate {
             file: PublicFile {
                 name: "onnxruntime.lib".into(),

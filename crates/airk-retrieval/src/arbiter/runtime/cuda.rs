@@ -16,6 +16,14 @@ use std::{
     },
     time::Instant,
 };
+#[cfg(feature = "test-support")]
+mod custody;
+#[cfg(feature = "test-support")]
+pub use custody::{
+    HistoricalToolCustodyCopy, MetadataCustodyCopy, decode_historical_tool_custody,
+    decode_metadata_custody, encode_historical_tool_custody, encode_metadata_custody,
+    validate_custody_compatibility, validate_historical_tool_custody, validate_metadata_custody,
+};
 mod eligibility;
 mod manifest;
 mod numeric;
@@ -715,6 +723,12 @@ pub struct RuntimeAssemblyInput {
     pub directory: std::path::PathBuf,
     pub producer_name: String,
     pub producer_sha256: Sha256Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpointed_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custody_copies: Vec<MetadataCustodyCopy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub historical_tool_copies: Vec<HistoricalToolCustodyCopy>,
     pub module_names: Vec<String>,
     pub load_order: Vec<String>,
     pub system_imports: BTreeSet<String>,
@@ -1060,5 +1074,50 @@ pub unsafe fn observe_public_runtime_provenance(
     {
         let _ = raw;
         anyhow::bail!("held public projection factory requires Windows x64")
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn package_request(root: &Path, descriptor: &Path, digest: Sha256Digest) -> Result<()> {
+    let name = descriptor
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .context("package descriptor basename missing")?;
+    ensure!(
+        root.is_absolute()
+            && descriptor.parent() == Some(root)
+            && digest != Sha256Digest::from_bytes([0; 32])
+            && name.len() <= 128
+            && !name.is_empty()
+            && name == name.to_ascii_lowercase()
+            && !name.contains("..")
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')),
+        "package descriptor must be pinned direct safe child"
+    );
+    Ok(())
+}
+/// Descriptive held native package projection only; no activation or execution permit.
+/// # Safety
+/// Caller retains its actual exclusive ServiceLease/compute scope throughout.
+#[cfg(feature = "test-support")]
+pub unsafe fn observe_runtime_package_projection(
+    _native_lease: Arc<dyn Send + Sync>,
+    root: &Path,
+    descriptor: &Path,
+    descriptor_sha256: Sha256Digest,
+    deadline: Instant,
+) -> Result<Vec<u8>> {
+    crate::native_inference::require_service_compute()?;
+    in_time(deadline)?;
+    package_request(root, descriptor, descriptor_sha256)?;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::observe_package_projection(root, descriptor, descriptor_sha256, deadline)
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        anyhow::bail!("native CUDA package projection requires Windows x64")
     }
 }

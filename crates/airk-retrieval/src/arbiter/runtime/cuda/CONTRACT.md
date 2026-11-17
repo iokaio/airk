@@ -254,3 +254,119 @@ then rechecks all held sources within the original deadline. It never changes
 an ACL, ships raw producer records, or creates execution authority. The raw
 checkpointed producer/composite schema is a separate pending strict bridge;
 this implementation does not alias its status to the historical /1 producer.
+
+## Explicit checkpointed scientific build bridge
+
+The private RuntimeAssemblyInput adds an optional checkpointed_proof Core
+ResourceFilePin, default omitted so historical request bytes retain their
+shape. Without it the original producer status/provider branch remains exact.
+With it only the separately owned strict native validator accepts canonical
+proof airk.cuda-static-build-proof/2 and raw composite
+ airk.private.cuda-checkpointed-build/1 with
+PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED. The helper reopens the pinned
+actual sections/source/ancestry/custody/natural closure, returns only verified
+same-build provider rows and the actual raw-composite static identity. No
+status alias or generic new-success acceptance exists. The scientific manifest
+still has fits=[] and remains unapproved; no device/model proof transfers.
+
+The assembly owner retains its no-write/delete handles for payloads and the
+shared Source's exact raw/proof/section inputs through final recheck, under
+the same original metadata deadline. A staged raw composite may have a new
+pathname only when its bytes/size/SHA match the proof's original build_receipt.
+Private raw timing/custody receipts never become distributable public metadata.
+The ignored native request emitter accepts explicit
+AIRK_CUDA_CHECKPOINTED_PROOF + _SHA256 pins; no data-language DTO constructs
+the new field or invents canonical proof output hashes.
+
+The test-support observe_runtime_package_projection accessor accepts actual
+caller-pinned RuntimeManifest/2 bytes and the protected direct payload root.
+It parses the Rust owner, opens/holds/hashes all exact declared DLLs, compares
+actual PE import/delay-import metadata, validates the path-free public
+provenance and all exact legal Notice assets, then rechecks every held input
+under the same original metadata deadline. No ORT/CUDA initialization, driver
+load, provider/session creation, model request, activation or eligibility occurs.
+Scientific /1 descriptors refuse this distributable path. There is no fabricated
+positive descriptor/proof while the genuine completed build is unavailable.
+
+The opaque output schema airk.native.cuda-package-projection/1 contains the
+actual descriptor {name,bytes,sha256}, static_core_build, and sorted files rows
+{name,bytes,sha256} including that descriptor plus every DLL/public provenance/
+legal asset. qualification=false and activation=false are descriptive scope,
+never authority. A builder consumes the exact native projection and genuine
+owning image/source/input/output plus actual parent process/Job settlement
+proof; arbitrary matching JSON is insufficient. The ignored owning selector
+emits a separate NN0 input/output/PID/user receipt but cannot claim its parent's
+future process settlement. No Python RuntimeManifest DTO is introduced.
+
+## Pinned metadata custody copies
+
+Root-approved MetadataCustodyCopy is the Rust-owned test-support private row
+{original:Core ResourceFilePin,copy:Core ResourceFilePin,bytes:u64}. It preserves
+the exact original logical pin/path as ancestry. Source.read may consume a
+fresh protected human-owned byte-identical copy of bounded inert metadata,
+including script/source bytes treated only as pinned build metadata. Original
+and copy SHA must be equal/nonzero, actual copied size exact/nonzero<=16MiB,
+paths absolute/distinct/unique, and the actual held protected copy must rehash
+and retain the same named object. Duplicate destinations/physical copy objects,
+chains, unknown or mismatched requested pins and unused mapping rows refuse.
+Windows case/dot-path aliases do not create additional mapping identities.
+
+No Source.authenticate operation redirects, and no active executable/DLL/PE or
+runtime payload path is aliased. Direct actual payload custody remains its real
+held path/hash/PE proof. A protected metadata copy can be reopened directly or
+through its one exact original logical pin, but never represents protection of
+the old path, ownership adoption, a rewritten receipt or promotion of a failed
+attempt. Source final recheck verifies every consumed copy/held source and
+refuses any unused list entry under the original deadline. Existing ACLs and
+receipts remain untouched.
+
+The projection input and RuntimeAssemblyInput each add custody_copies, omitted
+when empty to preserve historical private serialization. The standalone native
+custody decoder owns airk.native.cuda-metadata-custody/1 {schema,copies}; the
+ignored request emitter accepts AIRK_CUDA_METADATA_CUSTODY +_SHA256 together.
+It consumes this opaque native input rather than adding data-language mirrors.
+Copies must already exist under the approved protected user C anchor; this
+native reader creates no copies or directories and never relaxes integrity.
+
+A shared checkpoint validator may call Source.recheck midway through public
+projection; that rehashes all files held so far under the original cutoff.
+Only the outer complete assembly/projection emission checks that every declared
+custody mapping has been consumed. This preserves strict final unused refusal
+without falsely rejecting valid mappings for later legal/source inputs.
+
+## Inert historical tool evidence
+
+Root additionally approved a distinct historical_tool_copies list of native
+HistoricalToolCustodyCopy {tool,original:Core ResourceFilePin,copy:Core
+ResourceFilePin,bytes}. It is omitted when empty. Only the exact frozen R12
+CMake (12,029,392 bytes, SHA3fe22eb02...) and Ninja (600,576 bytes,
+SHAedccb4c55...) original logical paths and tool roles admit aliases. Their
+original producer before/after seals and the maintained canonical proof remain
+authority for historical identity; current original path protection is never
+claimed. The actual protected copies are streamed/held/rehashed in metadata
+scope only. Source.authenticate_historical_tool is the sole typed consumer;
+its default is the original strict authenticate for direct protected tools.
+
+Source.read, generic authenticate and active executable/DLL/PE/runtime/aggregate
+operations refuse historical aliases, including after a typed use cached the
+copy. Wrong/unknown role, SHA, byte count, original path, duplicate/cross-class
+origin or destination, physical-copy alias, chain and unused mapping refuse.
+No copy is loaded or executed, no original receipt is rewritten and no ACL is
+changed. Exact known historical tool evidence is not executable authority.
+The existing build.ninja graph remains ordinary metadata, not the Ninja EXE.
+
+The standalone decoder owns airk.native.cuda-historical-tool-custody/1
+{schema,copies}; the ignored emitter accepts
+AIRK_CUDA_HISTORICAL_TOOL_CUSTODY +_SHA256 together. The generic historical
+callback is invoked only after named actual producer tool fields and canonical
+proof pins have been reconciled. Provider/runtime/aggregate paths retain direct
+strict authentication. Both metadata and historical consumed-list closures are
+checked only by the outer complete emission; intermediate shared rechecks
+rehash files held so far. Actual aliases are current custody, not old-path
+security or an upgrade of historical failed build outcomes.
+
+
+Owning encode_metadata_custody and encode_historical_tool_custody helpers
+validate the same native types and serialize the existing envelopes under the
+same1MiB cap. Serialization grants no protected-custody or activation proof;
+the held Source revalidates actual pinned copies at consumption.

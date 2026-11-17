@@ -104,6 +104,7 @@ fn fixture() -> (PublicRuntimeProvenance, Vec<manifest::RuntimeFile>) {
             configure_argv_sha256: hash(17),
             legal_inventory_sha256: hash(18),
             legal_owner_sha256: hash(19),
+            checkpoint_history: None,
             historical_failed_parent: Some(hash(20)),
             aggregate: Aggregate {
                 file: PublicFile {
@@ -304,4 +305,68 @@ fn public_provenance_refuses_shared_core_options_fake_source_kind_and_bounds() {
     let mut changed = value.clone();
     changed.options.push(changed.options[0].clone());
     assert!(!accepts(&changed, &native));
+}
+
+#[test]
+fn legacy_public_bytes_omit_checkpoint_history() -> Result<()> {
+    let (value, native) = fixture();
+    let raw = serde_json::to_vec(&value)?;
+    assert!(!String::from_utf8_lossy(&raw).contains("checkpoint_history"));
+    validate_description(&value, value.static_core_build, &native)?;
+    Ok(())
+}
+#[test]
+fn public_checkpoint_history_is_path_free_descriptive_and_strict() -> Result<()> {
+    let (mut value, native) = fixture();
+    let failed: Sha256Digest =
+        "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026".parse()?;
+    value.historical_failed_parent = Some(failed);
+    value.checkpoint_history = Some(CheckpointHistory {
+        mode: "checkpointed-warm".into(),
+        cold_build_qualified: false,
+        qualification: false,
+        approved_plan_sha256: "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97"
+            .parse()?,
+        failed_ancestry: vec![failed],
+        sections: vec![
+            CheckpointSectionHistory {
+                section_id: "flash-remainder".into(),
+                section_index: 0,
+                receipt_sha256: hash(31),
+            },
+            CheckpointSectionHistory {
+                section_id: "llm-remainder".into(),
+                section_index: 1,
+                receipt_sha256: hash(32),
+            },
+            CheckpointSectionHistory {
+                section_id: "final-provider-all-closure".into(),
+                section_index: 2,
+                receipt_sha256: hash(33),
+            },
+        ],
+    });
+    validate_description(&value, value.static_core_build, &native)?;
+    let raw = serde_json::to_vec(&value)?;
+    let decoded: PublicRuntimeProvenance = serde_json::from_slice(&raw)?;
+    assert_eq!(serde_json::to_vec(&decoded)?, raw);
+    value
+        .checkpoint_history
+        .as_mut()
+        .unwrap()
+        .cold_build_qualified = true;
+    assert!(validate_description(&value, value.static_core_build, &native).is_err());
+    value
+        .checkpoint_history
+        .as_mut()
+        .unwrap()
+        .cold_build_qualified = false;
+    value
+        .checkpoint_history
+        .as_mut()
+        .unwrap()
+        .sections
+        .swap(0, 1);
+    assert!(validate_description(&value, value.static_core_build, &native).is_err());
+    Ok(())
 }

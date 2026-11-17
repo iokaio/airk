@@ -1,0 +1,370 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Literal synthetic build metadata: never an actual producer or qualification.
+use super::*;
+use serde_json::json;
+#[derive(Default)]
+struct Memory {
+    files: BTreeMap<String, Vec<u8>>,
+}
+impl Memory {
+    fn bytes(&mut self, name: &str, raw: Vec<u8>) -> FilePin {
+        let path = std::env::temp_dir()
+            .join("airk-checkpoint-metadata-synthetic")
+            .join(name)
+            .to_string_lossy()
+            .into_owned();
+        let sha256 = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
+        let bytes = raw.len() as u64;
+        self.files.insert(path.clone(), raw);
+        FilePin {
+            path,
+            bytes,
+            sha256,
+        }
+    }
+    fn json(&mut self, name: &str, v: Value) -> FilePin {
+        self.bytes(name, serde_json::to_vec(&v).unwrap())
+    }
+}
+impl Source for Memory {
+    fn read(&self, p: &ResourceFilePin, max: u64) -> Result<Vec<u8>> {
+        let raw = self
+            .files
+            .iter()
+            .find_map(|(path, bytes)| {
+                (std::path::Path::new(path) == std::path::Path::new(&p.path)).then_some(bytes)
+            })
+            .with_context(|| format!("synthetic source absent: {}", p.path))?;
+        ensure!(raw.len() as u64 <= max, "synthetic read cap");
+        Ok(raw.clone())
+    }
+    fn authenticate(&self, p: &ResourceFilePin, n: u64, max: u64) -> Result<()> {
+        let raw = self.read(p, max)?;
+        ensure!(
+            raw.len() as u64 == n
+                && Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == p.sha256,
+            "synthetic authenticate differs"
+        );
+        Ok(())
+    }
+    fn recheck(&self) -> Result<()> {
+        Ok(())
+    }
+}
+fn fixture() -> Result<(Memory, ResourceFilePin, ResourceFilePin, Authority)> {
+    let mut m = Memory::default();
+    let root = std::env::temp_dir().join("airk-checkpoint-metadata-synthetic");
+    let first_runner = m.bytes("first.py", b"synthetic first runner".to_vec());
+    let next_runner = m.bytes("next.py", b"synthetic next runner".to_vec());
+    let first_input = m.bytes("first-input", b"synthetic first input".to_vec());
+    let next_input = m.bytes("next-input", b"synthetic next input".to_vec());
+    let composer = m.bytes("composer.py", b"synthetic composer".to_vec());
+    let composer_input = m.bytes("composer-input", b"synthetic composer input".to_vec());
+    let ninja = m.bytes("b/Release/build.ninja", b"synthetic Ninja graph".to_vec());
+    let source_inventory = m.json(
+        "source.json",
+        json!([{"path":"synthetic-source","sha256":"ab"}]),
+    );
+    let frontend = m.json("frontend-source-files.json", json!(["synthetic frontend"]));
+    let cuda = m.json("cuda-toolkit-inputs.json", json!(["synthetic CUDA"]));
+    let inputs = m.json(
+        "frozen-input-closure.json",
+        json!(["synthetic frozen inputs"]),
+    );
+    let mut tools = serde_json::Map::new();
+    let mut tool_pins = Vec::new();
+    for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
+        let p = m.bytes(name, format!("synthetic {name}").into_bytes());
+        let mut value = serde_json::to_value(&p)?;
+        if name == "cmake" {
+            value["version"] = json!("3.31.6");
+        }
+        tools.insert(name.into(), value);
+        tool_pins.push(p);
+    }
+    tools.insert("msvc_toolset".into(), json!("14.44.35207"));
+    let tools = Value::Object(tools);
+    let corrected = Sha256Digest::from_bytes([23; 32]);
+    let target_hash = Sha256Digest::from_bytes([24; 32]);
+    let preflight = json!({"ninja_sha256":ninja.sha256,"final_capi_source_sha256":corrected});
+    let policy = json!({"one_static_core":true,"optional_shared_cuda_provider":true,"runtime_version":"1.30.0"});
+    let configure = json!(["synthetic-cmake", "-Donnxruntime_USE_CUDA=ON"]);
+    let failed=m.json("failed.json",json!({"schema":"airk.private.cuda-runtime-continuation/2","status":"FAILED_PRESERVED_NO_RETRY","commands":[{"exit_code":77,"timed_out":true,"owned_descendants_settled":true,"owned_job_forced_termination":true,"owned_job_final_active_processes":0}],"toolchain":tools,"configure_argv":configure,"configured_preflight":preflight,"policy":policy,"original_start_utc":"2026-11-17T05:27:32Z"}));
+    let initial_log = m.bytes("ninja-before-log", b"initial log".to_vec());
+    let initial_deps = m.bytes("ninja-before-deps", b"initial deps".to_vec());
+    let warm = m.json("warm0", json!(["initial synthetic warm output"]));
+    let plan=m.json("plan",json!({"schema":"airk.private.cuda-checkpointed-build-plan/1","actual_build_root":root,"previous_failed_R12":failed,"current_source_inventory":source_inventory,"configured_preflight":preflight,"sections":[{"id":"flash-remainder","targets":["onnxruntime_providers_cuda_flash_attention"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","onnxruntime_providers_cuda_flash_attention","--parallel","2"]},{"id":"llm-remainder","targets":["onnxruntime_providers_cuda_llm"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","onnxruntime_providers_cuda_llm","--parallel","2"]},{"id":"final-provider-all-closure","targets":["all","re2"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","all","re2","--parallel","2"]}]}));
+    let plan_value = plan.json(&m)?;
+    let manifest=m.json("source-manifest",json!({"schema":"airk.private.cuda-materialized-source/1","actual_build_root":root,"corrected_capi_sha256":corrected,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"tools":tools,"configured_preflight":preflight,"configure_argv":configure,"policy":policy,"failed_r12_sha256":failed.sha256}));
+    let mut section_rows = Vec::new();
+    let mut prior: Option<FilePin> = None;
+    let mut prior_warm = warm.clone();
+    let mut prior_log = initial_log;
+    let mut prior_deps = initial_deps;
+    for (i, id) in [
+        "flash-remainder",
+        "llm-remainder",
+        "final-provider-all-closure",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let after_log = m.bytes(
+            &format!("ninja-after-log{i}"),
+            format!("log{i}").into_bytes(),
+        );
+        let after_deps = m.bytes(
+            &format!("ninja-after-deps{i}"),
+            format!("deps{i}").into_bytes(),
+        );
+        let after_warm = m.json(
+            &format!("warm{}", i + 1),
+            json!([format!("synthetic warm {}", i + 1)]),
+        );
+        let custody = NinjaCustody {
+            before_log: prior_log.clone(),
+            before_deps: prior_deps.clone(),
+            after_log: after_log.clone(),
+            after_deps: after_deps.clone(),
+        };
+        let hour = 9 + i;
+        let start = format!("2026-11-17T{hour:02}:00:00Z");
+        let end = format!("2026-11-17T{hour:02}:00:10Z");
+        let cutoff = format!("2026-11-17T{:02}:00:00Z", hour + 3);
+        let mut v = json!({"schema":"airk.private.cuda-checkpoint-section/1","status":"PASS_TARGET_SECTION_ONLY_UNQUALIFIED","qualification":false,"cold_build_qualified":false,"section_id":id,"section_index":i,"plan":plan,"runner":if i==0{&first_runner}else{&next_runner}});
+        v.as_object_mut().unwrap().extend(
+            json!({"input_contract":if i==0{&first_input}else{&next_input},"predecessor":prior,"failed_ancestry":[{"path":failed.path,"bytes":failed.bytes,"sha256":failed.sha256,"status":"FAILED_PRESERVED_NO_RETRY","scope":"synthetic original failure remains failed","never_relabelled":true}],"native_argv":plan_value["sections"][i]["argv"],"original_command_argv":["cmd.exe","/c","synthetic"],"warm_checkpoint_before":prior_warm,"warm_checkpoint_after":after_warm,"source_manifest_before":manifest}).as_object().unwrap().clone(),
+        );
+        v.as_object_mut().unwrap().extend(
+            json!({"source_manifest_after":manifest,"ninja_log_before":prior_log,"ninja_deps_before":prior_deps,"ninja_log_after":after_log,"ninja_deps_after":after_deps,"started_utc":start,"completed_utc":end,"absolute_cutoff_utc":cutoff}).as_object().unwrap().clone(),
+        );
+        v.as_object_mut().unwrap().extend(
+            json!({"global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","original_section_seconds":10800,"elapsed_seconds":10,"observed_monotonic_seconds":100000+i*20000,"converted_monotonic_deadline":110800+i*20000,"command":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42,"start_utc":start,"finished_utc":end}}}).as_object().unwrap().clone(),
+        );
+        if i == 0 {
+            v["flash_outputs_completed"] = json!(48);
+        } else {
+            v["target_outputs_completed"] = json!(if i == 1 { 43 } else { 128 });
+        }
+        let receipt = m.json(&format!("section{i}"), v);
+        section_rows.push(Section {
+            section_id: (*id).into(),
+            section_index: i as u64,
+            receipt: receipt.clone(),
+            ninja_state_custody: custody,
+        });
+        prior = Some(receipt);
+        prior_log = after_log;
+        prior_deps = after_deps;
+        prior_warm = after_warm;
+    }
+    let mut dlls = Vec::new();
+    for name in [
+        "onnxruntime_providers_shared.dll",
+        "onnxruntime_providers_cuda.dll",
+    ] {
+        let file = m.bytes(
+            &format!("b/Release/{name}"),
+            format!("synthetic {name}").into_bytes(),
+        );
+        dlls.push(Output {
+            path: format!("b/Release/{name}"),
+            bytes: file.bytes,
+            sha256: file.sha256,
+        });
+    }
+    let libraries = vec![Output {
+        path: "b/Release/onnxruntime_session.lib".into(),
+        bytes: 999,
+        sha256: Sha256Digest::from_bytes([31; 32]),
+    }];
+    let mut raw_value = json!({"schema":"airk.private.cuda-checkpointed-build/1","status":"PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED","mode":"checkpointed-warm","qualification":false,"cold_build_qualified":false,"plan":plan,"producer_source":composer,"input_contract":composer_input});
+    raw_value.as_object_mut().unwrap().extend(
+        json!({"original_failed_build":failed,"failed_ancestry":[failed],"warm_baseline":warm,"warm_final":prior_warm,"sections":section_rows,"source_manifest":manifest,"actual_build_root":root,"source_inventory_sha256":source_inventory.sha256}).as_object().unwrap().clone(),
+    );
+    raw_value.as_object_mut().unwrap().extend(
+        json!({"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools}).as_object().unwrap().clone(),
+    );
+    raw_value.as_object_mut().unwrap().extend(
+        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959}).as_object().unwrap().clone(),
+    );
+    raw_value.as_object_mut().unwrap().extend(
+        json!({"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    let raw = m.json("composite", raw_value);
+    let mut proof_value = json!({"schema":"airk.cuda-static-build-proof/2","target":"x86_64-pc-windows-msvc","ort_version":"1.30.0","build_receipt":raw,"producer_source":composer,"approved_plan_sha256":plan.sha256,"original_failed_R12":failed,"failed_ancestry":[failed]});
+    proof_value.as_object_mut().unwrap().extend(
+        json!({"sections":section_rows,"source_manifest":manifest,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_input_closure_sha256":inputs.sha256,"ninja":ninja,"static_target_closure":{"sha256":target_hash,"count":96}}).as_object().unwrap().clone(),
+    );
+    proof_value.as_object_mut().unwrap().extend(
+        json!({"libraries":libraries,"provider_dlls":dlls,"toolchain_pins":tool_pins,"qualification":false,"activation_pins_available":false}).as_object().unwrap().clone(),
+    );
+    let proof = m.json("proof", proof_value);
+    let authority = Authority {
+        plan: plan.sha256,
+        failed: failed.sha256,
+        failed_ancestry: vec![failed.sha256],
+        first_runner: first_runner.sha256,
+        first_input: first_input.sha256,
+        next_runner: next_runner.sha256,
+        next_input: next_input.sha256,
+        composer: composer.sha256,
+        composer_input: composer_input.sha256,
+    };
+    Ok((m, raw.resource()?, proof.resource()?, authority))
+}
+fn reseal(m: &mut Memory, raw: Value, mut proof: Value) -> (ResourceFilePin, ResourceFilePin) {
+    let rp = m.json("mutated-composite", raw);
+    proof["build_receipt"] = serde_json::to_value(&rp).unwrap();
+    let bp = m.json("mutated-proof", proof);
+    (rp.resource().unwrap(), bp.resource().unwrap())
+}
+fn refuse(error: anyhow::Error, expected: &str) {
+    assert!(
+        format!("{error:#}").contains(expected),
+        "unexpected refusal: {error:#}"
+    );
+}
+#[test]
+fn synthetic_ordered_checkpoint_returns_only_descriptive_provider_rows() -> Result<()> {
+    let (m, r, p, a) = fixture()?;
+    let v = validate_with_authority(&m, &r, &p, &a)?;
+    assert_eq!(v.static_core_build, r.sha256);
+    assert_eq!(
+        v.provider_dlls
+            .iter()
+            .map(|x| x.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "onnxruntime_providers_shared.dll",
+            "onnxruntime_providers_cuda.dll"
+        ]
+    );
+    assert!(!v.history.cold_build_qualified);
+    assert!(!v.history.qualification);
+    assert_eq!(v.history.failed_ancestry, [a.failed]);
+    Ok(())
+}
+#[test]
+fn resealed_failed_or_cold_composite_is_not_a_status_alias() -> Result<()> {
+    for (key, value) in [
+        ("status", json!("PASS_PRODUCER_ONLY_UNQUALIFIED")),
+        ("cold_build_qualified", json!(true)),
+        ("mode", json!("cold")),
+    ] {
+        let (mut m, r, p, a) = fixture()?;
+        let mut raw = json(&m, &r)?;
+        raw[key] = value;
+        let proof = json(&m, &p)?;
+        let (r, p) = reseal(&mut m, raw, proof);
+        refuse(
+            validate_with_authority(&m, &r, &p, &a)
+                .err()
+                .context("expected refusal")?,
+            "exact checkpoint producer/proof form",
+        );
+    }
+    Ok(())
+}
+#[test]
+fn resealed_missing_or_reordered_sections_refuse() -> Result<()> {
+    for missing in [true, false] {
+        let (mut m, r, p, a) = fixture()?;
+        let mut raw = json(&m, &r)?;
+        let mut proof = json(&m, &p)?;
+        if missing {
+            raw["sections"].as_array_mut().unwrap().pop();
+        } else {
+            raw["sections"].as_array_mut().unwrap().swap(0, 1);
+        }
+        proof["sections"] = raw["sections"].clone();
+        let (r, p) = reseal(&mut m, raw, proof);
+        let error = validate_with_authority(&m, &r, &p, &a)
+            .err()
+            .context("expected refusal")?;
+        refuse(
+            error,
+            if missing {
+                "exact ordered three sections"
+            } else {
+                "section ordering"
+            },
+        );
+    }
+    Ok(())
+}
+#[test]
+fn tree_job_force_and_missing_whole_tree_are_independent_refusals() {
+    let base = json!({"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42}});
+    assert!(natural(&base).is_ok());
+    for (key, value) in [
+        ("owned_job_forced_termination", json!(true)),
+        ("owned_job_final_active_processes", json!(1)),
+        ("owned_descendants_settled", json!(false)),
+        ("actual_tree_result", Value::Null),
+    ] {
+        let mut bad = base.clone();
+        bad[key] = value;
+        refuse(natural(&bad).unwrap_err(), "whole tree/Job");
+    }
+}
+#[test]
+fn original_cutoff_does_not_renew_and_fractional_utc_is_preserved() -> Result<()> {
+    let (m, r, _, _) = fixture()?;
+    let raw = json(&m, &r)?;
+    let mut v = pin(&raw["sections"][0]["receipt"])?.json(&m)?;
+    assert!(clocks(&v).is_ok());
+    v["absolute_cutoff_utc"] = json!("2026-11-17T12:00:01Z");
+    refuse(clocks(&v).unwrap_err(), "original section/campaign cutoff");
+    assert_eq!(
+        utc("2026-11-17T09:00:00.0000001Z")? - utc("2026-11-17T09:00:00Z")?,
+        100
+    );
+    for invalid in [
+        "2026-11-17T09:00:00+01:00",
+        "2026-11-31T00:00:00Z",
+        "2026-11-17T09:00:00.1234567890Z",
+    ] {
+        assert!(utc(invalid).is_err());
+    }
+    Ok(())
+}
+#[test]
+fn immutable_ninja_copy_must_equal_original_bytes_without_old_live_path_read() -> Result<()> {
+    let (mut m, r, _, _) = fixture()?;
+    let raw = json(&m, &r)?;
+    let row: Section = typed(&raw["sections"][0])?;
+    let mut v = row.receipt.json(&m)?;
+    let old = pin(&v["ninja_log_before"])?;
+    let copy = m.bytes("independent-before-copy", m.files[&old.path].clone());
+    let mut copied = row.clone();
+    copied.ninja_state_custody.before_log = copy;
+    v["ninja_log_before"]["path"] = json!(root_absent());
+    assert!(custody(&m, &v, &copied, 0, None).is_ok());
+    copied.ninja_state_custody.before_log.bytes += 1;
+    refuse(
+        custody(&m, &v, &copied, 0, None).unwrap_err(),
+        "immutable Ninja bytes differ",
+    );
+    Ok(())
+}
+fn root_absent() -> String {
+    std::env::temp_dir()
+        .join("old-legitimately-mutated-ninja-not-reopened")
+        .to_string_lossy()
+        .into_owned()
+}
+#[test]
+fn canonical_proof_float_unknown_and_duplicate_keys_refuse() -> Result<()> {
+    let (mut m, r, p, a) = fixture()?;
+    let mut proof = json(&m, &p)?;
+    proof["unknown"] = json!(true);
+    let p = m.json("unknown-proof", proof).resource()?;
+    assert!(validate_with_authority(&m, &r, &p, &a).is_err());
+    assert!(strict::parse(br#"{"schema":"a","schema":"b"}"#).is_err());
+    assert!(canonical_sha(&json!({"elapsed_seconds":1.5})).is_err());
+    Ok(())
+}

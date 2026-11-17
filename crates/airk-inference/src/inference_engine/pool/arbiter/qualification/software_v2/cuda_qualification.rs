@@ -17,6 +17,12 @@ enum Request {
         assembly: RuntimeAssemblyInput,
         deadline_ms: u64,
     },
+    PackageProjection {
+        schema: String,
+        directory: PathBuf,
+        descriptor: ResourceFilePin,
+        deadline_ms: u64,
+    },
     Prepare {
         schema: String,
         cpu_input: ResourceFilePin,
@@ -238,10 +244,66 @@ fn emit_cuda_component_probe_request() -> Result<()> {
                 directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
                 producer_name: text("AIRK_CUDA_PRODUCER_NAME")?,
                 producer_sha256: text("AIRK_CUDA_PRODUCER_SHA256")?.parse()?,
+                checkpointed_proof: match std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF") {
+                    None => {
+                        ensure!(
+                            std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF_SHA256").is_none(),
+                            "checkpoint proof hash requires explicit proof path"
+                        );
+                        None
+                    }
+                    Some(_) => Some(env_pin(
+                        "AIRK_CUDA_CHECKPOINTED_PROOF",
+                        "AIRK_CUDA_CHECKPOINTED_PROOF_SHA256",
+                    )?),
+                },
+                custody_copies: match std::env::var_os("AIRK_CUDA_METADATA_CUSTODY") {
+                    None => {
+                        ensure!(
+                            std::env::var_os("AIRK_CUDA_METADATA_CUSTODY_SHA256").is_none(),
+                            "custody hash requires explicit native custody input"
+                        );
+                        Vec::new()
+                    }
+                    Some(_) => cuda::decode_metadata_custody(&pinned(
+                        &env_pin(
+                            "AIRK_CUDA_METADATA_CUSTODY",
+                            "AIRK_CUDA_METADATA_CUSTODY_SHA256",
+                        )?,
+                        1 << 20,
+                    )?)?,
+                },
+                historical_tool_copies: match std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY")
+                {
+                    None => {
+                        ensure!(
+                            std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256").is_none(),
+                            "historical custody hash requires native input"
+                        );
+                        Vec::new()
+                    }
+                    Some(_) => cuda::decode_historical_tool_custody(&pinned(
+                        &env_pin(
+                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY",
+                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256",
+                        )?,
+                        1 << 20,
+                    )?)?,
+                },
                 module_names: list("AIRK_CUDA_MODULE_NAMES")?,
                 load_order: list("AIRK_CUDA_LOAD_ORDER")?,
                 system_imports: list("AIRK_CUDA_SYSTEM_IMPORTS")?.into_iter().collect(),
             },
+            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
+        }
+    } else if mode == "package_projection" {
+        Request::PackageProjection {
+            schema: SCHEMA.into(),
+            directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
+            descriptor: env_pin(
+                "AIRK_CUDA_RUNTIME_MANIFEST",
+                "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
+            )?,
             deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
         }
     } else {
@@ -616,3 +678,265 @@ fn cuda_selected_focus_fp32_512_component() -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+#[test]
+fn historical_assembly_request_omits_new_checkpoint_authority_and_requires_explicit_pin()
+-> Result<()> {
+    let assembly = RuntimeAssemblyInput {
+        directory: PathBuf::from("literal-root"),
+        producer_name: "producer.json".into(),
+        producer_sha256: Sha256Digest::from_bytes([1; 32]),
+        checkpointed_proof: None,
+        custody_copies: Vec::new(),
+        historical_tool_copies: Vec::new(),
+        module_names: vec![],
+        load_order: vec![],
+        system_imports: BTreeSet::new(),
+    };
+    let mut json = serde_json::to_value(&assembly)?;
+    assert!(json.get("checkpointed_proof").is_none());
+    json["checkpointed_proof"] =
+        serde_json::json!({"path":"literal-proof.json","sha256":Sha256Digest::from_bytes([2;32])});
+    let decoded: RuntimeAssemblyInput = serde_json::from_value(json.clone())?;
+    assert_eq!(
+        decoded.checkpointed_proof.unwrap().sha256,
+        Sha256Digest::from_bytes([2; 32])
+    );
+    json["checkpointed_proof"]["approved"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<RuntimeAssemblyInput>(json).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "NN0: supplied genuine manifest/2+held public closure; package metadata only, no activation"]
+fn emit_cuda_runtime_package_projection_from_held_native_closure() -> Result<()> {
+    let started = Instant::now();
+    let (request, pin) = request()?;
+    let Request::PackageProjection {
+        schema,
+        directory,
+        descriptor,
+        deadline_ms,
+    } = request
+    else {
+        anyhow::bail!("package projection request required")
+    };
+    ensure!(
+        schema == SCHEMA && (1..=120000).contains(&deadline_ms),
+        "package projection schema/deadline differs"
+    );
+    let deadline = started + Duration::from_millis(deadline_ms);
+    require_installed_descriptor_name(Path::new(&descriptor.path))?;
+    let (_parent, control) = private_control()?;
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
+    let bytes = owner.run(|| -> Result<Vec<u8>> {
+        // SAFETY: this exact live lease and the actual owning compute scope are retained.
+        unsafe {
+            cuda::observe_runtime_package_projection(
+                lease.clone(),
+                &directory,
+                Path::new(&descriptor.path),
+                descriptor.sha256,
+                deadline,
+            )
+        }
+    })??;
+    ensure!(
+        Instant::now() < deadline,
+        "original metadata deadline exceeded"
+    );
+    let path = output()?;
+    let projection = write_new(&path, &bytes)?;
+    write_json(
+        &path.with_extension("receipt.json"),
+        &json!({"schema":"airk.private.cuda-runtime-package-projection-emission/1","input":pin,"descriptor":descriptor,"projection":projection,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"runtime_admission_dispatched":false,"forward_count_observed":null,"activation":false,"qualification":false,"scope":"actual held metadata projection only; parent process/Job custody is separate"}),
+    )?;
+    Ok(())
+}
+
+fn require_installed_descriptor_name(descriptor: &Path) -> Result<()> {
+    let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
+    ensure!(
+        descriptor.file_name().is_some() && descriptor.file_name() == installed.file_name(),
+        "package descriptor basename differs from the actual native installed loader owner"
+    );
+    Ok(())
+}
+#[test]
+fn package_projection_selector_uses_installed_native_descriptor_filename() -> Result<()> {
+    // Filename contract only. No descriptor file or positive runtime proof exists.
+    let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
+    assert_eq!(
+        installed.file_name(),
+        Some(std::ffi::OsStr::new("airk-cuda-runtime.json"))
+    );
+    require_installed_descriptor_name(&installed)?;
+    assert!(
+        require_installed_descriptor_name(&installed.with_file_name("other-runtime.json")).is_err()
+    );
+    assert!(require_installed_descriptor_name(Path::new("")).is_err());
+    Ok(())
+}
+
+fn custody_locator_rows(
+    raw: &[u8],
+) -> Result<(
+    Vec<cuda::MetadataCustodyCopy>,
+    Vec<cuda::HistoricalToolCustodyCopy>,
+)> {
+    ensure!(raw.len() <= 1 << 20, "custody locator input cap");
+    let text = std::str::from_utf8(raw)?;
+    let mut metadata = Vec::new();
+    let mut historical = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        ensure!(fields.len() == 6, "six custody locator fields required");
+        let original = ResourceFilePin {
+            path: fields[2].into(),
+            sha256: fields[4].parse()?,
+        };
+        let copy = ResourceFilePin {
+            path: fields[3].into(),
+            sha256: original.sha256,
+        };
+        let bytes = fields[5].parse()?;
+        match fields[0] {
+            "metadata" => {
+                ensure!(fields[1] == "-", "metadata has no historical role");
+                metadata.push(cuda::MetadataCustodyCopy {
+                    original,
+                    copy,
+                    bytes,
+                });
+            }
+            "historical" => historical.push(cuda::HistoricalToolCustodyCopy {
+                tool: fields[1].into(),
+                original,
+                copy,
+                bytes,
+            }),
+            _ => anyhow::bail!("unknown custody locator class"),
+        }
+    }
+    cuda::validate_custody_compatibility(&metadata, &historical)?;
+    Ok((metadata, historical))
+}
+fn check_custody_file(pin: &ResourceFilePin, expected_bytes: u64, deadline: Instant) -> Result<()> {
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired"
+    );
+    let bytes = pinned(pin, 16 << 20)?;
+    ensure!(
+        bytes.len() as u64 == expected_bytes,
+        "custody locator byte count differs from actual file"
+    );
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired"
+    );
+    Ok(())
+}
+#[test]
+#[ignore = "NN0: actual reviewed locator rows and byte-identical existing copies; emits owning Rust custody inputs only"]
+fn emit_cuda_metadata_custody_inputs() -> Result<()> {
+    let started = Instant::now();
+    let limit = number("AIRK_CUDA_DEADLINE_MS")?;
+    ensure!(
+        (1..=120000).contains(&limit),
+        "custody original metadata budget differs"
+    );
+    let deadline = started + Duration::from_millis(limit);
+    let locator = env_pin(
+        "AIRK_CUDA_CUSTODY_LOCATORS",
+        "AIRK_CUDA_CUSTODY_LOCATORS_SHA256",
+    )?;
+    let (metadata, historical) = custody_locator_rows(&pinned(&locator, 1 << 20)?)?;
+    for row in &metadata {
+        check_custody_file(&row.original, row.bytes, deadline)?;
+        check_custody_file(&row.copy, row.bytes, deadline)?;
+    }
+    for row in &historical {
+        check_custody_file(&row.original, row.bytes, deadline)?;
+        check_custody_file(&row.copy, row.bytes, deadline)?;
+    }
+    let a = cuda::encode_metadata_custody(&metadata)?;
+    let b = cuda::encode_historical_tool_custody(&historical)?;
+    let directory = PathBuf::from(text("AIRK_CUDA_CUSTODY_OUTPUT_DIRECTORY")?);
+    ensure!(
+        std::fs::symlink_metadata(&directory)?.is_dir(),
+        "existing approved custody output directory required"
+    );
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired"
+    );
+    let metadata_pin = write_new(&directory.join("metadata-custody.json"), &a)?;
+    let historical_pin = write_new(&directory.join("historical-tool-custody.json"), &b)?;
+    // Reopen the concrete original/copy pins after serialization; no mutable
+    // file becomes an execution/protected-custody permit through this data.
+    for row in &metadata {
+        check_custody_file(&row.original, row.bytes, deadline)?;
+        check_custody_file(&row.copy, row.bytes, deadline)?;
+    }
+    for row in &historical {
+        check_custody_file(&row.original, row.bytes, deadline)?;
+        check_custody_file(&row.copy, row.bytes, deadline)?;
+    }
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired"
+    );
+    pinned(&locator, 1 << 20)?;
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired"
+    );
+    write_json(
+        &directory.join("custody-emission.json"),
+        &json!({"schema":"airk.private.cuda-custody-input-emission/1","input":locator,"metadata":metadata_pin,"historical":historical_pin,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"scope":"actual file hash/size metadata only; protected held Source revalidates before use; no copies or activation","runtime_admission_dispatched":false,"model_requests_dispatched":false,"forward_count_observed":null}),
+    )?;
+    ensure!(
+        Instant::now() < deadline,
+        "original custody emission deadline expired after receipt settlement"
+    );
+    Ok(())
+}
+#[test]
+fn custody_locator_parser_emits_owned_envelopes_and_refuses_unknown_duplicate_or_mismatched_rows()
+-> Result<()> {
+    let base = std::env::temp_dir();
+    let original = base.join("literal-original.json");
+    let copy = base.join("literal-copy.json");
+    let line = format!(
+        "metadata\t-\t{}\t{}\t{}\t3\n",
+        original.display(),
+        copy.display(),
+        "01".repeat(32)
+    );
+    let (metadata, historical) = custody_locator_rows(line.as_bytes())?;
+    let raw = cuda::encode_metadata_custody(&metadata)?;
+    let value: serde_json::Value = serde_json::from_slice(&raw)?;
+    assert_eq!(value["schema"], "airk.native.cuda-metadata-custody/1");
+    assert_eq!(value["copies"].as_array().unwrap().len(), 1);
+    assert_eq!(cuda::decode_metadata_custody(&raw)?.len(), 1);
+    assert!(
+        cuda::decode_historical_tool_custody(&cuda::encode_historical_tool_custody(&historical)?)?
+            .is_empty()
+    );
+    assert!(custody_locator_rows((line.clone() + &line).as_bytes()).is_err());
+    assert!(custody_locator_rows(line.replace("metadata\t-", "executable\t-").as_bytes()).is_err());
+    assert!(
+        custody_locator_rows(line.replace("metadata\t-", "metadata\tninja").as_bytes()).is_err()
+    );
+    assert!(
+        custody_locator_rows(line.replace("metadata\t-", "historical\tninja").as_bytes()).is_err()
+    );
+    assert!(custody_locator_rows(line.replace("\t3\n", "\t0\n").as_bytes()).is_err());
+    assert!(custody_locator_rows(b"metadata\t-\ttoo-few").is_err());
+    Ok(())
+}

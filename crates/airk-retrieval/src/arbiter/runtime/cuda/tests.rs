@@ -489,3 +489,29 @@ fn qualified_scientific_route_preserves_scoring_while_product_requires_live_elig
     );
     Ok(())
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn package_projection_refuses_unpinned_nonabsolute_and_aliased_descriptor_requests() {
+    let sha = Sha256Digest::from_bytes([1; 32]);
+    assert!(
+        package_request(
+            Path::new("relative"),
+            Path::new("relative/descriptor.json"),
+            sha
+        )
+        .is_err()
+    );
+    let absolute = std::env::current_dir().unwrap();
+    assert!(package_request(&absolute, &absolute.join("../descriptor.json"), sha).is_err());
+    assert!(package_request(&absolute, &absolute.join("nested/descriptor.json"), sha).is_err());
+    assert!(package_request(&absolute, &absolute.join("DESCRIPTOR.json"), sha).is_err());
+    assert!(
+        package_request(
+            &absolute,
+            &absolute.join("descriptor.json"),
+            Sha256Digest::from_bytes([0; 32])
+        )
+        .is_err()
+    );
+}

@@ -857,18 +857,66 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         producer.sha == input.producer_sha256,
         "actual reviewed producer receipt pin differs"
     );
-    let receipt: serde_json::Value = serde_json::from_slice(&read(&producer.file, 16 << 20)?)?;
     ensure!(
-        receipt["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
-        "producer is not naturally completed successful unqualified build"
+        input.checkpointed_proof.is_some()
+            || (input.custody_copies.is_empty() && input.historical_tool_copies.is_empty()),
+        "custody mappings require explicit checkpoint branch"
     );
-    let provider_rows = receipt["provider_dlls"]
-        .as_array()
-        .context("actual provider outputs missing")?;
-    ensure!(
-        provider_rows.len() == 2,
-        "provider pair output must be exact"
-    );
+    super::custody::validate_custody_compatibility(
+        &input.custody_copies,
+        &input.historical_tool_copies,
+    )?;
+    let checkpoint_source = ProjectionSource {
+        deadline,
+        files: std::cell::RefCell::new(BTreeMap::new()),
+        custody: super::custody::Custody::new(&input.custody_copies)?,
+        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
+    };
+    let checkpointed = if let Some(proof) = &input.checkpointed_proof {
+        let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
+            path: input
+                .directory
+                .join(&input.producer_name)
+                .to_str()
+                .context("producer path is not UTF8")?
+                .into(),
+            sha256: input.producer_sha256,
+        };
+        let verified = super::provenance::projection::validate_checkpointed_producer(
+            &checkpoint_source,
+            &raw,
+            proof,
+        )?;
+        ensure!(
+            verified.static_core_build == input.producer_sha256,
+            "checkpointed raw composition differs from reviewed native static identity"
+        );
+        Some(verified)
+    } else {
+        None
+    };
+    // Historical schema/status remains exact and is never an alias for checkpointed success.
+    let receipt = if checkpointed.is_none() {
+        Some(serde_json::from_slice::<serde_json::Value>(&read(
+            &producer.file,
+            16 << 20,
+        )?)?)
+    } else {
+        None
+    };
+    let provider_rows = if let Some(receipt) = &receipt {
+        ensure!(
+            receipt["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
+            "producer is not naturally completed successful unqualified build"
+        );
+        let rows = receipt["provider_dlls"]
+            .as_array()
+            .context("actual provider outputs missing")?;
+        ensure!(rows.len() == 2, "provider pair output must be exact");
+        Some(rows)
+    } else {
+        None
+    };
     let mut files = Vec::new();
     let mut held = vec![producer];
     for name in &input.module_names {
@@ -880,15 +928,30 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
         if name.starts_with("onnxruntime_providers_") {
             ensure!(
-                provider_rows
-                    .iter()
-                    .filter(|v| v["path"]
-                        .as_str()
-                        .is_some_and(|p| p.rsplit('/').next() == Some(name.as_str()))
-                        && v["sha256"].as_str() == Some(value.sha.to_string().as_str())
-                        && v["bytes"].as_u64() == Some(value.bytes))
-                    .count()
-                    == 1,
+                if let Some(verified) = &checkpointed {
+                    verified
+                        .provider_dlls
+                        .iter()
+                        .filter(|v| {
+                            v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
+                        })
+                        .count()
+                        == 1
+                } else {
+                    provider_rows
+                        .as_ref()
+                        .context("legacy provider output rows missing")?
+                        .iter()
+                        .filter(|v| {
+                            v["path"]
+                                .as_str()
+                                .is_some_and(|p| p.rsplit('/').next() == Some(name.as_str()))
+                                && v["sha256"].as_str() == Some(value.sha.to_string().as_str())
+                                && v["bytes"].as_u64() == Some(value.bytes)
+                        })
+                        .count()
+                        == 1
+                },
                 "provider DLL does not match actual same-build producer output"
             );
         }
@@ -917,6 +980,9 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
     for file in &held {
         file.recheck(deadline)?;
     }
+    super::provenance::projection::Source::recheck(&checkpoint_source)?;
+    checkpoint_source.custody.recheck()?;
+    checkpoint_source.historical.recheck()?;
     in_time(deadline)?;
     Ok(serde_json::to_vec(&manifest)?)
 }
@@ -959,6 +1025,8 @@ fn final_collector() -> Result<super::placement::Collector> {
 struct ProjectionSource {
     deadline: Instant,
     files: std::cell::RefCell<BTreeMap<PathBuf, HeldFile>>,
+    custody: super::custody::Custody,
+    historical: super::custody::HistoricalTools,
 }
 #[cfg(feature = "test-support")]
 impl ProjectionSource {
@@ -966,15 +1034,31 @@ impl ProjectionSource {
         &self,
         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
         maximum: u64,
+        metadata: bool,
+        historical: Option<(&str, u64)>,
     ) -> Result<()> {
         pin.validate()?;
         in_time(self.deadline)?;
-        let path = Path::new(&pin.path);
+        let (actual, copy_bytes) = if let Some((tool, bytes)) = historical {
+            ensure!(
+                !self.custody.mapped(&pin.path)?,
+                "source-metadata alias cannot become historical tool evidence"
+            );
+            self.historical.resolve(tool, pin, bytes, maximum)?
+        } else {
+            ensure!(
+                !self.historical.mapped(&pin.path)?,
+                "historical tool evidence cannot redirect metadata/code/runtime/authenticate use"
+            );
+            self.custody.resolve(pin, metadata)?
+        };
+        let path = Path::new(&actual.path);
         ensure!(
             path.is_absolute(),
             "projection source path must be absolute"
         );
-        if !self.files.borrow().contains_key(path) {
+        let logical = Path::new(&pin.path);
+        if !self.files.borrow().contains_key(logical) {
             let parent =
                 OpenedDirectory::open(path.parent().context("projection source parent missing")?)?;
             // Immutable metadata/SDK inputs may be human-owned or OS trusted. Neither
@@ -990,14 +1074,39 @@ impl ProjectionSource {
                 held.sha == pin.sha256 && held.bytes <= maximum,
                 "actual pinned projection source differs"
             );
-            self.files.borrow_mut().insert(path.to_owned(), held);
+            if copy_bytes.is_some() {
+                for (other, value) in self.files.borrow().iter() {
+                    if other != logical && value.id == held.id {
+                        ensure!(
+                            !self.custody.mapped(
+                                other.to_str().context("logical metadata path not UTF8")?
+                            )? && !self.historical.mapped(
+                                other.to_str().context("logical metadata path not UTF8")?
+                            )?,
+                            "two metadata mappings alias one actual copy object"
+                        );
+                    }
+                }
+            }
+            self.files.borrow_mut().insert(logical.to_owned(), held);
         }
         let files = self.files.borrow();
-        let held = files.get(path).context("projection custody missing")?;
+        let held = files.get(logical).context("projection custody missing")?;
         ensure!(
             held.sha == pin.sha256 && held.bytes <= maximum,
             "projection pin changed"
         );
+        if let Some(bytes) = copy_bytes {
+            ensure!(
+                held.bytes == bytes,
+                "protected metadata copy length differs"
+            );
+            if historical.is_some() {
+                self.historical.consumed(pin)?;
+            } else {
+                self.custody.consumed(pin)?;
+            }
+        }
         held.recheck(self.deadline)
     }
 }
@@ -1008,7 +1117,7 @@ impl super::provenance::projection::Source for ProjectionSource {
         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
         maximum: u64,
     ) -> Result<Vec<u8>> {
-        self.hold(pin, maximum)?;
+        self.hold(pin, maximum, true, None)?;
         let files = self.files.borrow();
         let held = files
             .get(Path::new(&pin.path))
@@ -1023,7 +1132,7 @@ impl super::provenance::projection::Source for ProjectionSource {
         bytes: u64,
         maximum: u64,
     ) -> Result<()> {
-        self.hold(pin, maximum)?;
+        self.hold(pin, maximum, false, None)?;
         ensure!(
             self.files
                 .borrow()
@@ -1035,7 +1144,28 @@ impl super::provenance::projection::Source for ProjectionSource {
         );
         Ok(())
     }
+    fn authenticate_historical_tool(
+        &self,
+        tool: &str,
+        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+        bytes: u64,
+        maximum: u64,
+    ) -> Result<()> {
+        self.hold(pin, maximum, false, Some((tool, bytes)))?;
+        ensure!(
+            self.files
+                .borrow()
+                .get(Path::new(&pin.path))
+                .context("historical tool custody missing")?
+                .bytes
+                == bytes,
+            "historical tool evidence size changed"
+        );
+        Ok(())
+    }
     fn recheck(&self) -> Result<()> {
+        // A shared validator may recheck midway through a larger projection.
+        // Full mapping consumption is required by the OUTER emission below.
         for held in self.files.borrow().values() {
             held.recheck(self.deadline)?;
         }
@@ -1045,13 +1175,130 @@ impl super::provenance::projection::Source for ProjectionSource {
 #[cfg(feature = "test-support")]
 pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
     let input = super::provenance::projection::decode_input(raw)?;
+    super::custody::validate_custody_compatibility(
+        &input.custody_copies,
+        &input.historical_tool_copies,
+    )?;
     let source = ProjectionSource {
         deadline,
         files: std::cell::RefCell::new(BTreeMap::new()),
+        custody: super::custody::Custody::new(&input.custody_copies)?,
+        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
     };
     let prepared = super::provenance::projection::project(&source, input)?;
+    source.custody.recheck()?;
+    source.historical.recheck()?;
     let bytes = serde_json::to_vec(&prepared)?;
     ensure!(bytes.len() <= 16 << 20, "native projection output cap");
     in_time(deadline)?;
     Ok(bytes)
 }
+
+/// No CUDA/ORT initialization, driver load or process-module mutation is performed.
+#[cfg(feature = "test-support")]
+pub(super) fn observe_package_projection(
+    root: &Path,
+    path: &Path,
+    expected: Sha256Digest,
+    deadline: Instant,
+) -> Result<Vec<u8>> {
+    let directory = OpenedDirectory::open(root)?;
+    security(directory.as_file(), true)?;
+    let descriptor = HeldFile::open(&directory, path, true, deadline)?;
+    ensure!(
+        descriptor.sha == expected,
+        "actual pinned package descriptor differs"
+    );
+    let parsed = manifest::RuntimeDescriptor::parse(&read(&descriptor.file, 128 << 10)?)?;
+    let manifest::RuntimeDescriptor::Product(value) = parsed else {
+        anyhow::bail!(
+            "product package projection requires exact runtime manifest/2; scientific sidecar is private"
+        )
+    };
+    let proof = HeldFile::open(
+        &directory,
+        &root.join(&value.provenance.name),
+        true,
+        deadline,
+    )?;
+    let public = super::provenance::validate(
+        &read(&proof.file, 1 << 20)?,
+        &value.provenance,
+        value.static_core_build,
+        &value.files,
+    )?;
+    let descriptor_row = super::provenance::PublicFile {
+        name: path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .context("descriptor basename")?
+            .into(),
+        bytes: descriptor.bytes,
+        sha256: descriptor.sha,
+    };
+    let mut names = BTreeSet::from([descriptor_row.name.clone()]);
+    let mut rows = vec![descriptor_row.clone()];
+    let mut held = vec![descriptor, proof];
+    for file in &value.files {
+        ensure!(
+            names.insert(file.name.clone()),
+            "package payload aliases descriptor"
+        );
+        let actual = HeldFile::open(&directory, &root.join(&file.name), true, deadline)?;
+        ensure!(
+            actual.bytes == file.bytes && actual.sha == file.sha256,
+            "held package payload differs"
+        );
+        ensure!(
+            super::pe::imports_file(&actual.file, deadline)?
+                == (file.imports.clone(), file.delay_imports.clone()),
+            "actual package PE closure differs"
+        );
+        rows.push(super::provenance::PublicFile {
+            name: file.name.clone(),
+            bytes: actual.bytes,
+            sha256: actual.sha,
+        });
+        held.push(actual);
+    }
+    ensure!(
+        names.insert(value.provenance.name.clone()),
+        "package provenance name aliases another row"
+    );
+    rows.push(super::provenance::PublicFile {
+        name: value.provenance.name.clone(),
+        bytes: value.provenance.bytes,
+        sha256: value.provenance.sha256,
+    });
+    for file in public.legal_assets() {
+        ensure!(
+            names.insert(file.name.clone()),
+            "package legal asset aliases another row"
+        );
+        let actual = HeldFile::open(&directory, &root.join(&file.name), true, deadline)?;
+        ensure!(
+            actual.bytes == file.bytes && actual.sha == file.sha256,
+            "held package legal notice differs"
+        );
+        rows.push(super::provenance::PublicFile {
+            name: file.name,
+            bytes: actual.bytes,
+            sha256: actual.sha,
+        });
+        held.push(actual);
+    }
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    for file in &held {
+        file.recheck(deadline)?;
+    }
+    in_time(deadline)?;
+    let raw = serde_json::to_vec(
+        &serde_json::json!({"schema":"airk.native.cuda-package-projection/1","descriptor":descriptor_row,"static_core_build":value.static_core_build,"files":rows,"scope":"metadata-only held package census; not activation, device eligibility or qualification","qualification":false,"activation":false}),
+    )?;
+    ensure!(raw.len() <= 1 << 20, "native package projection output cap");
+    in_time(deadline)?;
+    Ok(raw)
+}
+
+#[cfg(test)]
+mod tests;

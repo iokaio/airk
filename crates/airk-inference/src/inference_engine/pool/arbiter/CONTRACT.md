@@ -577,3 +577,48 @@ settlement are memoized; source/fixture/auth/deadline/cancel/unknown are not.
 Unknown custody/barrier is unchanged. Saturation fails closed without evicting
 a row. Only relevant typed configuration/catalog/source scope change prunes it.
 No new actor/lane/proof/clock or current-query replay is introduced.
+
+
+The metadata-only component request emitter optionally carries the native
+RuntimeAssemblyInput checkpointed_proof Core pin, omitted for historical input
+identity. AIRK_CUDA_CHECKPOINTED_PROOF and _SHA256 must be supplied together.
+The actual bounded native assembly owner delegates only this explicit branch
+to the shared strict checkpoint-composite verifier and retains all held
+source/proof/section/payload custody through original-deadline recheck. New
+checkpoint target-section receipts never independently count as full producer
+success; no timing/model/numeric/placement admission transfers.
+
+Optional custody_copies rows follow the Retrieval native owner. The request
+emitter reads only an exact AIRK_CUDA_METADATA_CUSTODY +_SHA256 native input;
+empty is omitted. Copied old metadata remains ancestry, never old protection
+or a failed-build success. Runtime payload/code authentication never aliases.
+The package projection selector emits only descriptive NN0 bytes; the builder
+must validate exact genuine native image/source/input/output and actual parent
+process-tree/Job settlement through the maintained execution owner.
+
+A separate optional historical_tool_copies list is emitted from exact native
+AIRK_CUDA_HISTORICAL_TOOL_CUSTODY +_SHA256 data. Only named frozen R12 CMake/
+Ninja evidence may stream a protected inert copy; no executable activation or
+generic DLL/runtime authentication redirects. The opaque projection never
+claims original tool-path protection or old failure promotion.
+
+The owning package selector additionally obtains the descriptor filename from
+Host::gpu_runtime::installed_paths and refuses any different supplied basename.
+This shares the actual installed loader owner without a new dependency or
+production filename literal. The lower descriptive/scientific accessor remains
+generic; no metadata roster can accidentally stage an unusable descriptor name.
+
+
+The private ignored emit_cuda_metadata_custody_inputs selector accepts a pinned
+UTF8 locator file of six TAB-separated fields per nonempty row: class
+(metadata|historical), role (-|named historical tool), original absolute path,
+existing protected-copy absolute path, expected SHA256, exact byte count.
+This is data location input, not a second native DTO. Existing Retrieval types
+and owning encode/validation routines emit both custody envelopes. The owner
+reopens each concrete original/copy with bounded no-reparse metadata readers,
+checks expected SHA/length before and after serialization under one <=120s
+original deadline, and writes only fresh output files. No copy, runtime/DLL/
+provider activation or capability is created; the real held Source repeats
+protected custody checks at consumption. Incorrect role, duplicate/cross-class
+mapping, mismatch and expired deadline refuse. The process receipt records only
+this actual metadata scope, not future parent Job settlement or observed NN0.

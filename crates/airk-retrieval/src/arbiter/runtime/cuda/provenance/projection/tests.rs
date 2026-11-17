@@ -169,6 +169,8 @@ fn fixture() -> Result<(Memory, Input)> {
             legal_owner,
             payloads,
             notices,
+            custody_copies: Vec::new(),
+            historical_tool_copies: Vec::new(),
         },
     ))
 }
@@ -323,5 +325,76 @@ fn opaque_native_projection_input_roundtrips_and_refuses_unknown_duplicate_or_ze
     let mut zero = serde_json::to_value(&input)?;
     zero["build_proof"]["sha256"] = json!(Sha256Digest::from_bytes([0; 32]));
     assert!(decode_input(&serde_json::to_vec(&zero)?).is_err());
+    Ok(())
+}
+
+#[test]
+fn legacy_projection_input_omits_empty_custody_and_rejects_unknown_copy_fields() -> Result<()> {
+    let (_, input) = fixture()?;
+    let raw = serde_json::to_vec(&input)?;
+    assert!(!String::from_utf8_lossy(&raw).contains("custody_copies"));
+    let decoded = decode_input(&raw)?;
+    assert!(decoded.custody_copies.is_empty());
+    assert!(decoded.historical_tool_copies.is_empty());
+    assert!(!String::from_utf8_lossy(&raw).contains("historical_tool_copies"));
+    let mut bad: Value = serde_json::from_slice(&raw)?;
+    bad["custody_copies"] = json!([{"original":{"path":input.build_proof.path,"sha256":input.build_proof.sha256},"copy":{"path":input.build_proof.path,"sha256":input.build_proof.sha256},"bytes":1,"unknown":true}]);
+    assert!(decode_input(&serde_json::to_vec(&bad)?).is_err());
+    Ok(())
+}
+
+#[test]
+fn only_named_historical_tools_use_inert_evidence_method() -> Result<()> {
+    use std::cell::RefCell;
+    struct Observed {
+        memory: Memory,
+        historical: RefCell<Vec<String>>,
+        direct: RefCell<Vec<String>>,
+    }
+    impl Source for Observed {
+        fn read(&self, p: &ResourceFilePin, max: u64) -> Result<Vec<u8>> {
+            self.memory.read(p, max)
+        }
+        fn authenticate(&self, p: &ResourceFilePin, n: u64, max: u64) -> Result<()> {
+            self.direct.borrow_mut().push(p.path.clone());
+            self.memory.authenticate(p, n, max)
+        }
+        fn authenticate_historical_tool(
+            &self,
+            name: &str,
+            p: &ResourceFilePin,
+            n: u64,
+            max: u64,
+        ) -> Result<()> {
+            self.historical.borrow_mut().push(name.into());
+            self.memory.authenticate(p, n, max)
+        }
+        fn recheck(&self) -> Result<()> {
+            self.memory.recheck()
+        }
+    }
+    let (memory, input) = fixture()?;
+    let aggregate = input.aggregate_archive.path.clone();
+    let payloads = input
+        .payloads
+        .iter()
+        .map(|p| p.source.path.clone())
+        .collect::<Vec<_>>();
+    let source = Observed {
+        memory,
+        historical: RefCell::new(Vec::new()),
+        direct: RefCell::new(Vec::new()),
+    };
+    project(&source, input)?;
+    assert_eq!(
+        *source.historical.borrow(),
+        [
+            "compiler", "cmake", "ninja", "python", "patch", "vcvars", "archiver", "nvcc"
+        ]
+    );
+    let direct = source.direct.borrow();
+    assert_eq!(direct.len(), 3);
+    assert!(direct.contains(&aggregate));
+    assert!(payloads.iter().all(|p| direct.contains(p)));
     Ok(())
 }
