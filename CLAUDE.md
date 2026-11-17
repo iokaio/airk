@@ -257,7 +257,7 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
 
 | Need | Source |
 |---|---|
-| Ordered implementation plan and all seven user decisions | docs/arbiter/final-plan.md |
+| Ordered implementation plan and D01–D08 user decisions | docs/arbiter/final-plan.md |
 | Known issues and historical candidate evidence | docs/arbiter/knownissues.md |
 | Weight-experiment rationale | docs/arbiter/weights-v2-plan.md |
 | Progress ledger | docs/simplify/one-process-ledger.md |
@@ -270,15 +270,18 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   merge, publication or deployment is authorized.
 - Current task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger;
-  the updated 36-hour total deadline applies across sessions: 17 November 2026
-  at 17:29:42 UTC (10:29:42 a.m. America/Denver), with original T0 unchanged.
+  the updated 72-hour total deadline applies across sessions: 19 November 2026
+  at 05:29:42 UTC (18 November, 10:29:42 p.m. America/Denver), with T0 unchanged.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
 - For this authorized implementation, the user superseded the original 24-hour
-  target/48-hour cap with 36 hours total from the recorded execution start. Use
+  target/48-hour cap, then36 hours, with72 hours total from recorded T0. Use
   only this Windows machine and Mac Neo. Deliver a Windows candidate first, then attempt all applicable
   supported-platform gates and report genuine blockers. No paid/cloud compute
   or cloud teachers.
+- D08 now includes FP32 GPU execution first, then FP16 with efficient attention,
+  both available for1.9.0 with automatic admitted CPU fallback. Keep each variant's
+  identity and qualification separate; no relaxed gates or silent model switch.
 - Preserve the selected bundled MiniLM plus independent optional Focus
   (Qwen3-Reranker-0.6B) and Context Compact/Large (Qwen3-1.7B/4B). Terminal
   classes stay unavailable until their own evidence passes. Use suitable

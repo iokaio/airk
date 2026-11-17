@@ -2,9 +2,9 @@
 
 Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; D01–D08 recorded.
-Scope update: automatic FP32 GPU execution with qualified CPU fallback is
-included by the user's 17 November UTC execution instructions; see section 11.
-FP16 with efficient attention is deferred beyond version 1.9.0.
+Scope update: deliver FP32 GPU execution first, then FP16 with efficient
+attention, with both options available for version 1.9.0 and automatic CPU
+fallback; see section 11. The user authorizes 72 hours total from original T0.
 The original planning request authorized this runbook only. The user authorized
 implementation on 15 November 2026; public publication requires separate
 authorization. Current execution evidence and blockers are in section 10.
@@ -36,13 +36,13 @@ contract encodings must be recorded before implementation; see section 11.
 | ID | Decision | Answer/status | Dependent work |
 | --- | --- | --- | --- |
 | D01 | Delivery platforms and stopping point | APPROVED: Windows candidate first, then all supported-platform release gates; report genuine blockers. | Steps 15–18 |
-| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” Execution update (16 November): the user sets a 36-hour total deadline from original T0, superseding the original 24-hour target/48-hour cap only. No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
+| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” Execution updates: the user first set 36 hours total, then explicitly approved 72 hours total on 17 November UTC for FP32 followed by FP16 with efficient attention. Original T0 is unchanged; the earlier 24-hour target/48-hour cap and 36-hour deadline are historical. No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
 | D03 | Human-reviewed labels for unattended work | APPROVED: use suitable existing human-reviewed labels; finish other work and block only unsupported promotion when labels are missing. Agent judgments are not human gold. | Data acceptance, terminals and FINAL |
 | D04 | Shared-folder automatic agent-config editing | APPROVED: allow automatic edits only when the entire file and recovery path meet a reviewed safe policy; otherwise provide the complete manual entry. Token-free AIRK fields alone do not qualify a path. | Step 2 |
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
 | D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
-| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. Version 1.9.0 GPU work is FP32 only, CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. FP16 with efficient attention is future work outside the 1.9.0 goal. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
+| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: get FP32 working first, then implement FP16 with genuinely efficient attention; both options are part of the version 1.9.0 goal. Preserve selectable FP32, FP16 and Auto GPU precision with admitted CPU fallback. CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
 
 ### Settled rules; do not ask again
 
@@ -78,8 +78,9 @@ contract encodings must be recorded before implementation; see section 11.
    GitHub-only availability remains disclosed.
 9. Keep the old advanced-split deadline as history. This plan cannot make a
    missed deadline current or use it to waive gates. The user superseded the original
-   24-hour target/48-hour cap with a 36-hour total deadline on 16 November. T0 is unchanged;
-   correctness requirements and frozen per-run limits are unchanged.
+   24-hour target/48-hour cap first with 36 hours total, then explicitly with
+   72 hours total for the expanded FP32-first/FP16 goal on 17 November UTC.
+   T0, correctness requirements and frozen per-run limits are unchanged.
 10. Public publication is a separate final action on concrete reviewed artifacts.
     Prepare artifacts, rights/source-map proofs and a readiness report first.
     Missing final upload authorization does not stop independent local work.
@@ -148,7 +149,7 @@ cheaply and correct the cause. A repeated failure requires a revised diagnosis
 and cheap regression before the next attempt. Never retry unchanged failed
 inputs, broaden limits, relax assertions, fabricate cleanup or tune on FINAL.
 
-A blocked branch does not block independent work. At the updated 36-hour total deadline, retain results
+A blocked branch does not block independent work. At the updated 72-hour total deadline, retain results
 and identify remaining work; do not promise scientific success or mark unmet
 release criteria complete. User silence is not an answer to a pending decision.
 
@@ -848,7 +849,7 @@ A packaged file without installed checks is a candidate, not a qualified release
 5. Deliver Windows artifacts first, then the platform/qualification report.
    Distinguish implementation, measured model gains, rejected experiments,
    compilation, installed outcomes and public availability. If the user-updated
-   36-hour total deadline arrives, stop new work, settle owned processes and hand
+   72-hour total deadline arrives, stop new work, settle owned processes and hand
    off honest remaining blockers; do not mark an unmet goal complete.
 6. Only after concrete artifacts and all required release gates are ready may
    public publication be proposed for separate approval. Do not request a
@@ -856,13 +857,16 @@ A packaged file without installed checks is a candidate, not a qualified release
 
 ## 5. Time budget and unattended scheduling
 
-The original planning allocation was 24 hours with a 48-hour maximum. During
-execution on 16 November, the user sets a **36-hour total deadline**, with quality
-prioritized, using the same Windows machine and Mac Neo. Original T0 remains
-2026-11-16T05:29:42.2081757Z; the new deadline is 2026-11-17T17:29:42.2081757Z
-(17 November at 10:29:42 America/Denver). This supersedes the old campaign timing,
-not frozen acceptance rules or per-run limits. The clock never restarts.
-The early rows below remain original scheduling targets, not completed outcomes.
+The original planning allocation was 24 hours with a 48-hour maximum, followed
+by a user-approved 36-hour total deadline. On 17 November UTC, the user approves
+**72 hours total** for FP32 GPU execution first and then FP16 with efficient
+attention, both available for version 1.9.0. Use the same Windows machine and
+Mac Neo, with quality prioritized. Original T0 remains
+2026-11-16T05:29:42.2081757Z; the current deadline is
+**2026-11-19T05:29:42.2081757Z (Wednesday, 18 November at 10:29:42 p.m.
+America/Denver)**. The extension adds36 hours to the prior deadline; it changes
+no frozen acceptance rule or per-run limit. The clock never restarts.
+The early rows below remain historical scheduling targets, not completed outcomes.
 
 | Elapsed target | Main outcome | Parallel independent work |
 | --- | --- | --- |
@@ -872,8 +876,11 @@ The early rows below remain original scheduling targets, not completed outcomes.
 | 12–15h | Finalist seeds and exact artifact/resource freeze | Windows candidate checks and maintained qualification harnesses |
 | 15–20h | CAL, fit, composed and held-out runs that fit their frozen caps | Documentation and available noncompeting platform preparation |
 | 20–24h | Windows delivery, integrated gates and status at target | Report remaining qualification blockers and justified extension work |
-| 24–32h, updated | Remaining acceptance criteria, diagnosed repairs and required validation | No optional new research branch |
-| 32–36h, updated | Complete justified bounded gates, packaging, settlement and review handoff | Reserve time to report every unmet criterion honestly |
+| 24–36h, updated | Native FP32 GPU integration, actual model/placement/Auto-fallback proof and grouped technical gates | Complete independent CPU/platform repairs and candidate checks |
+| 36–48h, updated | FP16 graph/initializer path and genuinely efficient attention after FP32 works | Static mask/equivalence controls and generated device/precision consumers |
+| 48–60h, updated | Separate precision numerical/resource/recovery and composed gates; CAL/task work only with admitted inputs | Measured joint residency and applicable hardware/provider checks |
+| 60–68h, updated | Integrated workspace/real transports, signed packages and applicable installed/platform gates | Review current source, rights/notices and exact artifacts |
+| 68–72h, updated | Final justified checks, settlement and review handoff | Reserve time to report every unmet criterion honestly |
 
 These are scheduling targets, not claims that a six-hour CAL allowance or human
 labeling fits automatically. Before each long run, estimate measured duration
@@ -884,7 +891,9 @@ actual progress against the plan and the next critical outcomes to the user.
 
 At hour 12, stop optional exploration if it threatens core export/qualification.
 At hour 24, continue unattended toward unfulfilled acceptance criteria within
-the updated 36-hour total deadline; the user has already authorized this extension.
+the updated 72-hour total deadline; the user explicitly authorized this extension
+for the sequential FP32/FP16 scope. A working FP32 path is a milestone, not
+completion of the now-expanded dual-precision goal.
 Missing human labels, unavailable hosts or a failing profile cause a local
 blocker and continued independent work, not a weaker claim.
 
@@ -1024,8 +1033,9 @@ This handoff updates branch/instruction state without starting implementation.
 ## 10. Current execution outcomes
 
 Execution started 15 November 2026 at 22:29:42 America/Denver
-(2026-11-16T05:29:42.2081757Z). The user sets a 36-hour total deadline from original
-T0: 17 November 2026 at 10:29:42 America/Denver (17:29:42 UTC). The
+(2026-11-16T05:29:42.2081757Z). The user now sets a 72-hour total deadline from
+original T0: 18 November2026 at10:29:42 p.m. America/Denver
+(19 November05:29:42 UTC). The earlier36-hour deadline is superseded. The
 [existing ledger](../simplify/one-process-ledger.md) retains exact commands,
 source/artifact identities, failed attempts, test counts and private receipt
 paths. This table reports current state; it grants no missing qualification.
@@ -1058,7 +1068,7 @@ Earlier R2 and later diagnostics retain their identities; no artifact is retagge
 | 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
 | 16 | in_progress | Nativec9fe/committed059a passes full-workspace all-target/all-feature Clippy85.696478s and restored-filter Nextest4,825/4,825 in2265.989429s; doctests compile19suites/0cases. Three provisioned ignored vector controls pass60.406855s after an earlier missing-model-environment failure. Mac059a scoped Clippy/name/log controls pass; exact refresh fails at ancestor_open native20 on/etc, with protected OS-alias diagnosis and clean target removal. Linux same-human user-space toolchain and actual ORT C++ compilation pass; whole static provisioning fails at the ar tool alias, before aggregation. Linux application gates, modern I4 and D08 GPU/device gates remain open. |
 | 17 | in_progress | Version 1.8.207 and the signed c547 R3 EXE/native ZIP/VSIX delivery retain their verified byte, signature, notices and client/UI proofs. Real Code 1.146.0 production VSIX Explorer activation/close-reopen/CSS checks pass on a private profile in 8.109072s; native_execution is false. Code parent exit 0 and a private-profile CIM observation are retained without claiming every descendant HANDLE. No native production activation or I4 installed journey follows. The user's 1.8.206 installation/configuration remain preserved; no qualified final-series release or publication is claimed. |
-| 18 | in_progress | Local DCO app059a, user-original61003cf9 and Markdown/assetsc3e0bb02 remain separate identities; outside analyses are ignored as implementation input. R3 remains the signed CPU delivery; C4 overlay transfer is preparation only. Current Windows full passes, Focus lifecycle and Compact component evidence remain distinct from Large refusal, pending composed Answer, Mac/Linux/platform/installed and data/CAL blockers. D08 is recorded with automatic GPU-or-CPU selection; implementation and qualification are pending. Deadline remains2026-11-17T17:29:42Z; next two-hour self-check02:35Z. No publication authorization. |
+| 18 | in_progress | Local DCO app059a, user-original61003cf9 and Markdown/assetsc3e0bb02 remain separate identities; outside analyses are ignored as implementation input. R3 remains the signed CPU delivery; C4 overlay transfer is preparation only. Current Windows full passes, Focus lifecycle and Compact component evidence remain distinct from Large refusal, pending composed Answer, Mac/Linux/platform/installed and data/CAL blockers. D08 is recorded with automatic GPU-or-CPU selection; implementation and qualification are pending. Deadline now2026-11-19T05:29:42Z; next two-hour self-check04:35Z. No publication authorization. |
 
 The user approved reviewed in-scope tracked-file content edits while preserving
 existing ownership and ACLs. This resolves the source-edit constraint and does
@@ -1092,11 +1102,11 @@ Added during execution on 17 November 2026 UTC at the user's request.
 D08 expands implementation scope; the subsequent instruction explicitly requires
 AIRK to choose a usable GPU for each user's machine and otherwise use CPU.
 This section supersedes CPU-only execution assumptions for optional Arbiter
-profiles. The user's subsequent instruction limits the version 1.9.0 GPU goal
-to the safer **FP32** target. FP16/BF16/mixed-precision conversion and efficient
-attention development are deferred beyond 1.9.0; they are not completion gates
-or fallback branches for this campaign. Existing MiniLM CPU INT8 paths remain.
-GPU support has not yet been implemented.
+profiles. The user's latest instruction supersedes the intervening FP32-only
+direction: **FP32 working first, then FP16 with efficient attention, with both
+options available for version 1.9.0**. These are separately identified and
+qualified variants. Existing MiniLM CPU INT8 paths remain. GPU support has not
+yet been implemented; planning and private source proposals are not passes.
 
 ### Required user behavior and scope
 
@@ -1108,7 +1118,9 @@ The service, CLI, Admin and Workbench expose the actual selected device and the
 reason for CPU selection. A GPU being present is not evidence of model fit.
 
 Keep MiniLM's existing CPU U8/S8 paths and vector identity unchanged in this
-extension. Optional GPU variants use FP32 with TF32 disabled for version 1.9.0. Prioritize Context Compact/Large, where CPU time is consequential.
+extension. First establish FP32 with TF32 disabled, then the separate FP16
+efficient-attention variants. Prioritize Context Compact/Large, where CPU time
+and GPU memory are consequential; measure Focus variants independently.
 Preserve independent Focus/Context selection; Focus keeps its CPU path unless a
 separately qualified GPU variant offers a measured benefit. Do not silently
 substitute Compact for Large, change precision, reduce input width or reset the
@@ -1217,11 +1229,13 @@ Use the existing original unfused FP32 Compact (c79c6725...) and Large
 (f8ba5d3e...) graphs first. Probe tiny 17/128 inputs with unchanged math and an
 actual placement trace, then the original 8192 boundary if those pass. Preserve
 causal/padding masks, positions, projections, decision rows and the FP32 output
-ABI. No FP16/BF16/mixed conversion, new half-precision initializer loader or
-efficient-attention export is part of version 1.9.0. If a supported FP32 GPU path
-cannot meet its gates, use a fitting admitted CPU variant or report unavailable;
-do not open a lower-precision rescue branch. Any necessary alternative FP32
-operator decomposition needs its own reviewed identity and unchanged gates.
+ABI. This first milestone does not change precision or use FP16 to conceal an
+FP32 failure. Preserve a failed FP32 result under its original identity.
+After actual FP32 native success and demonstrated Auto/CPU fallback, implement
+the separately registered FP16/efficient-attention milestone below. Do not block
+independent FP16 preparation on unrelated missing scientific labels, but neither
+variant is promoted without its own complete gates. Any necessary alternative
+FP32 operator decomposition needs a reviewed identity and unchanged gates.
 
 Use error_on_failure for provider registration. For a strict GPU session,
 disable implicit CPU EP fallback and do not also register CPU EP explicitly:
@@ -1318,33 +1332,68 @@ only if they pass. Nonconflicting CPU/Linux/Mac repairs continue, with one Cargo
 owner and one GPU-heavy job at a time. The R154 fresh CPU route retains its
 original fixture identity; it is not retrospectively a GPU comparison.
 
-At this addition, about fifteen hours remain before the unchanged
-2026-11-17T17:29:42Z deadline. D08 expands scope without extending that deadline.
-Reserve the final four hours for justified gates, packaging, settlement and
-handoff. A credible estimate for full provider/platform coverage follows the
-compatibility probe; do not promise universal GPU support or the attachment's
-unmeasured 10–50x speedups, few-second latency or 12–16 GB fit. If a gate cannot
-finish in the remaining time, retain the implementation/evidence and identify
-the exact unmet criterion rather than weakening it.
+The user-approved72-hour deadline is2026-11-19T05:29:42Z. At the dual-precision
+scope decision (approximately17 November03:05Z), the engineering estimate is
+36–48 additional hours of work; the extension provides roughly50 calendar hours.
+Target both implemented paths, applicable native qualification and a reviewed
+Windows candidate by Wednesday18 November10:29p.m. Denver. This is an estimate,
+not a claim of future passes or a guarantee that external label/rights/platform
+blockers disappear. FP32 integration is the next milestone; FP16 efficient
+attention follows, then both-variant selection/recovery/package qualification.
+Reserve the final four hours for justified gates, settlement and handoff.
+Do not promise universal GPU support or the attachment's unmeasured10–50x
+speedups, few-second latency or12–16GB fit. If a gate cannot finish, retain its
+evidence and exact unmet criterion rather than weakening it.
 
 Current D08 status: planning and read-only hardware/source analysis complete;
 device contracts, automatic selection, GPU execution and qualification
 **not yet implemented**. Existing CPU results retain their original identities.
 
-### Deferred beyond version 1.9.0 — FP16 and efficient attention
+### G5 — FP16 with efficient attention, after FP32 works
 
-Retain this direction for future work only. A separately reviewed FP16 or mixed
-export with genuinely memory-efficient attention might make Focus practical on
-about4GB, Compact on about8GB and Large on about12–16GB of dedicated VRAM.
-Those are unmeasured estimates, not hardware requirements or a promised result.
-Half precision alone does not remove dense attention's quadratic workspace:
-an unfused half-precision graph could still need roughly12–16GB for Compact and
-24GB for Large at8192 tokens.
+This is now part of version1.9.0, not deferred work. Keep the FP32 variant
+available throughout. The GPU setting offers Auto, FP32 and FP16 precision;
+explicit CPU remains a separate device choice. Initial Auto preference is a
+qualified fitting FP32 GPU variant, then a qualified fitting FP16 GPU variant
+of the same selected model, then its separately admitted CPU path. An explicit
+GPU precision preference restricts GPU candidates only; CPU fallback uses the
+existing admitted CPU precision and reports it plainly. Never silently substitute
+a model, turn on a stage, narrow input or reset the shared budget.
 
-Future work would require exact attention/mask equivalence, authenticated
-half-precision initializer support, independent numerical checks, new runtime/
-graph/profile identities and fresh device/resource/CAL/task qualification.
-Casting the retained biased GQA graph does not itself enable Flash attention.
-None of this work is required, scheduled, implemented or used to unblock the
-version1.9.0 FP32 goal. Do not revisit it during this campaign merely because
-an FP32 variant fails a gate.
+1. Register the exact half-precision conversion, protected FP32 operations,
+   output FP32 ABI, native initializer loading and attention algorithm before
+   numerical scoring. Keep the original FP32 weights/graphs and their receipts.
+   Every FP16 graph/external-weight/runtime-option/profile/calibration identity
+   is separate; a dtype label is not evidence.
+2. Implement genuinely memory-efficient attention. Merely casting the current
+   biased GQA graph still selects an unfused CUDA path. Preserve the exact
+   causal/left-padding and any supported internal-mask semantics, positions,
+   scale, projections and decision rows. Use independent literal/tensor controls
+   including padding holes, all-masked/edge cases and17/128/8192 boundaries.
+   If an efficient kernel cannot represent an input, declare/refuse that shape
+   or use a predeclared qualified alternative before dispatch; do not drop masks.
+3. Preserve the FP32 numerical gates. Freeze matching-precision reference-to-
+   native parity and FP32-to-FP16 precision-loss comparisons independently,
+   using the existing applicable approximate-export/task rules before observing
+   results. New near-boundary cases, full output comparisons and exact-artifact
+   CAL/task/terminal constraints remain. No tolerance is loosened after failure.
+4. Repeat actual placement, host/VRAM peaks, load/cold/warm twenty-sample p95,
+   joint residency, cancellation/device settlement, memory pressure/OOM recovery,
+   Auto/explicit-precision/CPU fallback and real composed120-second behavior.
+   An arena limit or lower weight size is not complete memory-fit evidence.
+5. Prefer one authenticated runtime build supporting both precisions when pinned
+   source/build inspection justifies it, avoiding an unnecessary later native
+   rebuild. Compiled kernel availability does not admit the FP16 model before
+   its separate gates. Bind exact build options and model variant in receipts;
+   never mix core/provider binaries from different builds.
+6. Generate native device/precision status and settings for CLI, Admin and
+   Workbench, retaining full copy/export results and no permanent composer
+   notice. Package both tested variants with truthful fit/availability and
+   notices. Keep the selected three model slots; variants do not create extra
+   selected model families or waive final promotion/publication requirements.
+
+Provisional efficient-FP16 planning targets remain about4GB for Focus,8GB for
+Compact and12–16GB for Large, not measured hardware minima. Without genuinely
+efficient attention, half precision might still require12–16GB for Compact and
+24GB for Large at8192 tokens. These guesses never grant native admission.
+The actual available-memory and qualified per-variant policy decides Auto.

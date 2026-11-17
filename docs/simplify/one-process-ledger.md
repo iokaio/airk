@@ -6576,3 +6576,33 @@ Large32–40GB possible/48GB safer, at512/8192 tokens respectively. Potential
 future efficientFP16 targets4/8/12–16GB remain unmeasured and out of scope.
 Actual available memory, runtime/driver/operator compatibility, joint residency
 and native G4 evidence must determine Auto selection, never these guesses.
+
+### D08 latest amendment and explicit72-hour authorization
+
+17 November2026 UTC. The user supersedes the intervening FP32-only instruction:
+get FP32 working FIRST, then FP16 with genuinely efficient attention, keeping
+both options available for1.9.0. The user explicitly selects the recommended
+72hours TOTAL from originalT0, adding36hours to the prior deadline. Newdeadline:
+2026-11-19T05:29:42.2081757Z / Wednesday18 November10:29:42p.m. Denver.
+AGENTS/CLAUDE are updated byte-identically. Per-run120-second/model/p95 limits,
+budgets, science/rights gates and publication authority do not change.
+
+Estimate communicated:36–48more working hours from approximately17November03:05Z;
+the new window provides about50calendar hours. This estimates implementation,
+available-hardware validation and a reviewed candidate, not unobserved passes
+or removal of existing data/CAL/heldout/platform blockers. FP32 native success,
+actualAuto/CPUfallback and source/device settlement precede FP16 activation.
+One shared authenticated CUDA-capable runtime may support both kernel sets if
+reviewed; variant graph/numerical/resource/calibration evidence stays separate.
+
+Device precision preference Auto/FP32/FP16 is separate from Auto/CPU device mode.
+InitialAuto prefers fittingqualifiedFP32, then fittingqualifiedefficientFP16
+of the same model, then existingadmittedCPU withactualprecision/fallbackreason
+reported. Existingpre1.9localcandidateCPUauthority remains disclosed under its
+own version/native owner; no newfinalqualification or GPUbypass is inferred.
+
+The revised runbook G5 covers halfinitializer/protectedFP32/outputABI, efficient
+causal/padding attention ratherthanblindcasts, pre-score numericalloss/native
+parity freeze, full8192/N8/20sample p95, jointVRAM/hostfit, cancellation/sync/OOM,
+realtransports/precisionselection, packaging and honest unsupportedstates.
+No FP16 graph, nativeGPU model or per-variant qualification has run yet.
