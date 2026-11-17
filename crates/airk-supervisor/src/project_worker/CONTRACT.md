@@ -62,3 +62,26 @@ constructs real SDK refusals, demonstrates the SDK discriminator, then checks
 actual worker helpers against Kernel context_member_payload_bytes without a
 model/worker process. A framing correction does not establish that an underlying
 member operation succeeded or authorize replay of a failed finite Answer.
+
+## D06 connection admission does not shorten an accepted read parent
+
+The60-second broker connection authorization and matching worker admission check
+are unchanged and continue to refuse every new query after expiry. The already
+accepted query retains its original decoded ReadAttemptBudget and partition;
+that admission expiry is not a second execution deadline. A connection admitted
+near its end may finish its one accepted bounded operation while remaining
+unusable for another query. Broker already retains active expired connections
+until actual finish; cancellation/disconnect never fabricates completion.
+
+The existing125-second worker hard-reap boundary and shorter original caller
+or Answer deadline remain; there is no new allowance or wire field. Every
+native application, source/selection/configuration callback and delivery poll
+keeps its actual authority/liveness checks. Revoked or expired installed scope
+cannot be delivered. No Window TTL, installed-scope lifetime, grant TTL or
+55-second frontend reuse policy changes. The administrative native read sibling
+already preserves its accepted120-second read beyond a pre-submit55s check.
+
+Cheap controls preserve the captured wire parent/identity on decode and use
+injected broker time to prove an accepted query can settle after admission
+expiry while a new one is refused. These establish clock ownership and no-replay
+behavior; they do not qualify a model, live service or real R154 outcome.

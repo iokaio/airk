@@ -20,7 +20,9 @@ installed outcomes are recorded separately in the
   migrated harnesses exercise tokenless endpoints and explicit index scope.
 - The shared request default is 8192 input tokens and 120 seconds, propagated
   through native work and clients without resetting the original budget.
-  Transport allows five additional seconds for response handling. Focus keeps
+  Accepted reads retain that deadline after connection admission expires; new
+  submissions still require fresh admission. Transport allows five additional
+  seconds for response handling. Focus keeps
   its static 512-token pair width. See the
   [runtime budget contract](../arbiter/runtime-budget-contract.md).
 - Service and Agents present current state, retry/manual setup and separate

@@ -309,3 +309,74 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod admitted_lifetime_tests {
+    use anyhow::{Context, Result};
+    use std::time::{Duration, Instant};
+    #[test]
+    fn worker_decodes_original_captured_parent_without_connection_admission_narrowing() -> Result<()>
+    {
+        let now = Instant::now();
+        let id = airk_core::identity::Incarnation::from_bytes([85; 16]);
+        let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
+            now + Duration::from_secs(120),
+            Default::default(),
+        )
+        .with_request_id(id)?;
+        let wire = airk_host::read_attempt::encode(&parent, id)?;
+        let decoded =
+            super::super::query_read_context(Some(wire), None)?.context("original read missing")?;
+        let carried = decoded
+            .captured_transport_attempt()
+            .context("original absolute parent was narrowed/replaced")?;
+        assert_eq!(carried.expires_monotonic_ns, wire.expires_monotonic_ns);
+        assert_eq!(carried.request_id, id);
+        assert_eq!(decoded.request_id(), Some(id));
+        assert!(super::super::query_read_context(None, None)?.is_none());
+        Ok(())
+    }
+    #[test]
+    fn actual_broker_clock_keeps_accepted_capacity_after_60_second_expiry_and_refuses_new_work()
+    -> Result<()> {
+        use airk_core::{
+            identity::Incarnation,
+            service::{AdmissionError, QueryAllowance, WorkerIdentity},
+        };
+        use airk_kernel::service_broker::{Broker, BrokerLimits};
+        let now = Instant::now();
+        let identity = WorkerIdentity {
+            service: Incarnation::from_bytes([86; 16]),
+            worker: Incarnation::from_bytes([87; 16]),
+            project: "ab".repeat(32).parse()?,
+            fencing_generation: 1,
+        };
+        let caller = Incarnation::from_bytes([88; 16]);
+        let mut broker = Broker::new(identity.service, BrokerLimits::default())?;
+        broker.register(
+            identity,
+            QueryAllowance {
+                concurrent_queries: 2,
+                response_bytes: 2048,
+            },
+            now,
+            Duration::from_secs(300),
+        )?;
+        let grant = broker.issue(identity, caller, now, Duration::from_secs(5))?;
+        let session = broker.redeem(&grant, identity, caller, now, Duration::from_secs(60))?;
+        let accepted = broker.begin_query(identity, session, 1024, now)?;
+        let after_admission = now + Duration::from_secs(70);
+        assert_eq!(
+            broker.begin_query(identity, session, 1024, after_admission),
+            Err(AdmissionError::Expired)
+        );
+        assert_eq!(broker.status(after_admission).active_queries, 1);
+        broker.finish_query(identity, accepted)?;
+        assert_eq!(broker.status(after_admission).active_queries, 0);
+        assert_eq!(
+            broker.begin_query(identity, session, 1024, after_admission),
+            Err(AdmissionError::Expired)
+        );
+        Ok(())
+    }
+}

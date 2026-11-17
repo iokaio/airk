@@ -443,3 +443,118 @@ async fn actual_connection_refuses_crossed_native_malformed_and_unsupported_part
     }
     Ok(())
 }
+
+fn admitted_lifetime_fixture(now: Instant) -> Connection {
+    Connection {
+        stream: None,
+        identity: airk_core::service::WorkerIdentity {
+            service: airk_core::identity::Incarnation::from_bytes([81; 16]),
+            worker: airk_core::identity::Incarnation::from_bytes([82; 16]),
+            project: "ab".repeat(32).parse().unwrap(),
+            fencing_generation: 1,
+        },
+        authorized_until: now + Duration::from_secs(55),
+        last_finished: now,
+        healthy: true,
+        scoped: false,
+        read_scope: None,
+        read_attempt_supported: true,
+        status_receipt: Default::default(),
+    }
+}
+#[test]
+fn admitted_original_parent_survives_admission_expiry_but_never_renews_or_reuses_it() -> Result<()>
+{
+    let now = Instant::now();
+    let mut connection = admitted_lifetime_fixture(now);
+    let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
+        now + Duration::from_secs(120),
+        Default::default(),
+    )
+    .with_request_id(airk_core::identity::Incarnation::from_bytes([83; 16]))?;
+    let accepted = connection.admitted_read_context(parent.clone(), now)?;
+    assert_eq!(accepted.deadline(), now + Duration::from_secs(120));
+    assert_eq!(accepted.request_id(), parent.request_id());
+    require_original_read_delivery(&accepted, now + Duration::from_secs(70))?;
+    // Keep idle-age independently fresh: this refusal is admission expiry.
+    connection.last_finished = now + Duration::from_secs(70);
+    assert!(
+        connection
+            .admitted_read_context(parent.clone(), now + Duration::from_secs(70))
+            .is_err()
+    );
+    assert!(require_original_read_delivery(&accepted, now + Duration::from_secs(120)).is_err());
+    parent.cancellation().cancel();
+    assert!(require_original_read_delivery(&accepted, now + Duration::from_secs(1)).is_err());
+    Ok(())
+}
+#[tokio::test]
+async fn actual_connection_keeps_captured_120_and_125_second_wire_parents_past_55_second_reuse_cut()
+-> Result<()> {
+    for seconds in [120, 125] {
+        let owned = tempfile::tempdir()?;
+        let root = owned.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let endpoint = local_ipc::endpoint(&root, "original-read-admission-clock")?;
+        let mut listener = local_ipc::Listener::bind(&endpoint)?;
+        let now = Instant::now();
+        let id = airk_core::identity::Incarnation::from_bytes([84; 16]);
+        let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
+            now + Duration::from_secs(seconds),
+            Default::default(),
+        )
+        .with_request_id(id)?;
+        let original = airk_host::read_attempt::encode(&parent, id)?;
+        let context = parent.with_wire_attempt(original)?;
+        let arguments = serde_json::json!({"response_mode":"full","include_status":true})
+            .as_object()
+            .unwrap()
+            .clone();
+        let expected_arguments = arguments.clone();
+        let peer = tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let query: Query = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                .await?
+                .context("original read missing")?;
+            let carried = query
+                .read_attempt
+                .context("captured original parent omitted")?;
+            ensure!(
+                carried.request_id == original.request_id
+                    && carried.clock == original.clock
+                    && carried.expires_monotonic_ns == original.expires_monotonic_ns
+                    && carried.remaining_ns <= original.remaining_ns,
+                "connection admission narrowed/replaced original wire parent"
+            );
+            ensure!(
+                query.tool == "airk_status" && query.arguments == expected_arguments,
+                "original canonical input changed"
+            );
+            local_ipc::write_message(
+                &mut stream,
+                &protocol::QueryResult {
+                    read_admission: None,
+                    result: airk_mcp::unified::success(serde_json::json!({"complete":true})),
+                    status_receipt: Default::default(),
+                    rebind: false,
+                },
+                Duration::from_secs(5),
+            )
+            .await?;
+            let extra =
+                local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?;
+            ensure!(extra.is_none(), "accepted query was replayed");
+            Ok::<_, anyhow::Error>(())
+        });
+        let stream = local_ipc::connect(&endpoint).await?;
+        let mut connection = admitted_lifetime_fixture(now);
+        connection.stream = Some(stream);
+        let value = connection
+            .call_with_read_context("airk_status".into(), arguments, context)
+            .await?;
+        assert_eq!(value["structuredContent"]["complete"], true);
+        drop(connection);
+        peer.await??;
+    }
+    Ok(())
+}

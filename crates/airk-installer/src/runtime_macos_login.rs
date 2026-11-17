@@ -196,6 +196,7 @@ fn job_pid(text: &str) -> Result<Option<u32>> {
     Ok(pid)
 }
 
+#[cfg(target_os = "macos")]
 fn observe_job(main: &Path, channel: RuntimeChannel, entry: &str) -> Result<Option<String>> {
     let domain = format!("gui/{}", crate::local_ipc::current_user()?);
     let (domain_available, _) = airk_host::native_command::execute_native_observation(
@@ -224,6 +225,10 @@ fn observe_job(main: &Path, channel: RuntimeChannel, entry: &str) -> Result<Opti
         .join(format!("{label}.plist"));
     job_scope(&text, main, &plist, channel, entry)?;
     Ok(Some(text))
+}
+#[cfg(not(target_os = "macos"))]
+fn observe_job(_: &Path, _: RuntimeChannel, _: &str) -> Result<Option<String>> {
+    bail!("Mac login requires macOS 13 or later")
 }
 
 pub(crate) struct ObservedJob {
@@ -488,6 +493,20 @@ pub(crate) fn quiet(root: &Path) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_job_observation_refuses_without_native_commands() {
+        for (channel, entry) in [
+            (RuntimeChannel::Stable, LEGACY_ENTRY),
+            (RuntimeChannel::Stable, DIRECT_ENTRY),
+            (RuntimeChannel::Preview, LEGACY_ENTRY),
+            (RuntimeChannel::Preview, DIRECT_ENTRY),
+        ] {
+            let error = observe_job(Path::new("/fixture-not-an-app/airk"), channel, entry)
+                .expect_err("non-macOS observation must refuse");
+            assert_eq!(error.to_string(), "Mac login requires macOS 13 or later");
+        }
+    }
     #[test]
     fn sealed_entry_retains_predecessor_definitions_and_rejects_noncanonical_versions() -> Result<()>
     {

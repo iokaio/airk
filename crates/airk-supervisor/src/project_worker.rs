@@ -264,6 +264,22 @@ fn observe_maintenance(
         detail,
     ))
 }
+/// Connection expiry owns NEW admission only. Decode the same bounded parent
+/// without replacing it with the connection's shorter cache/admission window.
+fn query_read_context(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    partition: Option<&airk_core::combined_context::PartitionAllowance>,
+) -> Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
+    attempt
+        .map(airk_host::read_attempt::decode)
+        .transpose()?
+        .map(|context| match partition {
+            Some(partition) => context.with_context_partition(partition.clone()),
+            None => Ok(context),
+        })
+        .transpose()
+}
+
 async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let Some(grant): Option<ConnectionGrant> =
         local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?
@@ -361,14 +377,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let wire_attempt = request.read_attempt;
             let retry_budget_complete = request.native.is_none()
                 || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
-            let read_context = wire_attempt.map(airk_host::read_attempt::decode).transpose()?
-                .map(|context| -> Result<_> {
-                    let context = context.narrowed(authorized_until);
-                    match &request.context_partition {
-                        Some(partition) => context.with_context_partition(partition.clone()),
-                        None => Ok(context),
-                    }
-                }).transpose()?;
+            let read_context = query_read_context(wire_attempt, request.context_partition.as_ref())?;
             // Accepted blocking work keeps the existing hard reap boundary; a
             // shorter caller deadline must not kill this shared worker early.
             let query_deadline = received + Duration::from_secs(125);

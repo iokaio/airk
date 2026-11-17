@@ -595,11 +595,9 @@ impl Connection {
         mut query: Query,
         context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<serde_json::Value> {
-        ensure!(
-            self.reusable(Instant::now()),
-            "direct connection expired before query submission; obtain fresh brokerage"
-        );
-        let context = context.narrowed(self.authorized_until);
+        // Freshness authorizes this submission; it does not replace the
+        // already bounded original read parent after native acceptance.
+        let context = self.admitted_read_context(context, Instant::now())?;
         query.context_partition = context.context_partition().cloned();
         ensure!(
             query.context_partition.is_none() || self.read_attempt_supported,
@@ -656,10 +654,7 @@ impl Connection {
             let (result, stream) = exchange.await.context("native read owner failed")?;
             self.stream = stream;
             let result = result?;
-            ensure!(
-                !context.cancellation().is_cancelled() && Instant::now() < context.deadline(),
-                "native read completed after caller cancellation or deadline; delivery suppressed"
-            );
+            require_original_read_delivery(&context, Instant::now())?;
             self.last_finished = Instant::now();
             self.healthy = !result.rebind;
             self.status_receipt = result.status_receipt;
@@ -672,12 +667,35 @@ impl Connection {
         }
     }
 
+    fn admitted_read_context(
+        &self,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+        now: Instant,
+    ) -> Result<airk_mcp::read_attempt::ReadAttemptContext> {
+        ensure!(
+            self.reusable(now),
+            "direct connection expired before query submission; obtain fresh brokerage"
+        );
+        Ok(context)
+    }
+
     pub fn status_receipt(&self) -> airk_mcp::response::StatusReceipt {
         self.status_receipt
     }
     pub fn restore_status_receipt(&mut self, receipt: airk_mcp::response::StatusReceipt) {
         self.status_receipt = receipt;
     }
+}
+
+fn require_original_read_delivery(
+    context: &airk_mcp::read_attempt::ReadAttemptContext,
+    now: Instant,
+) -> Result<()> {
+    ensure!(
+        !context.cancellation().is_cancelled() && now < context.deadline(),
+        "native read completed after caller cancellation or deadline; delivery suppressed"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1174,11 +1192,9 @@ impl Backend {
                 return Ok(source_scope_superseded());
             }
             if state.connection.as_ref().is_none_or(|connection| {
-                (context.context_partition().is_some()
-                    && connection.authorized_until < context.deadline())
-                    || !self
-                        .status
-                        .transport_reusable(&ticket, state.connection_scope, connection)
+                !self
+                    .status
+                    .transport_reusable(&ticket, state.connection_scope, connection)
             }) {
                 state.connection = None;
                 state.connection_scope = None;

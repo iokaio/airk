@@ -67,3 +67,19 @@ producer reruns must prove byte identity before any old fixture is replaced.
 Core/IPC checks alone do not establish native settlement, transport parity,
 model fit or installed-product qualification; the final plan requires those
 owners' actual tests and receipts separately.
+
+## Accepted reads and connection admission
+
+Connection reuse/admission windows authorize a new submission; they do not
+shorten an already accepted read's original absolute deadline. The frontend
+55-second reuse window and worker 60-second admission window remain unchanged.
+Accepted work retains the original read-attempt identity, cancellation, clock,
+partition and 120-second operation bound, with the existing 125-second delivery
+and hard-reap ceiling. Source/revocation fences and every-poll authority checks
+still apply. Expired connections refuse new admission. Unknown settlement does
+not authorize replay or release of execution custody.
+
+The correction removes two independent connection-expiry clamps and an
+impossible partition reconnect condition. Three-crate scoped Clippy and 106
+grouped frontend/worker/installer regressions pass on the corrected source.
+The rebuilt complete Answer journey remains a separate required observation.

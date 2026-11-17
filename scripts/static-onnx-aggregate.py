@@ -134,7 +134,9 @@ def invocation(destination, target, result, selected, core):
         text = "\n".join(paths) + "\n"
         argv = [str(tool), "-static", "-o", str(destination / "aggregate/libonnxruntime.a"), "-filelist", str(response)]
     elif system == "Linux":
-        tool = Path("/usr/bin/ar")
+        # Resolve the fixed OS executable selector; owned artifact paths keep
+        # the strict no-link checks in core.plain unchanged.
+        tool = Path("/usr/bin/ar").resolve(strict=True)
         response = destination / "aggregate/inputs.mri"
         output = str(destination / "aggregate/libonnxruntime.a")
         if any(character.isspace() for path in [output, *paths] for character in path):

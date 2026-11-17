@@ -6606,3 +6606,68 @@ causal/padding attention ratherthanblindcasts, pre-score numericalloss/native
 parity freeze, full8192/N8/20sample p95, jointVRAM/hostfit, cancellation/sync/OOM,
 realtransports/precisionselection, packaging and honest unsupportedstates.
 No FP16 graph, nativeGPU model or per-variant qualification has run yet.
+
+### 2026-11-17 04:35Z — accepted-read lifetime correction and critical-path review
+
+Verified Windows execution remains TYAI\tdotn, SID ending1002, matching the
+active human session. Reviewed in-scope tracked content edits retain file
+identity, ownership and ACLs. Native source group after the correction is
+8189b523f7c4b2f6d0b62cfb161ea8f431c60f304f175680f9f2b218b240992f.
+
+Fresh R154 R7 reaches stable753-source readiness and completes four Focus calls
+(eight finite raw scores) and three Compact calls (21 finite raw scores). Model
+inference totals38.582024s; canonical Answer fails near56.167478s. The retained
+35-record journal has zero drops/writer failures and proves seven complete
+admit/return/settle/profile-release/charge-release chains. Original service
+HANDLE exits0, closes and releases its lease without force. This remains a
+failed Answer, not a quality/composed pass. Postmortem:
+E/r154-r7-causal-diagnosis-r1/handoff.json, SHA906ac915b18f9b2210e896a2fec1259a1dc3214e1df5d2d3327528adfafe014c.
+
+Primary review and independent D06 review identify two shorter connection
+admission/reuse deadlines clamping an accepted120-second parent. The six-file
+frontend/supervisor correction preserves original identity, absolute clock,
+cancellation, partitions, revocation and per-poll delivery checks. The55/60s
+admission TTLs, source scopes, Window30s, hard reap125s and no-replay policy
+remain unchanged. Three tests expose the old behavior; a fourth preserves
+Broker policy. Independent review SHA21d4b8330d2af70443d68e15739b37291f91c50176d46ad37c7d05232a28c92d.
+
+The same reviewed batch fixes Linux all-feature compilation of Installer's
+Mac-only observer: original macOS body unchanged, explicit non-macOS refusal
+and four entry/channel cases. Linux fixed-system ar resolution changes only
+the OS executable selector; artifact no-link policy remains strict. Eleven
+script controls and actual Linux96-archive aggregation pass under their exact
+receipts. Linux application qualification is still pending.
+
+First scoped Clippy fails only on the new test's err().expect() style; receipt
+E/d06-admitted-read-installer-clippy-r1.json is retained. Corrected expect_err
+passes three-crate all-target/all-feature Clippy11.597102s, receipt
+E/d06-admitted-read-installer-clippy-r2.json. Grouped Nextest passes106/106
+(622 filtered, three binaries),119.897735s including build,7.066s test execution:
+E/d06-admitted-read-installer-regressions-r1.json; JUnit SHA
+62bb608aacec55cae711faf8cd9a7f170307d81f106b3d109893db683bb35e23.
+Windows warm target, incremental0/jobs2. Formatting passes. Both caller and
+worker images must now be rebuilt before one fresh composed Answer; no old
+CLI/new Service mixture or historical full-gate retagging is acceptable.
+
+Disk cleanup removes exactly505 reviewed human-owned no-hardlink incremental
+cache directories,30,689 files/22.103GiB logical. Observed D free recovery is
+22.170GiB to476.025GiB. All536 hardlinked cache groups and protected outputs
+remain unchanged; no compiler active before/after. Receipt
+E/incremental-cleanup-execution-r1/receipt.json SHA
+5ecc7f92eddfc282bc83db869a1bdb6f8fb3eb2c0df17dbb5a83d83be8b29ec5.
+The warm target is retained; no broad cargo clean on Windows.
+
+D08 first actual CUDA producer attempt fails before CMake/C++ at a generated
+patch line-ending mismatch. cu3 and its failed receipt remain preserved.
+Corrected LF patches pass real GNU patch controls; final optimized placement
+export and typed runtime integration remain private/uncompiled. No native GPU
+model or FP16 qualification is claimed. C4 actual signed CPU build/preflight
+is preserved, but further old-candidate packaging is held to prioritize the
+corrected native path and GPU goal. Data acceptance/CAL/FINAL/trio blockers
+remain open; score thresholds are unchanged.
+
+Two-hour self-review: this lifetime fix and native GPU implementation address
+the plan's critical path. No further CPU Large research or data expansion.
+E/critical-path-selfcheck-20261117T0435Z.json records2 passed/10 in_progress/
+6 blocked steps. Next review06:35Z; authorized deadline remains
+2026-11-19T05:29:42.2081757Z (Wednesday10:29p.m. Denver).
