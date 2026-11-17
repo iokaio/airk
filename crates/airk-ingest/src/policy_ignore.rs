@@ -33,6 +33,7 @@ pub(crate) struct ProtectedIgnore {
     directories: BTreeMap<PathBuf, [Gitignore; 4]>,
     failure: Option<&'static str>,
     global: Gitignore,
+    captures: crate::control_capture::Owner,
     root_blocked: bool,
     controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
 }
@@ -68,6 +69,7 @@ impl ProtectedIgnore {
         let root = root.to_path_buf();
         let mut selected = Self {
             global: Gitignore::empty(),
+            captures: Default::default(),
             root,
             policy: policy.cloned(),
             charged: 0,
@@ -115,10 +117,14 @@ impl ProtectedIgnore {
 
     fn capture(&mut self, path: &Path) -> Result<Option<String>> {
         let path = std::path::absolute(path).map_err(|_| refused("ignore_control_locator"))?;
+        let captured = match &self.controls {
+            Some(controls) => controls.capture_path(&path)?,
+            None => self.captures.path(&path)?,
+        };
         if self.controls.is_some() {
-            crate::control_snapshot::qualify_locator(&path, false)?;
+            captured.qualify(false)?;
         }
-        let metadata = match fs::symlink_metadata(&path) {
+        let metadata = match captured.metadata() {
             Ok(value) => value,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if let Some(controls) = &self.controls {
@@ -137,14 +143,13 @@ impl ProtectedIgnore {
             }
         };
         ensure!(
-            metadata.is_file() && !metadata.file_type().is_symlink(),
+            metadata.file && !metadata.symlink,
             refused("aliased_ignore_control")
         );
         #[cfg(windows)]
         {
-            use std::os::windows::fs::MetadataExt;
             ensure!(
-                metadata.file_attributes() & 0x400 == 0,
+                metadata.attributes & 0x400 == 0,
                 refused("aliased_ignore_control")
             );
         }
@@ -160,8 +165,17 @@ impl ProtectedIgnore {
                 .unwrap_or(true),
             refused("excluded_ignore_control")
         );
+        let physical = captured.physical();
+        if physical != path
+            && let Some(policy) = &self.policy
+        {
+            ensure!(
+                crate::permanent_policy::allows_absolute_control_input_checked(policy, &physical)?,
+                refused("excluded_ignore_control")
+            );
+        }
         let length =
-            usize::try_from(metadata.len()).map_err(|_| refused("ignore_control_budget"))?;
+            usize::try_from(metadata.bytes).map_err(|_| refused("ignore_control_budget"))?;
         let allowance = length
             .checked_add(1)
             .ok_or_else(|| refused("ignore_control_budget"))?;
@@ -172,14 +186,9 @@ impl ProtectedIgnore {
         // A failed capture still consumes its allowance. The reader never follows
         // an input/ancestor link and verifies held identity and pathname afterward.
         self.charged += allowance;
-        let bytes = crate::source_read::read(
-            path.parent()
-                .ok_or_else(|| refused("ignore_control_locator"))?,
-            &path,
-            MAX_FILE_BYTES,
-            allowance,
-        )
-        .map_err(|_| refused("ignore_control_unavailable"))?;
+        let bytes = captured
+            .read(MAX_FILE_BYTES, allowance)
+            .map_err(|_| refused("ignore_control_unavailable"))?;
         ensure!(
             bytes.len() <= MAX_FILE_BYTES,
             refused("ignore_control_budget")

@@ -22,6 +22,7 @@ mod extraction_jobs;
 mod extraction_pool;
 pub mod retention;
 pub use extraction_pool::ExtractionExecution;
+mod control_capture;
 pub mod control_snapshot;
 pub mod header_context;
 mod host_components;

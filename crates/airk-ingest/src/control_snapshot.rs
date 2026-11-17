@@ -34,7 +34,7 @@ fn changed(kind: ControlDriftKind) -> anyhow::Error {
     ControlDrift { kind }.into()
 }
 /// Preserve uncertainty. Only actual NotFound is an absence observation.
-fn require_absence(observed: std::io::Result<std::fs::Metadata>) -> Result<()> {
+fn require_absence<T>(observed: std::io::Result<T>) -> Result<()> {
     match observed {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
@@ -55,12 +55,14 @@ struct State {
 pub struct ControlSnapshot {
     state: Mutex<State>,
     expected: Option<SourceControlBaseline>,
+    captures: crate::control_capture::Owner,
 }
 impl ControlSnapshot {
     pub fn capture() -> Self {
         Self {
             state: Mutex::new(State::default()),
             expected: None,
+            captures: Default::default(),
         }
     }
     pub fn revalidate(expected: SourceControlBaseline) -> Result<Self> {
@@ -68,6 +70,7 @@ impl ControlSnapshot {
         Ok(Self {
             state: Mutex::new(State::default()),
             expected: Some(expected),
+            captures: Default::default(),
         })
     }
     /// Re-read exactly the authenticated dependency set before selected work
@@ -92,34 +95,39 @@ impl ControlSnapshot {
         }
         for (path, value) in &expected.inputs {
             let path = Path::new(path);
-            qualify_locator(path, matches!(value, ControlInputState::Directory))?;
+            let captured = self.capture_path(path)?;
+            captured.qualify(matches!(value, ControlInputState::Directory))?;
             match value {
                 ControlInputState::File { .. } => {
-                    let bytes = match crate::read_protected_path(path, 64 << 10, false) {
+                    let bytes = match captured.read(64 << 10, (64 << 10) + 1) {
                         Ok(bytes) => bytes,
                         Err(error)
                             if error
                                 .downcast_ref::<std::io::Error>()
                                 .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
                         {
-                            if crate::source_read::missing_protected_path(path)? {
+                            if captured.missing()? {
                                 return Err(changed(ControlDriftKind::Inputs));
                             }
                             return Err(error);
                         }
                         Err(error) => return Err(error),
                     };
+                    ensure!(
+                        bytes.len() <= 64 << 10,
+                        "control revalidation exceeds file budget"
+                    );
                     self.file(path, &bytes)?;
                 }
                 ControlInputState::Absent => {
-                    require_absence(std::fs::symlink_metadata(path))?;
+                    require_absence(captured.metadata())?;
                     self.absent_qualified(path)?;
                 }
                 ControlInputState::Directory => {
-                    let metadata = match std::fs::symlink_metadata(path) {
+                    let metadata = match captured.metadata() {
                         Ok(metadata) => metadata,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            if crate::source_read::missing_protected_path(path)? {
+                            if captured.missing()? {
                                 return Err(changed(ControlDriftKind::Inputs));
                             }
                             return Err(error.into());
@@ -127,14 +135,13 @@ impl ControlSnapshot {
                         Err(error) => return Err(error.into()),
                     };
                     ensure!(
-                        metadata.is_dir() && !metadata.file_type().is_symlink(),
+                        metadata.directory && !metadata.symlink,
                         "control directory changed"
                     );
                     #[cfg(windows)]
                     {
-                        use std::os::windows::fs::MetadataExt;
                         ensure!(
-                            metadata.file_attributes() & 0x400 == 0,
+                            metadata.attributes & 0x400 == 0,
                             "control directory redirected"
                         );
                     }
@@ -143,6 +150,9 @@ impl ControlSnapshot {
             }
         }
         Ok(())
+    }
+    pub(crate) fn capture_path(&self, path: &Path) -> Result<crate::control_capture::ControlPath> {
+        self.captures.path(path)
     }
     /// This is computed by the same owner that actually selects global files.
     /// Hashing these locators does not itself prove their content or authority.
@@ -188,6 +198,7 @@ impl ControlSnapshot {
             "control snapshot already refused; fresh review required"
         );
         let outcome = (|| -> Result<()> {
+            self.captures.recheck()?;
             let path = path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?;
@@ -266,9 +277,10 @@ impl ControlSnapshot {
     /// no-follow/name-boundary reader. NotFound alone is not this proof.
     pub(crate) fn absent_qualified(&self, path: &Path) -> Result<()> {
         let outcome = (|| -> Result<()> {
-            qualify_locator(path, false)?;
+            let captured = self.capture_path(path)?;
+            captured.qualify(false)?;
             ensure!(
-                crate::source_read::missing_protected_path(path)?,
+                captured.missing()?,
                 "control absence changed or unqualified"
             );
             self.record(path, ControlInputState::Absent)
@@ -284,6 +296,7 @@ impl ControlSnapshot {
     /// Used for an actual qualified .git directory marker, not directory
     /// inventory identity; the relevant info/exclude is recorded separately.
     pub(crate) fn directory_qualified(&self, path: &Path) -> Result<()> {
+        self.capture_path(path)?.qualify(true)?;
         self.record(path, ControlInputState::Directory)
     }
     pub(crate) fn context(&self, root: &str, digest: Sha256Digest) -> Result<()> {
@@ -353,6 +366,7 @@ impl ControlSnapshot {
             .lock()
             .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?;
         ensure!(!state.failed, "cannot seal refused control snapshot");
+        self.captures.recheck()?;
         let baseline = SourceControlBaseline {
             schema: 1,
             // Revalidation compares the original controls; only the locked
@@ -382,6 +396,12 @@ impl ControlSnapshot {
 /// Qualify every existing ancestor without following a redirect. Missing
 /// suffixes are allowed only as an absence observation, rechecked before commit.
 pub(crate) fn qualify_locator(path: &Path, directory: bool) -> Result<()> {
+    crate::control_capture::Owner::default()
+        .path(path)?
+        .qualify(directory)
+}
+
+pub(crate) fn qualify_strict(path: &Path, directory: bool) -> Result<()> {
     ensure!(path.is_absolute(), "control locator is not absolute");
     let anchor = path
         .ancestors()
@@ -501,7 +521,8 @@ mod tests {
             std::io::ErrorKind::PermissionDenied,
             std::io::ErrorKind::Other,
         ] {
-            let error = require_absence(Err(std::io::Error::from(kind))).unwrap_err();
+            let error =
+                require_absence::<std::fs::Metadata>(Err(std::io::Error::from(kind))).unwrap_err();
             assert!(error.downcast_ref::<ControlDrift>().is_none());
             assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), kind);
         }
@@ -510,7 +531,9 @@ mod tests {
             error.downcast_ref::<ControlDrift>().map(|drift| drift.kind),
             Some(ControlDriftKind::Inputs)
         );
-        require_absence(Err(std::io::Error::from(std::io::ErrorKind::NotFound)))?;
+        require_absence::<std::fs::Metadata>(Err(std::io::Error::from(
+            std::io::ErrorKind::NotFound,
+        )))?;
         Ok(())
     }
 }

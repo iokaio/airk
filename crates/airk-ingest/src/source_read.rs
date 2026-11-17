@@ -338,7 +338,24 @@ fn read_with_alias_policy(
             .all(|part| matches!(part, Component::Normal(_))),
         "invalid source path"
     );
-    let mut held = open(root, relative)?;
+    read_opened(
+        open(root, relative)?,
+        path,
+        limit,
+        remaining,
+        require_single_link,
+        || open(root, relative),
+    )
+}
+
+fn read_opened(
+    mut held: Opened,
+    path: &Path,
+    limit: usize,
+    remaining: usize,
+    require_single_link: bool,
+    reopen: impl Fn() -> Result<Opened>,
+) -> Result<Vec<u8>> {
     require_nonarchive(path)?;
     let before = held.file.metadata()?;
     ensure!(before.is_file(), "source is not a regular file");
@@ -358,7 +375,7 @@ fn read_with_alias_policy(
         "source changed during scan; retry indexing"
     );
     // Check the pathname still names the held file, using the same protected traversal.
-    let current = open(root, relative)?;
+    let current = reopen()?;
     ensure!(
         identity(&held.file)? == identity(&current.file)?,
         "source replaced during scan; retry indexing"
@@ -368,6 +385,77 @@ fn read_with_alias_policy(
         "workspace raw source read budget exhausted; previous generation retained"
     );
     Ok(bytes)
+}
+
+/// Only the fixed control owner supplies this already-validated directory FD.
+/// Ordinary source/admin callers retain their root-to-leaf no-follow traversal.
+#[cfg(target_os = "macos")]
+pub(crate) fn read_control_at(
+    directory: &File,
+    relative: &Path,
+    original: &Path,
+    limit: usize,
+    remaining: usize,
+) -> Result<Vec<u8>> {
+    read_opened(
+        open_control_at(directory, relative)?,
+        original,
+        limit,
+        remaining,
+        false,
+        || open_control_at(directory, relative),
+    )
+}
+#[cfg(target_os = "macos")]
+fn open_control_at(directory: &File, relative: &Path) -> Result<Opened> {
+    use std::{
+        ffi::CString,
+        os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::ffi::OsStrExt,
+        },
+    };
+    let components: Vec<_> = relative.components().collect();
+    ensure!(
+        !components.is_empty() && components.len() <= 256 && relative.as_os_str().len() <= 4096,
+        "invalid control suffix"
+    );
+    let mut directories = vec![directory.try_clone()?];
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            anyhow::bail!("invalid control suffix");
+        };
+        let name = CString::new(name.as_bytes())?;
+        let is_directory = index + 1 != components.len();
+        let flags = libc::O_RDONLY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC
+            | libc::O_NONBLOCK
+            | if is_directory { libc::O_DIRECTORY } else { 0 };
+        // SAFETY: parent and component remain live; fresh successful FD has one owner.
+        let fd = unsafe {
+            libc::openat(
+                directories.last().unwrap().as_raw_fd(),
+                name.as_ptr(),
+                flags,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("open control suffix without links");
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        if is_directory {
+            crate::native_name_boundary::qualify_directory_handle(&file)?;
+            directories.push(file);
+        } else {
+            return Ok(Opened {
+                file,
+                _directories: directories,
+            });
+        }
+    }
+    anyhow::bail!("empty control suffix")
 }
 
 #[cfg(unix)]

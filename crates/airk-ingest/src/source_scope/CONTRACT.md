@@ -69,3 +69,32 @@ private sink; public read/control/error projections gain
 no locator, field or changed refusal class. The no-follow flags, supported case-mode
 checks and missing-future-suffix handling remain unchanged. This diagnostic does not
 qualify a redirected or previously unsupported ancestor.
+
+## Narrow macOS system ignore-control alias
+
+The matcher/control capture owner alone may bind the exact macOS OS alias
+`/etc` to literal `private/etc`. This is runtime control authority, never source
+or administrative-input authority. It preserves original `/etc/...` locator
+spelling, ignore precedence and the Core File/Absent/Directory baseline bytes,
+schema and digest domains. No policy/path canonicalization grants the binding.
+
+The owner retains root/private/etc directory descriptors opened separately
+with O_NOFOLLOW and qualifies their actual native filesystem/case boundaries.
+Each is UID0, non-group/other-writable and has a successful descriptor-bound
+native security observation proving no ACL. Nonempty or unknown ACL state is
+unsupported and refuses, even if an entry would only restrict access. The `/etc`
+entry is observed no-follow relative to held root: root-owned symlink, exact
+literal target, stable native identity/metadata. No open traverses the link.
+Alias and named target/ancestor identity+security are rechecked before/after
+control observations and at scan seal/revalidation; failures latch. All suffix
+components and leaves remain no-follow; actual qualified ENOENT alone is absence.
+The original and fixed target spellings both retain policy exclusion checks.
+The existing bounded source-read buffer/metadata/reopen checks are shared through
+a private descriptor-relative control hook; generic source opens remain strict.
+
+The capability is fixed inside the existing Ingest control owner, with no caller
+mapping, new wire type, stored alias field, changed source naming profile or state
+format. Retained baseline File/Absent/Directory fixture bytes and identities must
+remain exact. Adversarial injected security/alias observations and real owned
+suffix capture tests precede an actual read-only Mac anchor control and reference
+refresh. No root/system/ACL mutations or ignore-control omission is permitted.
